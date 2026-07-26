@@ -280,6 +280,12 @@ Pushing a `v*` tag publishes them to a **draft** GitHub release instead; the tag
 has to match the version in `package.json`, which the workflow checks before
 building, because the release is named from `package.json` and not the tag.
 
+Pull requests run the same build on both platforms but keep nothing: artifact
+storage counts against the account quota, while self-hosted runner time doesn't,
+so a PR proves the installers can be built and then discards them. There are no
+tests in this repo — `npm run typecheck` and a successful package are the whole
+gate, and neither says anything about whether the app actually runs.
+
 This is a distribution channel, not a second update channel — the in-app updater
 above reads the local `update.json` and knows nothing about GitHub releases.
 Wiring the toast to published releases would mean teaching `updater.ts` to fetch

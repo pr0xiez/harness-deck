@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # A newer push to the same ref supersedes an in-flight build.
@@ -79,9 +81,20 @@ jobs:
           # delete this and add CSC_LINK + CSC_KEY_PASSWORD secrets.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      # Artifact storage counts against the account's quota, so a pull request
+      # builds the installers to prove it can, then throws them away. Runner
+      # time is free — these are self-hosted.
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: harness-deck-${{ matrix.label }}
           path: ${{ matrix.artifacts }}
           if-no-files-found: error
           retention-days: 14
+
+      # The upload is what would otherwise catch a build that silently produced
+      # nothing, so on a pull request check for the installer directly.
+      - name: Check the installer exists
+        if: github.event_name == 'pull_request'
+        run: |
+          node -e "const fs=require('fs'); const ext=process.platform==='darwin'?'.dmg':'.exe'; const f=fs.existsSync('release')?fs.readdirSync('release').filter(n=>n.endsWith(ext)):[]; if(!f.length){console.error('no '+ext+' found in release/');process.exit(1)} console.log('built '+f.join(', '))"

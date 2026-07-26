@@ -103,6 +103,19 @@ anyone else needs an Apple Developer ID and notarisation. The hardened-runtime
 entitlements it needs are already in `build/entitlements.mac.plist`. Drop a
 1024px `build/icon.icns` in to replace the stock Electron icon.
 
+## Releases
+
+`.github/workflows/build.yml` builds the installers on **self-hosted runners** —
+one Windows, one macOS, since each platform's installer can only be built on
+that platform. Register both machines as runners on the repository; GitHub
+labels them with their OS automatically, which is how each job finds its box.
+
+Pushes to `main` and manual runs leave the installers as workflow artifacts.
+Pushing a `v*` tag instead publishes them to a draft GitHub release, along with
+the `latest*.yml` metadata an auto-updater reads. The tag has to match the
+version in `package.json` — the workflow fails early if it doesn't, because the
+release is named from `package.json` and not from the tag.
+
 ## Keyboard
 
 Terminals get every plain key combination, so the app keeps to `Ctrl+Shift`

@@ -3,6 +3,13 @@ productName: Harness Deck
 directories:
   output: release
   buildResources: build
+# Only used when electron-builder is run with `--publish always` (see the
+# release job in .github/workflows/build.yml); it uploads to a draft release
+# and writes the latest*.yml metadata alongside the installers.
+publish:
+  provider: github
+  owner: pr0xiez
+  repo: harness-deck
 files:
   - out/**
   - package.json

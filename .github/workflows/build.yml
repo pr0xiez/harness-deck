@@ -16,32 +16,39 @@ concurrency:
 jobs:
   build:
     name: ${{ matrix.label }}
-    # Every self-hosted runner is labelled with its OS automatically, so the
-    # second label is what routes each job to the right machine. Both boxes
-    # need to be registered as runners on this repository.
-    runs-on: [self-hosted, '${{ matrix.runner }}']
+    # Each installer has to be built on its own platform, so the only choice is
+    # where each half runs. macOS uses a self-hosted Mac — free, and the one
+    # machine that could ever sign and notarise. Windows uses a GitHub-hosted
+    # runner because there is no Windows box registered here; that one is billed
+    # (private repo, and Windows minutes count double).
+    runs-on: ${{ matrix.runner }}
     strategy:
       # One platform failing shouldn't throw away the other's installers.
       fail-fast: false
       matrix:
         include:
           - label: windows
-            runner: Windows
+            runner: windows-latest
             artifacts: |
               release/*.exe
               release/*.zip
               release/latest*.yml
+          # Self-hosted runners are labelled with their OS automatically, so
+          # this pair routes the job to the Mac. It must be registered as a
+          # runner on this repository.
           - label: macos
-            runner: macOS
+            runner: [self-hosted, macOS]
             artifacts: |
               release/*.dmg
               release/*.zip
               release/latest*.yml
 
     steps:
-      - uses: actions/checkout@v4
+      # v5 and up run on Node 24 and need a self-hosted runner on 2.327.1 or
+      # newer — check the Mac's version before bumping these again.
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -60,9 +67,16 @@ jobs:
       # Apple Silicon runner never fetches the Intel one and the x64 dmg would
       # ship with no pty at all. Pull it in explicitly. Drop this step (and x64
       # from electron-builder.yml) if Intel Macs stop being worth supporting.
+      #
+      # --os/--cpu only steer which optional dependencies get resolved; a
+      # package asked for by name is still checked against the real host, so
+      # this is EBADPLATFORM without --force, which is what downgrades that
+      # error to a warning. Both flavours end up in node_modules and asarUnpack
+      # ships both, which is why the arm64 dmg is a few MB heavier than it needs
+      # to be — node-pty picks the right one at runtime.
       - name: Add the Intel pty prebuild
         if: runner.os == 'macOS'
-        run: npm i --no-save --os=darwin --cpu=x64 @lydell/node-pty-darwin-x64@1.2.0-beta.12
+        run: npm i --no-save --force --os=darwin --cpu=x64 @lydell/node-pty-darwin-x64@1.2.0-beta.12
 
       - run: npm run build
 
@@ -82,9 +96,8 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       # Artifact storage counts against the account's quota, so a pull request
-      # builds the installers to prove it can, then throws them away. Runner
-      # time is free — these are self-hosted.
-      - uses: actions/upload-artifact@v4
+      # builds the installers to prove it can, then throws them away.
+      - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
           name: harness-deck-${{ matrix.label }}

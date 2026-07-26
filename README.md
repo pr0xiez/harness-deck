@@ -266,25 +266,40 @@ set `WIN_NPM`. `HD_UPDATE_MANIFEST` points the app at a different manifest, and
 ### Building both platforms in CI
 
 `npm run release` covers the local Windows loop. `.github/workflows/build.yml`
-is the other half: it builds installers for **both** platforms on **self-hosted
-runners**, one Windows and one macOS. Each platform's installer can only be
-built on that platform — `node-pty` ships a prebuilt binary per platform, and
-npm only ever fetches the host's, so a cross-built app has no working pty.
+is the other half: it builds installers for **both** platforms. Each platform's
+installer can only be built on that platform — `node-pty` ships a prebuilt
+binary per platform, and npm only ever fetches the host's, so a cross-built app
+has no working pty, and NSIS needs Wine off Windows. There is no way around the
+matrix.
 
-Register both machines as runners on the repository. GitHub labels every
-self-hosted runner with its OS automatically, and the matrix matches on that
-label to route each job to the right box.
+Where each half runs differs:
+
+- **macOS** — a **self-hosted** Mac, which is free and the only machine that
+  could ever sign and notarise. Register it as a runner on the repository;
+  GitHub labels every self-hosted runner with its OS automatically, and the
+  matrix matches `[self-hosted, macOS]` to route the job there. If the Mac is
+  offline the job queues rather than fails.
+- **Windows** — the GitHub-hosted `windows-latest` image. This one is billed:
+  the repo is private and Windows minutes count double against the included
+  allowance. Point it at a `[self-hosted, Windows]` pair instead if a Windows
+  box ever gets registered.
+
+Because the Mac is Apple Silicon, npm never fetches the Intel `node-pty`
+prebuild that the x64 dmg needs, so the workflow installs it by hand. That needs
+`--force` as well as `--os`/`--cpu`: the platform flags only steer optional
+dependency resolution, and a package named explicitly is still checked against
+the real host.
 
 Pushes to `main` and manual runs leave the installers as workflow artifacts.
 Pushing a `v*` tag publishes them to a **draft** GitHub release instead; the tag
 has to match the version in `package.json`, which the workflow checks before
 building, because the release is named from `package.json` and not the tag.
 
-Pull requests run the same build on both platforms but keep nothing: artifact
-storage counts against the account quota, while self-hosted runner time doesn't,
-so a PR proves the installers can be built and then discards them. There are no
-tests in this repo — `npm run typecheck` and a successful package are the whole
-gate, and neither says anything about whether the app actually runs.
+Pull requests run the same build on both platforms but keep nothing — artifact
+storage counts against the account quota — so a PR proves the installers can be
+built and then discards them. There are no tests in this repo —
+`npm run typecheck` and a successful package are the whole gate, and neither
+says anything about whether the app actually runs.
 
 This is a distribution channel, not a second update channel — the in-app updater
 above reads the local `update.json` and knows nothing about GitHub releases.

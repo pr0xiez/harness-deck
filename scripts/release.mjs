@@ -122,7 +122,7 @@ if (notes) console.log(`  notes: ${notes}`)
 if (dryRun) console.log('  (dry run)')
 
 const releaseDir = join(root, 'release')
-const installerName = `Harness Deck-${version}-x64.exe`
+const installerName = `Harness Deck-${version}-win-x64.exe`
 const installerPath = join(releaseDir, installerName)
 
 if (!dryRun) {

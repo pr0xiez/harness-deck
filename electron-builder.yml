@@ -20,7 +20,11 @@ win:
   target:
     - nsis
     - zip
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  # The platform belongs in the name because both halves of the build land in
+  # one GitHub release, and `${arch}` alone had Windows and macOS both producing
+  # a `-x64.zip` — whichever uploaded second would have quietly replaced the
+  # other. scripts/release.mjs looks for the nsis one by this name.
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
@@ -32,7 +36,7 @@ mac:
     - target: zip
       arch: [arm64, x64]
   category: public.app-category.developer-tools
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
   darkModeSupport: true
   extendInfo:
     NSMicrophoneUsageDescription: Dictate prompts into your agents.
@@ -45,7 +49,7 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   gatekeeperAssess: false
 dmg:
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
 linux:
   target:
     - AppImage

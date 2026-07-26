@@ -22,6 +22,10 @@ jobs:
     # runner because there is no Windows box registered here; that one is billed
     # (private repo, and Windows minutes count double).
     runs-on: ${{ matrix.runner }}
+    # Publishing the installers writes to releases, and this repository leaves
+    # the default GITHUB_TOKEN read-only.
+    permissions:
+      contents: write
     strategy:
       # One platform failing shouldn't throw away the other's installers.
       fail-fast: false
@@ -29,19 +33,11 @@ jobs:
         include:
           - label: windows
             runner: windows-latest
-            artifacts: |
-              release/*.exe
-              release/*.zip
-              release/latest*.yml
           # Self-hosted runners are labelled with their OS automatically, so
           # this pair routes the job to the Mac. It must be registered as a
           # runner on this repository.
           - label: macos
             runner: [self-hosted, macOS]
-            artifacts: |
-              release/*.dmg
-              release/*.zip
-              release/latest*.yml
 
     steps:
       # v5 and up run on Node 24 and need a self-hosted runner on 2.327.1 or
@@ -80,33 +76,37 @@ jobs:
 
       - run: npm run build
 
-      # Tags publish a draft GitHub release; every other run just leaves the
-      # installers as workflow artifacts. This is a distribution channel only —
-      # the in-app updater reads a local update.json written by
-      # scripts/release.mjs and never looks at GitHub. Publishing through
-      # electron-builder still emits the latest*.yml metadata, so pointing the
-      # updater at releases later is a change to updater.ts alone.
+      # Never electron-builder's own publisher, on either path: both platform
+      # jobs would target one release at the same moment, and it has no way to
+      # cope with that. scripts/publish-release.mjs does the same job in a form
+      # that tolerates the race. The cost is that electron-builder no longer
+      # emits its latest*.yml update metadata, which buys nothing today — the
+      # in-app updater reads a local update.json written by scripts/release.mjs
+      # and never looks at GitHub. Wiring the updater to releases means turning
+      # this back to `always` on the tag path as well as changing updater.ts.
       - name: Package
-        run: npx electron-builder --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        run: npx electron-builder --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No Developer ID on the runner: build unsigned rather than pick up
           # whatever identity happens to be in its keychain. To sign for real,
           # delete this and add CSC_LINK + CSC_KEY_PASSWORD secrets.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      # Artifact storage counts against the account's quota, so a pull request
-      # builds the installers to prove it can, then throws them away.
-      - uses: actions/upload-artifact@v7
+      # A `v*` tag cuts a draft release named for the version. Every other build
+      # of main refreshes `latest-main`, a prerelease that always holds the
+      # newest installers — merge, wait, download. Workflow artifacts were the
+      # obvious alternative and are worse for this: they expire after a
+      # fortnight, they arrive wrapped in a second zip, and on a private
+      # repository they consume a storage quota that release assets don't.
+      - name: Publish
         if: github.event_name != 'pull_request'
-        with:
-          name: harness-deck-${{ matrix.label }}
-          path: ${{ matrix.artifacts }}
-          if-no-files-found: error
-          retention-days: 14
+        run: node scripts/publish-release.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # The upload is what would otherwise catch a build that silently produced
-      # nothing, so on a pull request check for the installer directly.
+      # Publishing is what would otherwise catch a build that silently produced
+      # nothing, and a pull request doesn't publish, so check for the installer
+      # directly instead.
       - name: Check the installer exists
         if: github.event_name == 'pull_request'
         run: |

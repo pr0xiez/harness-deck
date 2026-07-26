@@ -290,14 +290,44 @@ prebuild that the x64 dmg needs, so the workflow installs it by hand. That needs
 dependency resolution, and a package named explicitly is still checked against
 the real host.
 
-Pushes to `main` and manual runs leave the installers as workflow artifacts.
-Pushing a `v*` tag publishes them to a **draft** GitHub release instead; the tag
-has to match the version in `package.json`, which the workflow checks before
-building, because the release is named from `package.json` and not the tag.
+#### Where the installers end up
 
-Pull requests run the same build on both platforms but keep nothing — artifact
-storage counts against the account quota — so a PR proves the installers can be
-built and then discards them. There are no tests in this repo —
+Every build of `main` refreshes
+**[`latest-main`](https://github.com/pr0xiez/harness-deck/releases/tag/latest-main)**, a prerelease
+holding the newest installer for each platform. Merge, wait for the build,
+download from there — nothing to tag and nothing to bump. It is a rolling
+channel, so two builds can share a version and differ; the notes name the commit
+each one came from.
+
+Pushing a **`v*` tag** cuts a proper release instead, as a **draft**, so it stays
+invisible until published by hand. The tag has to match the version in
+`package.json`, which the workflow checks before building, because the release is
+named from `package.json` and not the tag. Nothing bumps that version
+automatically — `npm run release` does it locally, and doesn't commit or tag
+either, so cutting a release is:
+
+```bash
+npm run release patch                       # bumps package.json, builds locally
+git commit -am "release 0.1.1" && git push
+git tag v0.1.1 && git push origin v0.1.1    # this is what publishes
+```
+
+Both jobs publish into the same release at the same moment, which
+electron-builder's own publisher can't cope with, so `scripts/publish-release.mjs`
+does it instead — every write tolerates the other job getting there first. It
+talks to the REST API rather than shelling out to `gh`, because the self-hosted
+Mac isn't guaranteed to have the CLI. That the two platforms never fight over an
+asset is down to the `win`/`mac` in the installer names: both build an x64 zip,
+and under the old `${arch}`-only naming one would have silently replaced the
+other.
+
+Consequence worth knowing: with publishing taken away from electron-builder it no
+longer emits its `latest*.yml` update metadata. That costs nothing today, since
+the updater reads the local manifest, but wiring the updater to releases means
+restoring `--publish always` on the tag path too.
+
+Pull requests run the same build on both platforms and keep nothing — a PR proves
+the installers can be built, then discards them. There are no tests in this repo —
 `npm run typecheck` and a successful package are the whole gate, and neither
 says anything about whether the app actually runs.
 

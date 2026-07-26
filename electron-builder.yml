@@ -23,6 +23,8 @@ mac:
     - dmg
     - zip
   category: public.app-category.developer-tools
+  extendInfo:
+    NSMicrophoneUsageDescription: Dictate prompts into your agents.
 linux:
   target:
     - AppImage

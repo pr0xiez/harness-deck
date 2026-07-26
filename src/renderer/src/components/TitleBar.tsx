@@ -9,6 +9,9 @@ export function TitleBar(): React.JSX.Element {
   const setUi = useDeck((s) => s.setUi)
   const workspaces = useDeck((s) => s.workspaces)
   const activeId = useDeck((s) => s.activeWorkspaceId)
+  const update = useDeck((s) => s.update)
+  const showUpdate = useDeck((s) => s.showUpdate)
+  const updateReady = update?.stage === 'available' ? update.available : null
   const active = workspaces.find((w) => w.id === activeId)
   const runningCount = workspaces.reduce(
     (total, ws) => total + ws.panes.filter((p) => p.status === 'running').length,
@@ -39,6 +42,16 @@ export function TitleBar(): React.JSX.Element {
       <div className="titlebar-drag" />
 
       <div className="titlebar-right">
+        {updateReady ? (
+          <button
+            className="ghost-btn on"
+            title={`Version ${updateReady.version} is ready to install`}
+            onClick={showUpdate}
+          >
+            <Icon name="restart" />
+            <span>Update</span>
+          </button>
+        ) : null}
         <button
           className="ghost-btn"
           title="Command palette (Ctrl+Shift+P)"

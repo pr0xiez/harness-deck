@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDeck, type DeckWorkspace } from '../store'
+import { registerVoiceSink } from '../voice'
 import { Icon } from './Icon'
+import { MicButton } from './MicButton'
 
 const api = window.harness
 
@@ -20,8 +22,31 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
   const [sendEnter, setSendEnter] = useState(true)
   const [flash, setFlash] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Dictation arrives outside React's event flow, so the latest text and the
+  // latest `send` are kept in refs the sink can reach.
+  const textRef = useRef(text)
+  const sendRef = useRef<(payload?: string) => void>(() => undefined)
+  textRef.current = text
 
   useEffect(() => inputRef.current?.focus(), [])
+
+  useEffect(
+    () =>
+      registerVoiceSink({
+        id: 'broadcast',
+        label: 'broadcast',
+        isFocused: () => document.activeElement === inputRef.current,
+        insert: (dictated) => {
+          const current = textRef.current.replace(/\s+$/, '')
+          const merged = current ? `${current} ${dictated}` : dictated
+          textRef.current = merged
+          setText(merged)
+          inputRef.current?.focus()
+        },
+        submit: () => sendRef.current(textRef.current)
+      }),
+    []
+  )
 
   const targets = workspace.panes.filter((pane) => {
     if (pane.status !== 'running') return false
@@ -29,8 +54,7 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
     return profiles.find((p) => p.id === pane.profileId)?.kind === 'agent'
   })
 
-  const send = (): void => {
-    const payload = text
+  const send = (payload: string = text): void => {
     if (!payload.trim() || !targets.length) return
     for (const pane of targets) {
       api.pty.write(pane.id, payload)
@@ -39,7 +63,9 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
     setFlash(`sent to ${targets.length} pane${targets.length === 1 ? '' : 's'}`)
     window.setTimeout(() => setFlash(null), 1600)
     setText('')
+    textRef.current = ''
   }
+  sendRef.current = send
 
   return (
     <div className="broadcast" style={{ ['--ws-accent' as string]: workspace.accent }}>
@@ -69,6 +95,7 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
           <input type="checkbox" checked={sendEnter} onChange={(e) => setSendEnter(e.target.checked)} />
           press enter
         </label>
+        <MicButton variant="inline" />
         <button className="icon-btn" title="Hide broadcast (Ctrl+Shift+B)" onClick={() => setUi({ broadcast: false })}>
           <Icon name="close" />
         </button>
@@ -89,7 +116,7 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
             if (event.key === 'Escape') setUi({ broadcast: false })
           }}
         />
-        <button className="btn primary" disabled={!text.trim() || !targets.length} onClick={send}>
+        <button className="btn primary" disabled={!text.trim() || !targets.length} onClick={() => send()}>
           Send to {targets.length}
         </button>
       </div>

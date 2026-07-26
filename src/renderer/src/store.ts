@@ -7,11 +7,23 @@ import type {
   PersistedState,
   Profile,
   Settings,
+  UpdateState,
+  VoiceSettings,
   Workspace
 } from '@shared/types'
 import { ACCENTS, MONO_STACK } from './theme'
 
 const api = window.harness
+
+export const DEFAULT_VOICE: VoiceSettings = {
+  provider: 'openrouter',
+  baseUrl: '',
+  model: '',
+  language: '',
+  prompt: '',
+  submit: false,
+  autoStop: true
+}
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 13,
@@ -24,7 +36,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoStartPanes: true,
   defaultCwd: '',
   bellNotifications: true,
-  sidebarCollapsed: false
+  sidebarCollapsed: false,
+  voice: DEFAULT_VOICE
 }
 
 /** Panes carry a bit of state we never want to write to disk. */
@@ -59,9 +72,22 @@ interface DeckState {
   mounted: string[]
   settings: Settings
   ui: UiState
+  update: UpdateState | null
+  /** Version whose toast the user waved off; the title bar still offers it. */
+  updateDismissed: string | null
+  /** Why the last install attempt did not get off the ground. */
+  updateError: string | null
+  updateInstalling: boolean
 
   hydrate: () => Promise<void>
   refreshProfiles: () => Promise<void>
+
+  setUpdate: (update: UpdateState) => void
+  checkForUpdate: () => Promise<void>
+  /** Confirms if panes are live, then hands over to the installer. */
+  installUpdate: () => Promise<void>
+  dismissUpdate: () => void
+  showUpdate: () => void
 
   addWorkspace: (name?: string, cwd?: string) => string
   duplicateWorkspace: (id: string) => string
@@ -87,6 +113,7 @@ interface DeckState {
   setColumns: (workspaceId: string, columns: number) => void
 
   updateSettings: (patch: Partial<Settings>) => void
+  updateVoice: (patch: Partial<VoiceSettings>) => void
   setUi: (patch: Partial<UiState>) => void
 }
 
@@ -149,6 +176,10 @@ export const useDeck = create<DeckState>((set, get) => ({
     profileMenu: false,
     paneMenuFor: null
   },
+  update: null,
+  updateDismissed: null,
+  updateError: null,
+  updateInstalling: false,
 
   hydrate: async () => {
     const [info, profiles, saved] = await Promise.all([
@@ -158,7 +189,13 @@ export const useDeck = create<DeckState>((set, get) => ({
     ])
 
     const defaultCwd = saved?.settings?.defaultCwd || info.defaultCwd
-    const settings: Settings = { ...DEFAULT_SETTINGS, ...saved?.settings, defaultCwd }
+    const settings: Settings = {
+      ...DEFAULT_SETTINGS,
+      ...saved?.settings,
+      defaultCwd,
+      // Nested, so a state file written before a field existed still gets it.
+      voice: { ...DEFAULT_VOICE, ...saved?.settings?.voice }
+    }
 
     let workspaces: DeckWorkspace[] = (saved?.workspaces ?? []).map((ws) => ({
       ...ws,
@@ -203,6 +240,39 @@ export const useDeck = create<DeckState>((set, get) => ({
   },
 
   refreshProfiles: async () => set({ profiles: await api.listProfiles() }),
+
+  setUpdate: (update) => set({ update }),
+
+  checkForUpdate: async () => set({ update: await api.update.check(), updateError: null }),
+
+  installUpdate: async () => {
+    const { update, updateInstalling, settings, workspaces } = get()
+    if (!update?.available || updateInstalling) return
+    const running = workspaces.reduce(
+      (total, ws) => total + ws.panes.filter((p) => p.status === 'running').length,
+      0
+    )
+    if (running && settings.confirmCloseRunning) {
+      const ok = await api.confirm({
+        title: 'Install update',
+        message: `${running} pane${running === 1 ? ' is' : 's are'} still running.`,
+        detail: 'Harness Deck closes to install, then reopens. Their processes will be terminated.',
+        confirmLabel: 'Restart & install'
+      })
+      if (!ok) return
+    }
+    set({ updateInstalling: true, updateError: null })
+    const result = await api.update.install()
+    // On success the app is quitting, so only a failure needs handling here.
+    if (!result.ok) {
+      set({ updateInstalling: false, updateError: result.error || 'The installer did not start.' })
+    }
+  },
+
+  dismissUpdate: () =>
+    set({ updateDismissed: get().update?.available?.version ?? null, updateError: null }),
+
+  showUpdate: () => set({ updateDismissed: null }),
 
   addWorkspace: (name, cwd) => {
     const { workspaces, settings, info } = get()
@@ -437,6 +507,9 @@ export const useDeck = create<DeckState>((set, get) => ({
     get().updateWorkspace(workspaceId, { columns: Math.min(4, Math.max(1, columns)) }),
 
   updateSettings: (patch) => set({ settings: { ...get().settings, ...patch } }),
+
+  updateVoice: (patch) =>
+    set({ settings: { ...get().settings, voice: { ...get().settings.voice, ...patch } } }),
 
   setUi: (patch) => set({ ui: { ...get().ui, ...patch } })
 }))

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useDeck, type DeckWorkspace } from '../store'
 import { Icon } from './Icon'
+import { MicButton } from './MicButton'
 import { ProfileMenu } from './ProfileMenu'
 
 const api = window.harness
@@ -96,6 +97,8 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
             </button>
           </div>
         ) : null}
+
+        <MicButton />
 
         <button
           className={`ghost-btn ${ui.broadcast ? 'on' : ''}`}

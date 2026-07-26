@@ -3,6 +3,7 @@ import { useDeck } from '../store'
 import { DEFAULT_SETTINGS } from '../store'
 import { Field, Modal, Toggle } from './ui'
 import { Icon } from './Icon'
+import { VoiceSettings } from './VoiceSettings'
 
 const api = window.harness
 
@@ -12,6 +13,9 @@ export function SettingsDialog(): React.JSX.Element {
   const info = useDeck((s) => s.info)
   const profiles = useDeck((s) => s.profiles)
   const setUi = useDeck((s) => s.setUi)
+  const update = useDeck((s) => s.update)
+  const checkForUpdate = useDeck((s) => s.checkForUpdate)
+  const installUpdate = useDeck((s) => s.installUpdate)
   const [stateFile, setStateFile] = useState('')
 
   useEffect(() => {
@@ -151,6 +155,50 @@ export function SettingsDialog(): React.JSX.Element {
             <Icon name="refresh" />
             <span>Rescan</span>
           </button>
+        </section>
+
+        <VoiceSettings />
+
+        <section className="settings-wide">
+          <h3>Updates</h3>
+          <div className="detect-list">
+            <div className={`detect-row ${update?.stage === 'available' ? 'ok' : ''}`}>
+              <span className="detect-name">
+                {update?.stage === 'available' && update.available
+                  ? `Version ${update.available.version} is ready to install`
+                  : update?.stage === 'error'
+                    ? update.error
+                    : `Up to date on ${update?.current ?? info?.versions.app}`}
+              </span>
+              <code className="detect-path">
+                {update?.lastCheckedAt
+                  ? `checked ${new Date(update.lastCheckedAt).toLocaleTimeString()}`
+                  : 'not checked yet'}
+              </code>
+            </div>
+          </div>
+          <div className="row">
+            <button className="btn subtle" onClick={() => void checkForUpdate()}>
+              <Icon name="refresh" />
+              <span>Check now</span>
+            </button>
+            {update?.stage === 'available' && update.installable ? (
+              <button className="btn primary" onClick={() => void installUpdate()}>
+                <Icon name="restart" />
+                <span>Restart &amp; install</span>
+              </button>
+            ) : null}
+          </div>
+          <span className="field-hint">
+            Releases are picked up from{' '}
+            <button
+              className="link"
+              onClick={() => api.openPath(update?.manifestPath ?? '')}
+              title={update?.manifestPath}
+            >
+              {update?.manifestPath}
+            </button>
+          </span>
         </section>
 
         <section className="settings-wide muted">

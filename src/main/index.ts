@@ -1,17 +1,36 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  session,
+  shell,
+  systemPreferences
+} from 'electron'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import type { PaneSpec, PersistedState } from '@shared/types'
+import type {
+  PaneSpec,
+  PersistedState,
+  TranscribeRequest,
+  VoiceProvider
+} from '@shared/types'
 import { detectProfiles } from './profiles'
 import { PtyManager } from './pty'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
+import { keyState, setKey, transcribe } from './voice'
+import { checkNow, currentState, disposeUpdater, initUpdater, install } from './updater'
 
 app.setName('Harness Deck')
 
 let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
+/** Set when we are quitting to hand over to an installer — skip the pane prompt. */
+let quittingForUpdate = false
 
 /**
  * Smoke-test hooks:
@@ -20,12 +39,21 @@ let ptys: PtyManager | null = null
  *   --capture-keys=ctrl+shift+p press these chords first (comma separated)
  *   --capture-quit              exit once the PNG is written
  *   --dump-profiles             print detected harnesses as JSON and exit
+ *   --voice-check[=ms]          record from the mic, transcribe, print JSON, exit
+ *   --voice-endpoint=<url>      transcribe against this endpoint for the check
+ *   --voice-model=<name>        model to ask that endpoint for
  */
 const captureTarget = argValue('--capture')
 const captureDelay = Number(argValue('--capture-delay') ?? 2500)
 const captureKeys = argValue('--capture-keys')
 const captureKeysDelay = Number(argValue('--capture-keys-delay') ?? 800)
 const captureQuit = process.argv.includes('--capture-quit')
+const voiceCheck = process.argv.includes('--voice-check') || argValue('--voice-check') !== undefined
+const voiceCheckMs = Number(argValue('--voice-check') || 2500)
+const voiceOverride = {
+  baseUrl: argValue('--voice-endpoint'),
+  model: argValue('--voice-model')
+}
 
 function argValue(flag: string): string | undefined {
   const match = process.argv.find((a) => a.startsWith(`${flag}=`))
@@ -34,8 +62,11 @@ function argValue(flag: string): string | undefined {
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
-function sendChords(win: BrowserWindow, chords: string): void {
-  for (const chord of chords.split(',')) {
+/** Presses each chord in turn, pausing between them so the UI can react. */
+async function sendChords(win: BrowserWindow, chords: string, gap: number): Promise<void> {
+  const list = chords.split(',')
+  for (const [index, chord] of list.entries()) {
+    if (index) await wait(gap)
     const parts = chord.split('+').map((part) => part.trim())
     const key = parts.pop()
     if (!key) continue
@@ -78,7 +109,7 @@ function createWindow(): BrowserWindow {
   // Closing the window kills every agent, so check first.
   let closeConfirmed = false
   win.on('close', (event) => {
-    if (closeConfirmed || captureTarget) return
+    if (closeConfirmed || captureTarget || voiceCheck || quittingForUpdate) return
     const running = ptys?.runningIds().length ?? 0
     if (!running) return
     if (loadState()?.settings?.confirmCloseRunning === false) return
@@ -131,7 +162,7 @@ function createWindow(): BrowserWindow {
       setTimeout(async () => {
         try {
           if (captureKeys) {
-            sendChords(win, captureKeys)
+            await sendChords(win, captureKeys, captureKeysDelay)
             await wait(captureKeysDelay)
           }
           const image = await win.webContents.capturePage()
@@ -147,7 +178,49 @@ function createWindow(): BrowserWindow {
     })
   }
 
+  // Mic capture can only be exercised from the renderer, so ask it to run the
+  // round trip and print what came back.
+  if (voiceCheck) {
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          const result = await win.webContents.executeJavaScript(
+            `window.__deckVoiceCheck(${Number.isFinite(voiceCheckMs) ? voiceCheckMs : 2500}, ${JSON.stringify(voiceOverride)})`,
+            true
+          )
+          console.log(JSON.stringify(result, null, 2))
+        } catch (err) {
+          console.error('[voice-check] failed:', err)
+        }
+        app.quit()
+      }, 2000)
+    })
+  }
+
   return win
+}
+
+/**
+ * Electron hands out every permission by default. Dictation needs the
+ * microphone and the pane bell needs notifications; nothing else has a reason
+ * to ask, so the rest are refused.
+ */
+function restrictPermissions(): void {
+  const allowed = new Set([
+    'media',
+    'audioCapture',
+    'notifications',
+    'clipboard-sanitized-write'
+  ])
+  const decide = (permission: string): boolean => {
+    const ok = allowed.has(permission)
+    if (!ok) console.warn(`[permissions] denied ${permission}`)
+    return ok
+  }
+  session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) =>
+    callback(decide(permission))
+  )
+  session.defaultSession.setPermissionCheckHandler((_contents, permission) => decide(permission))
 }
 
 function registerIpc(): void {
@@ -169,6 +242,10 @@ function registerIpc(): void {
   ipcMain.handle('state:location', () => stateLocation())
 
   ipcMain.handle('profiles:list', () => detectProfiles())
+
+  ipcMain.handle('update:state', () => currentState())
+  ipcMain.handle('update:check', () => checkNow())
+  ipcMain.handle('update:install', () => install())
 
   ipcMain.handle('pty:ensure', (_e, spec: PaneSpec, cols: number, rows: number) =>
     ptys!.ensure(spec, cols, rows)
@@ -207,6 +284,17 @@ function registerIpc(): void {
     return response === 0
   })
 
+  ipcMain.handle('voice:keyState', (_e, provider: VoiceProvider) => keyState(provider))
+  ipcMain.handle('voice:setKey', (_e, provider: VoiceProvider, key: string | null) =>
+    setKey(provider, key)
+  )
+  ipcMain.handle('voice:transcribe', (_e, req: TranscribeRequest) => transcribe(req))
+  ipcMain.handle('voice:micAccess', async () => {
+    if (process.platform !== 'darwin') return true
+    if (systemPreferences.getMediaAccessStatus('microphone') === 'granted') return true
+    return systemPreferences.askForMediaAccess('microphone')
+  })
+
   ipcMain.handle('clipboard:read', () => clipboard.readText())
   ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
 
@@ -219,8 +307,10 @@ function registerIpc(): void {
   ipcMain.on('window:close', () => mainWindow?.close())
   ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
 
+  // `ms-settings:` is allowed so the app can send the user to the Windows
+  // microphone privacy page when capture is blocked there.
   ipcMain.on('app:openExternal', (_e, url: string) => {
-    if (/^https?:/.test(url)) shell.openExternal(url)
+    if (/^(https?|ms-settings):/.test(url)) shell.openExternal(url)
   })
   ipcMain.on('app:openPath', (_e, path: string) => shell.openPath(path))
 
@@ -256,9 +346,17 @@ if (!app.requestSingleInstanceLock()) {
       return
     }
 
+    restrictPermissions()
     ptys = new PtyManager(send)
     registerIpc()
     mainWindow = createWindow()
+
+    initUpdater({
+      publish: (state) => send('update:changed', state),
+      beforeInstallQuit: () => {
+        quittingForUpdate = true
+      }
+    })
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
@@ -270,5 +368,8 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('before-quit', () => ptys?.disposeAll())
+  app.on('before-quit', () => {
+    disposeUpdater()
+    ptys?.disposeAll()
+  })
 }

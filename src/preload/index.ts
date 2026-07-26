@@ -2,12 +2,18 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppInfo,
   EnsureResult,
+  InstallResult,
   PaneSpec,
   PaneStatus,
   PersistedState,
   Profile,
   PtyDataEvent,
-  PtyExitEvent
+  PtyExitEvent,
+  TranscribeRequest,
+  TranscribeResult,
+  UpdateState,
+  VoiceKeyState,
+  VoiceProvider
 } from '@shared/types'
 
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -24,6 +30,14 @@ const api = {
   stateLocation: (): Promise<string> => ipcRenderer.invoke('state:location'),
 
   listProfiles: (): Promise<Profile[]> => ipcRenderer.invoke('profiles:list'),
+
+  update: {
+    state: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
+    check: (): Promise<UpdateState> => ipcRenderer.invoke('update:check'),
+    install: (): Promise<InstallResult> => ipcRenderer.invoke('update:install'),
+    onChange: (handler: (state: UpdateState) => void): (() => void) =>
+      subscribe('update:changed', handler)
+  },
 
   pty: {
     ensure: (spec: PaneSpec, cols: number, rows: number): Promise<EnsureResult> =>
@@ -53,6 +67,18 @@ const api = {
   clipboard: {
     read: (): Promise<string> => ipcRenderer.invoke('clipboard:read'),
     write: (text: string): void => ipcRenderer.send('clipboard:write', text)
+  },
+
+  voice: {
+    keyState: (provider: VoiceProvider): Promise<VoiceKeyState> =>
+      ipcRenderer.invoke('voice:keyState', provider),
+    /** Pass null to forget the stored key. */
+    setKey: (provider: VoiceProvider, key: string | null): Promise<VoiceKeyState> =>
+      ipcRenderer.invoke('voice:setKey', provider, key),
+    transcribe: (req: TranscribeRequest): Promise<TranscribeResult> =>
+      ipcRenderer.invoke('voice:transcribe', req),
+    /** macOS only; elsewhere the OS has no per-app microphone gate. */
+    requestMicAccess: (): Promise<boolean> => ipcRenderer.invoke('voice:micAccess')
   },
 
   window: {

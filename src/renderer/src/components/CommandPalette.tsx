@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useDeck } from '../store'
+import { useVoice } from '../voice'
 import { Icon } from './Icon'
 
 const api = window.harness
@@ -182,11 +183,41 @@ export function CommandPalette(): React.JSX.Element {
         run: () => state.setUi({ help: true })
       },
       {
+        id: 'app:dictate',
+        group: 'Application',
+        label:
+          useVoice.getState().status === 'listening'
+            ? 'Stop dictating'
+            : 'Dictate into the focused prompt',
+        hint: 'Ctrl+Shift+M',
+        run: () => useVoice.getState().toggle()
+      },
+      {
         id: 'app:rescan',
         group: 'Application',
         label: 'Rescan for installed harnesses',
         run: () => void state.refreshProfiles()
       },
+      {
+        id: 'app:check-update',
+        group: 'Application',
+        label: 'Check for updates',
+        hint: state.update?.stage === 'available' ? state.update.available?.version : undefined,
+        run: () => {
+          state.showUpdate()
+          void state.checkForUpdate()
+        }
+      },
+      ...(state.update?.stage === 'available' && state.update.installable
+        ? [
+            {
+              id: 'app:install-update',
+              group: 'Application',
+              label: `Restart and install ${state.update.available?.version}`,
+              run: () => void state.installUpdate()
+            }
+          ]
+        : []),
       {
         id: 'app:sidebar',
         group: 'Application',

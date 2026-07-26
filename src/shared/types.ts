@@ -75,6 +75,55 @@ export interface Settings {
   defaultCwd: string
   bellNotifications: boolean
   sidebarCollapsed: boolean
+  voice: VoiceSettings
+}
+
+/** Speech-to-text service. `custom` is any OpenAI-compatible endpoint. */
+export type VoiceProvider = 'openrouter' | 'openai' | 'groq' | 'custom'
+
+/** Dictation preferences. Empty strings mean "use the provider default". */
+export interface VoiceSettings {
+  provider: VoiceProvider
+  baseUrl: string
+  model: string
+  /** ISO-639-1 hint ("en"); empty lets the model detect the language. */
+  language: string
+  /** Vocabulary hint — names and jargon the model keeps misspelling. */
+  prompt: string
+  /** Press Enter after the transcript is inserted. */
+  submit: boolean
+  /** Stop recording by itself once you stop talking. */
+  autoStop: boolean
+}
+
+/** Where the API key for the selected provider comes from, if anywhere. */
+export interface VoiceKeyState {
+  hasKey: boolean
+  source: 'stored' | 'env' | 'none'
+  /** Environment variable it was read from, when `source` is `env`. */
+  envVar?: string
+  /** False when no OS keychain was available and the stored key is only obfuscated. */
+  encrypted?: boolean
+}
+
+export interface TranscribeRequest {
+  audio: ArrayBuffer
+  mimeType: string
+  fileName: string
+  provider: VoiceProvider
+  /** Fully resolved, without a trailing slash. */
+  baseUrl: string
+  model: string
+  language?: string
+  prompt?: string
+}
+
+export interface TranscribeResult {
+  text?: string
+  error?: string
+  /** HTTP status, when the request reached the service. */
+  status?: number
+  ms: number
 }
 
 export interface PersistedState {
@@ -112,4 +161,33 @@ export interface PtyExitEvent {
   id: string
   exitCode: number
   signal?: number
+}
+
+/** What a waiting release tells the user about itself. */
+export interface UpdateInfo {
+  version: string
+  /** One-line summary of the change, usually the release commit subject. */
+  notes?: string
+  releasedAt?: string
+  /** Installer size in bytes. */
+  size?: number
+}
+
+export interface UpdateState {
+  stage: 'idle' | 'available' | 'error'
+  /** Version of the running app. */
+  current: string
+  /** Set only when a newer release is sitting in the channel, ready to install. */
+  available: UpdateInfo | null
+  /** The manifest the app is watching — shown in Settings so it can be checked. */
+  manifestPath: string
+  lastCheckedAt: string | null
+  error?: string
+  /** False in `npm run dev`: there is no installed copy to replace. */
+  installable: boolean
+}
+
+export interface InstallResult {
+  ok: boolean
+  error?: string
 }

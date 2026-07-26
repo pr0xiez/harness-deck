@@ -9,7 +9,10 @@ import { BroadcastBar } from './components/BroadcastBar'
 import { CommandPalette } from './components/CommandPalette'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
+import { UpdateToast } from './components/UpdateToast'
+import { VoiceHud } from './components/VoiceHud'
 import { Icon } from './components/Icon'
+import { useVoice } from './voice'
 
 const api = window.harness
 
@@ -47,6 +50,13 @@ export function App(): React.JSX.Element {
       offData()
       offExit()
     }
+  }, [])
+
+  // The main process watches the release channel and pushes whatever it finds.
+  useEffect(() => {
+    const setUpdate = useDeck.getState().setUpdate
+    void api.update.state().then(setUpdate)
+    return api.update.onChange(setUpdate)
   }, [])
 
   useEffect(() => {
@@ -121,6 +131,10 @@ export function App(): React.JSX.Element {
           case 'b':
             take()
             return state.setUi({ broadcast: !state.ui.broadcast })
+          // Above the `typing` guard so dictation also works from a text box.
+          case 'm':
+            take()
+            return useVoice.getState().toggle()
           case 'n':
             take()
             state.addWorkspace()
@@ -287,6 +301,9 @@ export function App(): React.JSX.Element {
           {active && ui.broadcast ? <BroadcastBar workspace={active} /> : null}
         </main>
       </div>
+
+      <UpdateToast />
+      <VoiceHud />
 
       {ui.palette ? <CommandPalette /> : null}
       {ui.settings ? <SettingsDialog /> : null}

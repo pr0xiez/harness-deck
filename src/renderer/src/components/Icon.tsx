@@ -23,6 +23,8 @@ export type IconName =
   | 'winClose'
   | 'check'
   | 'refresh'
+  | 'mic'
+  | 'stop'
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   search: (
@@ -102,7 +104,15 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <path d="M13 8a5 5 0 1 1-1.6-3.7" />
       <path d="M13 2.5V5h-2.5" />
     </>
-  )
+  ),
+  mic: (
+    <>
+      <rect x="6" y="1.8" width="4" height="7.4" rx="2" />
+      <path d="M3.8 7.4a4.2 4.2 0 0 0 8.4 0" />
+      <path d="M8 11.6v2.6M5.8 14.2h4.4" />
+    </>
+  ),
+  stop: <rect x="4.5" y="4.5" width="7" height="7" rx="1.5" />
 }
 
 interface Props {

@@ -65,9 +65,11 @@ jobs:
       - run: npm run build
 
       # Tags publish a draft GitHub release; every other run just leaves the
-      # installers as workflow artifacts. Publishing through electron-builder
-      # rather than a generic upload is what produces the latest*.yml metadata
-      # that electron-updater reads.
+      # installers as workflow artifacts. This is a distribution channel only —
+      # the in-app updater reads a local update.json written by
+      # scripts/release.mjs and never looks at GitHub. Publishing through
+      # electron-builder still emits the latest*.yml metadata, so pointing the
+      # updater at releases later is a change to updater.ts alone.
       - name: Package
         run: npx electron-builder --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
         env:

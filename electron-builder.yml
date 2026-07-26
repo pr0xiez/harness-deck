@@ -3,9 +3,9 @@ productName: Harness Deck
 directories:
   output: release
   buildResources: build
-# Only used when electron-builder is run with `--publish always` (see the
-# release job in .github/workflows/build.yml); it uploads to a draft release
-# and writes the latest*.yml metadata alongside the installers.
+# Only used when electron-builder runs with `--publish always` (the tag job in
+# .github/workflows/build.yml). Unrelated to the in-app updater, which reads a
+# local manifest — see scripts/release.mjs.
 publish:
   provider: github
   owner: pr0xiez
@@ -34,10 +34,12 @@ mac:
   category: public.app-category.developer-tools
   artifactName: ${productName}-${version}-${arch}.${ext}
   darkModeSupport: true
+  extendInfo:
+    NSMicrophoneUsageDescription: Dictate prompts into your agents.
   # Harness Deck spawns whatever binaries the user points it at, so it can never
   # be sandboxed — the Mac App Store is out, and this ships signed + notarised
-  # or not at all. The entitlements cover V8's JIT and loading node-pty's
-  # unsigned prebuilt .node under the hardened runtime.
+  # or not at all. The entitlements cover V8's JIT, loading node-pty's unsigned
+  # prebuilt .node, and the microphone dictation records from.
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist

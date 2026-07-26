@@ -27,6 +27,19 @@ const EXTRA_PATH_CANDIDATES = [
 ]
 
 /**
+ * Absolute directories worth adding on macOS. Homebrew is where most people's
+ * node — and therefore most agent CLIs — actually lives, and it is never on the
+ * PATH a Finder-launched app inherits. Apple Silicon uses /opt/homebrew; Intel
+ * and older installs use /usr/local.
+ */
+const DARWIN_PATH_CANDIDATES = [
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/local/sbin'
+]
+
+/**
  * Windows PATH can be unusable — most often when the app is started from a WSL
  * shell, which hands its Linux PATH to the Windows process. Make sure the
  * directories that matter (System32, global npm) are always searchable.
@@ -55,6 +68,9 @@ export function defaultShell(): string {
   if (process.platform === 'win32') {
     return findWindowsShell()
   }
+  // macOS has shipped zsh as the default since Catalina, and its /bin/bash is
+  // still 3.2 — a poor fallback if SHELL is somehow unset.
+  if (process.platform === 'darwin') return process.env.SHELL || '/bin/zsh'
   return process.env.SHELL || '/bin/bash'
 }
 
@@ -75,9 +91,11 @@ function withUserBins(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (process.platform === 'win32') return withWindowsBins(env)
   const home = homedir()
   const current = (env.PATH || '').split(delimiter).filter(Boolean)
-  const missing = EXTRA_PATH_CANDIDATES.map((rel) => join(home, rel)).filter(
-    (dir) => existsSync(dir) && !current.includes(dir)
-  )
+  const candidates = [
+    ...EXTRA_PATH_CANDIDATES.map((rel) => join(home, rel)),
+    ...(process.platform === 'darwin' ? DARWIN_PATH_CANDIDATES : [])
+  ]
+  const missing = candidates.filter((dir) => existsSync(dir) && !current.includes(dir))
   if (!missing.length) return env
   return { ...env, PATH: [...missing, ...current].join(delimiter) }
 }
@@ -103,8 +121,12 @@ export async function resolveShellEnv(): Promise<NodeJS.ProcessEnv> {
     ['-c', script]
   ]
 
+  // A macOS .zshrc routinely sources nvm, rbenv or oh-my-zsh before it reaches
+  // `env`, which takes well over a second on a cold start.
+  const timeout = process.platform === 'darwin' ? 8000 : 4000
+
   for (const args of attempts) {
-    const out = await run(shell, args, 4000)
+    const out = await run(shell, args, timeout)
     if (!out) continue
     const parsed = parseEnv(out)
     if (parsed?.PATH) {

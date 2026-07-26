@@ -6,6 +6,8 @@ const api = window.harness
 
 export function TitleBar(): React.JSX.Element {
   const [maximized, setMaximized] = useState(false)
+  const [fullscreen, setFullscreen] = useState(false)
+  const isMac = useDeck((s) => s.info?.platform === 'darwin')
   const setUi = useDeck((s) => s.setUi)
   const workspaces = useDeck((s) => s.workspaces)
   const activeId = useDeck((s) => s.activeWorkspaceId)
@@ -17,11 +19,18 @@ export function TitleBar(): React.JSX.Element {
 
   useEffect(() => {
     void api.window.isMaximized().then(setMaximized)
-    return api.window.onMaximizedChange(setMaximized)
+    const offMaximized = api.window.onMaximizedChange(setMaximized)
+    const offFullscreen = api.window.onFullscreenChange(setFullscreen)
+    return () => {
+      offMaximized()
+      offFullscreen()
+    }
   }, [])
 
+  // macOS draws its traffic lights over the left of the bar — except in
+  // fullscreen, where they are gone and the space would be dead.
   return (
-    <div className="titlebar">
+    <div className={`titlebar${isMac && !fullscreen ? ' mac-inset' : ''}`}>
       <div className="titlebar-left">
         <span className="wordmark">
           <span className="wordmark-dot" />
@@ -57,21 +66,23 @@ export function TitleBar(): React.JSX.Element {
         <button className="icon-btn" title="Settings (Ctrl+Shift+,)" onClick={() => setUi({ settings: true })}>
           <Icon name="settings" />
         </button>
-        <div className="window-controls">
-          <button className="win-btn" title="Minimise" onClick={() => api.window.minimize()}>
-            <Icon name="winMin" />
-          </button>
-          <button
-            className="win-btn"
-            title={maximized ? 'Restore' : 'Maximise'}
-            onClick={() => api.window.toggleMaximize()}
-          >
-            <Icon name={maximized ? 'winRestore' : 'winMax'} />
-          </button>
-          <button className="win-btn close" title="Close" onClick={() => api.window.close()}>
-            <Icon name="winClose" />
-          </button>
-        </div>
+        {isMac ? null : (
+          <div className="window-controls">
+            <button className="win-btn" title="Minimise" onClick={() => api.window.minimize()}>
+              <Icon name="winMin" />
+            </button>
+            <button
+              className="win-btn"
+              title={maximized ? 'Restore' : 'Maximise'}
+              onClick={() => api.window.toggleMaximize()}
+            >
+              <Icon name={maximized ? 'winRestore' : 'winMax'} />
+            </button>
+            <button className="win-btn close" title="Close" onClick={() => api.window.close()}>
+              <Icon name="winClose" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

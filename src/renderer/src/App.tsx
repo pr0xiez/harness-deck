@@ -81,9 +81,29 @@ export function App(): React.JSX.Element {
         event.stopPropagation()
       }
 
-      // Shift rewrites punctuation ("," becomes "<"), so match on the physical
-      // key for those and on the character for letters.
+      // Shift rewrites punctuation ("," becomes "<"), and on macOS Option
+      // rewrites digits (Option+1 is "¡"), so match both on the physical key
+      // and keep matching letters on the character.
       const code = event.code
+      const digit = /^(?:Digit|Numpad)([1-9])$/.exec(code)?.[1] ?? null
+      const isMac = state.info?.platform === 'darwin'
+
+      // macOS: the Edit menu owns Cmd+V, which xterm receives as a real paste
+      // event. Cmd+C has to be ours — a pane's selection belongs to xterm and
+      // never lands in the DOM where webContents.copy() would find it.
+      if (isMac && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && key === 'c') {
+        take()
+        const field = inTerminal ? null : (target as HTMLInputElement | HTMLTextAreaElement | null)
+        const selected =
+          field && typeof field.selectionStart === 'number' && field.selectionStart !== field.selectionEnd
+            ? field.value.slice(field.selectionStart, field.selectionEnd ?? undefined)
+            : ''
+        const text = inTerminal
+          ? (paneId ? getTerminal(paneId)?.term.getSelection() ?? '' : '')
+          : selected || window.getSelection()?.toString() || ''
+        if (text) api.clipboard.write(text)
+        return
+      }
 
       if (ctrl && event.shiftKey) {
         if (code === 'Comma' || key === ',' || key === '<') {
@@ -185,8 +205,8 @@ export function App(): React.JSX.Element {
           state.cycleWorkspace(-1)
           return
         }
-        if (/^[1-9]$/.test(event.key)) {
-          const workspaceAt = state.workspaces[Number(event.key) - 1]
+        if (digit) {
+          const workspaceAt = state.workspaces[Number(digit) - 1]
           if (workspaceAt) {
             take()
             state.setActiveWorkspace(workspaceAt.id)
@@ -211,8 +231,8 @@ export function App(): React.JSX.Element {
         }
       }
 
-      if (event.altKey && /^[1-9]$/.test(event.key) && workspace) {
-        const pane = workspace.panes[Number(event.key) - 1]
+      if (event.altKey && digit && workspace) {
+        const pane = workspace.panes[Number(digit) - 1]
         if (pane) {
           take()
           state.setActivePane(workspace.id, pane.id)

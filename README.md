@@ -43,6 +43,7 @@ re-attaches to the running processes and repaints the last ~512 KB of output.
 ## Requirements
 
 - Node.js 20+ and npm (for development)
+- Windows, macOS or Linux
 - At least one agent CLI on your `PATH` — or WSL with one installed
 
 ## Getting started
@@ -79,10 +80,34 @@ launched as `wsl.exe -e bash -lic '…'` and the pane's folder is handed over as
 a translated Unix path (`D:\Code\app` becomes `/mnt/d/Code/app`) using
 `WSLENV`, so the agent starts in the right directory.
 
+### macOS
+
+The window keeps its traffic lights and gains a small menu bar — macOS routes
+`Cmd+Q`, `Cmd+W` and the text-field clipboard through it, so an app without one
+can't quit or paste. Closing the window leaves the agents running and the app
+in the dock; reopening re-attaches every pane. Homebrew's `bin` directories are
+added to `PATH` on top of the login-shell environment, since a Finder-launched
+app never inherits them and that is where most agent CLIs live.
+
+Packaging must happen **on a Mac**: `@lydell/node-pty`'s prebuilt binaries are
+per-platform optional dependencies, so an `npm install` run on Windows or Linux
+never fetches the Darwin one and the packaged app would have no pty.
+
+```bash
+npm run package   # dmg + zip for arm64 and x64 into release/
+```
+
+Unsigned builds are fine locally — set `CSC_IDENTITY_AUTO_DISCOVERY=false` — but
+Gatekeeper quarantines a DMG that has been downloaded, so a build meant for
+anyone else needs an Apple Developer ID and notarisation. The hardened-runtime
+entitlements it needs are already in `build/entitlements.mac.plist`. Drop a
+1024px `build/icon.icns` in to replace the stock Electron icon.
+
 ## Keyboard
 
 Terminals get every plain key combination, so the app keeps to `Ctrl+Shift`
-and `Alt`. On macOS use `Cmd` in place of `Ctrl`.
+and `Alt`. On macOS use `Cmd` in place of `Ctrl` — plus `Cmd+C` / `Cmd+V` on a
+pane, and `Cmd+Alt+I` for developer tools.
 
 | Keys | Action |
 | --- | --- |

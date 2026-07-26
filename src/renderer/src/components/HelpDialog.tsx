@@ -44,14 +44,34 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
   ]
 ]
 
+/** Rewrites the Windows/Linux chords above into their macOS equivalents. */
+function forMac(keys: string): string {
+  return keys
+    .replace(/Ctrl\+/g, '⌘')
+    .replace(/Shift\+/g, '⇧')
+    .replace(/Alt\+/g, '⌥')
+    .replace(/\bCtrl\b/g, '⌘')
+    .replace(/\bAlt\b/g, '⌥')
+    .replace(/\bF12\b/g, '⌘⌥I')
+}
+
 export function HelpDialog(): React.JSX.Element {
   const setUi = useDeck((s) => s.setUi)
+  const isMac = useDeck((s) => s.info?.platform === 'darwin')
   return (
     <Modal title="Keyboard shortcuts" wide onClose={() => setUi({ help: false })}>
       <p className="help-lead">
-        Terminals get every plain key combination, so the app keeps to{' '}
-        <Kbd>Ctrl</Kbd>+<Kbd>Shift</Kbd> and <Kbd>Alt</Kbd>. On macOS use <Kbd>Cmd</Kbd> in place of{' '}
-        <Kbd>Ctrl</Kbd>.
+        {isMac ? (
+          <>
+            Terminals get every plain key combination, so the app keeps to <Kbd>⌘</Kbd>
+            <Kbd>⇧</Kbd> and <Kbd>⌥</Kbd>. <Kbd>⌘C</Kbd> and <Kbd>⌘V</Kbd> also work on a pane.
+          </>
+        ) : (
+          <>
+            Terminals get every plain key combination, so the app keeps to <Kbd>Ctrl</Kbd>+
+            <Kbd>Shift</Kbd> and <Kbd>Alt</Kbd>.
+          </>
+        )}
       </p>
       <div className="help-grid">
         {SHORTCUTS.map(([group, rows]) => (
@@ -62,7 +82,7 @@ export function HelpDialog(): React.JSX.Element {
                 {rows.map(([keys, description]) => (
                   <tr key={keys}>
                     <td>
-                      <Kbd>{keys}</Kbd>
+                      <Kbd>{isMac ? forMac(keys) : keys}</Kbd>
                     </td>
                     <td>{description}</td>
                   </tr>

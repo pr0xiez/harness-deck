@@ -62,6 +62,8 @@ const api = {
     isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
     onMaximizedChange: (handler: (maximized: boolean) => void): (() => void) =>
       subscribe('window:maximized', handler),
+    onFullscreenChange: (handler: (fullscreen: boolean) => void): (() => void) =>
+      subscribe('window:fullscreen', handler),
     onFocusChange: (handler: (focused: boolean) => void): (() => void) =>
       subscribe('window:focus', handler)
   },

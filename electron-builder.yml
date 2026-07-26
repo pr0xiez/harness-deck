@@ -20,9 +20,23 @@ nsis:
   perMachine: false
 mac:
   target:
-    - dmg
-    - zip
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
   category: public.app-category.developer-tools
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  darkModeSupport: true
+  # Harness Deck spawns whatever binaries the user points it at, so it can never
+  # be sandboxed — the Mac App Store is out, and this ships signed + notarised
+  # or not at all. The entitlements cover V8's JIT and loading node-pty's
+  # unsigned prebuilt .node under the hardened runtime.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  gatekeeperAssess: false
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
 linux:
   target:
     - AppImage

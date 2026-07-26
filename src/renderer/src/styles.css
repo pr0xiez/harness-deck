@@ -146,6 +146,11 @@ code {
   border-bottom: 1px solid var(--line);
 }
 
+/* Clears the macOS traffic lights, which the system draws over our bar. */
+.titlebar.mac-inset {
+  padding-left: 78px;
+}
+
 .titlebar-drag {
   flex: 1;
   height: 100%;

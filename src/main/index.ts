@@ -10,6 +10,8 @@ import { defaultShell, resolveShellEnv } from './shell-env'
 
 app.setName('Harness Deck')
 
+const isMac = process.platform === 'darwin'
+
 let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
 
@@ -39,9 +41,12 @@ function sendChords(win: BrowserWindow, chords: string): void {
     const parts = chord.split('+').map((part) => part.trim())
     const key = parts.pop()
     if (!key) continue
-    const modifiers = parts.map((part) =>
-      part.toLowerCase() === 'ctrl' ? 'control' : part.toLowerCase()
-    )
+    const modifiers = parts.map((part) => {
+      const name = part.toLowerCase()
+      if (name === 'ctrl') return 'control'
+      if (name === 'cmd' || name === 'command') return 'meta'
+      return name
+    })
     const keyCode = key.length === 1 ? key.toUpperCase() : key
     for (const type of ['keyDown', 'keyUp'] as const) {
       win.webContents.sendInputEvent({ type, keyCode, modifiers } as Electron.KeyboardInputEvent)
@@ -49,10 +54,70 @@ function sendChords(win: BrowserWindow, chords: string): void {
   }
 }
 
+/**
+ * Everywhere but macOS the titlebar is entirely ours and there is no menu. On
+ * macOS the menu bar *is* the shortcut table: without it there is no Cmd+Q, no
+ * Cmd+W, and no clipboard in any text field. Copy is the one exception — it is
+ * listed for discoverability but its accelerator is left unregistered, because
+ * a terminal's selection lives inside xterm and never reaches the DOM, so the
+ * renderer has to service Cmd+C itself (see App.tsx).
+ */
+function installMenu(): void {
+  if (!isMac) {
+    Menu.setApplicationMenu(null)
+    return
+  }
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { role: 'appMenu' },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy', accelerator: 'Cmd+C', registerAccelerator: false },
+          { role: 'paste' },
+          { role: 'selectAll' }
+        ]
+      },
+      { label: 'View', submenu: [{ role: 'togglefullscreen' }, { role: 'toggleDevTools' }] },
+      { role: 'windowMenu' }
+    ])
+  )
+}
+
 function send(channel: string, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload)
   }
+}
+
+/** Nothing is running, or the user has switched the warning off. */
+function skipStopPrompt(): boolean {
+  if (!ptys?.runningIds().length) return true
+  return loadState()?.settings?.confirmCloseRunning === false
+}
+
+/** The "N panes are still running" prompt. True when the user said go ahead. */
+function askStopRunning(win: BrowserWindow | null): boolean {
+  const running = ptys?.runningIds().length ?? 0
+  const options: Electron.MessageBoxSyncOptions = {
+    type: 'question',
+    buttons: ['Quit anyway', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Quit Harness Deck',
+    message: `${running} pane${running === 1 ? ' is' : 's are'} still running.`,
+    detail: 'Their processes will be terminated.',
+    noLink: true
+  }
+  const response =
+    win && !win.isDestroyed()
+      ? dialog.showMessageBoxSync(win, options)
+      : dialog.showMessageBoxSync(options)
+  return response === 0
 }
 
 function createWindow(): BrowserWindow {
@@ -62,7 +127,11 @@ function createWindow(): BrowserWindow {
     minWidth: 860,
     minHeight: 560,
     show: false,
-    frame: false,
+    // A frameless window on macOS has no traffic lights at all, so there we
+    // only hide the titlebar and place the lights inside our own 34px bar.
+    ...(isMac
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 13, y: 11 } }
+      : { frame: false }),
     backgroundColor: '#0b0e13',
     title: 'Harness Deck',
     webPreferences: {
@@ -75,25 +144,14 @@ function createWindow(): BrowserWindow {
 
   win.on('ready-to-show', () => win.show())
 
-  // Closing the window kills every agent, so check first.
+  // Closing the window kills every agent, so check first — except on macOS,
+  // where the sessions outlive the window and the warning moves to quit.
   let closeConfirmed = false
   win.on('close', (event) => {
-    if (closeConfirmed || captureTarget) return
-    const running = ptys?.runningIds().length ?? 0
-    if (!running) return
-    if (loadState()?.settings?.confirmCloseRunning === false) return
+    if (closeConfirmed || captureTarget || isMac) return
+    if (skipStopPrompt()) return
     event.preventDefault()
-    const response = dialog.showMessageBoxSync(win, {
-      type: 'question',
-      buttons: ['Quit anyway', 'Cancel'],
-      defaultId: 1,
-      cancelId: 1,
-      title: 'Quit Harness Deck',
-      message: `${running} pane${running === 1 ? ' is' : 's are'} still running.`,
-      detail: 'Their processes will be terminated.',
-      noLink: true
-    })
-    if (response === 0) {
+    if (askStopRunning(win)) {
       closeConfirmed = true
       win.close()
     }
@@ -110,12 +168,12 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
-  // DevTools without an application menu.
+  // DevTools without an application menu. macOS has one (see installMenu), and
+  // its View item owns Cmd+Alt+I — handling it here too would toggle twice.
   win.webContents.on('before-input-event', (_event, input) => {
+    if (isMac) return
     const devtools =
-      input.key === 'F12' ||
-      (input.control && input.shift && input.key.toLowerCase() === 'i') ||
-      (input.meta && input.alt && input.key.toLowerCase() === 'i')
+      input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')
     if (input.type === 'keyDown' && devtools) win.webContents.toggleDevTools()
   })
 
@@ -244,7 +302,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null)
+    installMenu()
     await resolveShellEnv()
 
     // `--dump-profiles` prints what the app can find and exits — useful when a
@@ -266,9 +324,26 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('window-all-closed', () => {
+    // Closing the window is routine on macOS and the app stays in the dock, so
+    // the agents keep running: `activate` rebuilds the window and every pane
+    // re-attaches to its session from the replay buffer. Killing them here
+    // would make Cmd+W a silent "quit every agent".
+    if (isMac) return
     ptys?.disposeAll()
-    if (process.platform !== 'darwin') app.quit()
+    app.quit()
   })
 
-  app.on('before-quit', () => ptys?.disposeAll())
+  // On macOS this is the only moment that actually stops the agents, so it is
+  // where the warning lives — the window can be closed and reopened freely.
+  let quitConfirmed = false
+  app.on('before-quit', (event) => {
+    if (isMac && !quitConfirmed && !captureTarget && !skipStopPrompt()) {
+      if (!askStopRunning(mainWindow)) {
+        event.preventDefault()
+        return
+      }
+    }
+    quitConfirmed = true
+    ptys?.disposeAll()
+  })
 }

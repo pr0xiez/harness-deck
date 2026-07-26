@@ -28,11 +28,16 @@ interface Props {
 /** Reserved for the app: xterm must not swallow these. */
 function isAppShortcut(event: KeyboardEvent): boolean {
   const ctrl = event.ctrlKey || event.metaKey
+  // Option rewrites digits on macOS ("¡" for Option+1), so the digit tests go
+  // by the physical key — same reasoning as the handler in App.tsx.
+  const digit = /^(?:Digit|Numpad)[1-9]$/.test(event.code)
   if (ctrl && event.shiftKey) return true
   if (ctrl && ['+', '=', '-', '_', '0'].includes(event.key)) return true
   if (ctrl && event.key === 'Tab') return true
-  if (event.altKey && /^[1-9]$/.test(event.key)) return true
-  if (ctrl && /^[1-9]$/.test(event.key)) return true
+  if (event.altKey && digit) return true
+  if (ctrl && digit) return true
+  // The app services plain Cmd+C so it can lift xterm's own selection.
+  if (event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'c') return true
   return false
 }
 

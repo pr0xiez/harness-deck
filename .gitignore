@@ -1,0 +1,8 @@
+node_modules/
+out/
+dist/
+release/
+.tmp/
+*.log
+.DS_Store
+tsconfig.*.tsbuildinfo

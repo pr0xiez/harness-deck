@@ -1,0 +1,31 @@
+appId: dev.harnessdeck.app
+productName: Harness Deck
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+# node-pty ships a prebuilt .node per platform; it must stay outside the asar.
+asarUnpack:
+  - "**/node_modules/@lydell/**"
+win:
+  target:
+    - nsis
+    - zip
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.developer-tools
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  maintainer: harness-deck

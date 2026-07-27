@@ -994,6 +994,13 @@ code {
   flex: 1;
 }
 
+/* The toggle sits on a red bar, not a panel, so it takes the bar's colour
+   rather than the muted grey it wears everywhere else. */
+.pane-exit-bar .mini-check {
+  color: inherit;
+  opacity: 0.85;
+}
+
 .pane-overlay {
   position: absolute;
   inset: 0;

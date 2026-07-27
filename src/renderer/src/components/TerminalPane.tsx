@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { Profile } from '@shared/types'
 import { useDeck, type PaneView } from '../store'
+import { decideRestart, RESTART_CAP, type RestartDecision } from '../restart'
 import { registerTerminal, unregisterTerminal, type TerminalHandle } from '../terminals'
 import { terminalTheme } from '../theme'
 import { PaneSearch } from './PaneSearch'
@@ -54,8 +55,14 @@ export function TerminalPane({
   const hostRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<TerminalHandle | null>(null)
   const spawnedRef = useRef(false)
+  // What the reset rule measures against. The mount rather than the spawn: the
+  // two happen together for a pane that is starting, and a pane the window is
+  // only now re-attaching to has been up longer than this says — which costs it
+  // nothing but a slower return of its restart budget.
+  const runStartedAt = useRef(Date.now())
   const [searchOpen, setSearchOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [crashPlan, setCrashPlan] = useState<RestartDecision | null>(null)
   const settings = useDeck((s) => s.settings)
   const updatePane = useDeck((s) => s.updatePane)
   const setPaneStatus = useDeck((s) => s.setPaneStatus)
@@ -69,6 +76,7 @@ export function TerminalPane({
 
   const title = pane.name || pane.processTitle || profile?.name || pane.command || 'terminal'
   const paneId = pane.id
+  const autoRestart = Boolean(pane.autoRestart)
 
   // One terminal per pane per epoch — a restart bumps the epoch and rebuilds it.
   useEffect(() => {
@@ -222,6 +230,33 @@ export function TerminalPane({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneId, pane.epoch, pane.autostart])
+
+  // Auto-restart, for the panes that asked for it. The timer belongs to this
+  // effect, so an epoch bump — a manual restart, an edit, the pane closing —
+  // takes it down with the component that armed it. Same rule dispose() follows
+  // in pty.ts: whatever the replaced session had pending is no longer news.
+  useEffect(() => {
+    if (!autoRestart || pane.status !== 'exited') {
+      setCrashPlan(null)
+      return
+    }
+    const plan = decideRestart({
+      exitCode: pane.exitCode ?? null,
+      ranMs: Date.now() - runStartedAt.current,
+      attempts: pane.crashRestarts ?? 0
+    })
+    // The bar reads this rather than deciding for itself, so what it says is
+    // what is about to happen.
+    setCrashPlan(plan)
+    if (plan.action !== 'restart') return
+    const timer = window.setTimeout(() => {
+      // restartPane clears the count, because by hand is how a crash loop is
+      // meant to be broken — so the attempt this one spent goes back after it.
+      restartPane(paneId)
+      updatePane(paneId, { crashRestarts: plan.attempt })
+    }, plan.delayMs)
+    return () => window.clearTimeout(timer)
+  }, [paneId, autoRestart, pane.status, pane.exitCode, pane.crashRestarts, restartPane, updatePane])
 
   // Live settings updates without rebuilding the terminal.
   useEffect(() => {
@@ -388,7 +423,23 @@ export function TerminalPane({
           <div className="pane-exit-bar">
             <span>
               Process exited{pane.exitCode != null ? ` (code ${pane.exitCode})` : ''}
+              {crashPlan?.action === 'restart'
+                ? ` — restarting, attempt ${crashPlan.attempt} of ${RESTART_CAP}`
+                : crashPlan?.action === 'halt'
+                  ? ` — auto-restart gave up after ${RESTART_CAP} attempts`
+                  : ''}
             </span>
+            <label
+              className="mini-check"
+              title="Start this pane again when its process dies with a non-zero code. A clean exit is you, and is left alone."
+            >
+              <input
+                type="checkbox"
+                checked={autoRestart}
+                onChange={(event) => updatePane(paneId, { autoRestart: event.target.checked })}
+              />
+              auto-restart
+            </label>
             <button className="btn tiny" onClick={() => restartPane(paneId)}>
               Restart
             </button>

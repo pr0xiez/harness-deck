@@ -63,6 +63,12 @@ interface StoredPane extends Omit<Pane, 'status' | 'exitCode' | 'activity' | 'be
 
 export interface PaneView extends Pane {
   autostart?: boolean
+  /**
+   * Auto-restarts spent on the crash loop the pane is in. Transient on purpose:
+   * a pane that comes back with the app is starting fresh, not resuming a loop
+   * whose process died before the window closed.
+   */
+  crashRestarts?: number
 }
 
 export interface DeckWorkspace extends Workspace {
@@ -465,7 +471,10 @@ export const useDeck = create<DeckState>((set, get) => ({
                 exitCode: null,
                 autostart: true,
                 activity: false,
-                bell: false
+                bell: false,
+                // A person starting the pane by hand is not the crash loop
+                // continuing, whatever auto-restart had already spent on it.
+                crashRestarts: 0
               }
             : p
         )
@@ -598,19 +607,22 @@ function serialize(state: DeckState): PersistedState {
     workspaces: state.workspaces.map((ws) => ({
       ...ws,
       zoomedPaneId: null,
-      panes: ws.panes.map(({ id, profileId, command, args, cwd, viaShell, name, env }) => ({
-        id,
-        profileId,
-        command,
-        args,
-        cwd,
-        viaShell,
-        name,
-        env,
-        status: 'idle' as PaneStatus,
-        exitCode: null,
-        epoch: 0
-      }))
+      panes: ws.panes.map(
+        ({ id, profileId, command, args, cwd, viaShell, name, env, autoRestart }) => ({
+          id,
+          profileId,
+          command,
+          args,
+          cwd,
+          viaShell,
+          name,
+          env,
+          autoRestart,
+          status: 'idle' as PaneStatus,
+          exitCode: null,
+          epoch: 0
+        })
+      )
     }))
   }
 }

@@ -207,6 +207,17 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     return null
   })
 
+  // Reads the same buffer the pane above just filled, so a transcript export
+  // that comes back empty is caught here rather than in a save dialog.
+  await record('a pane that has run something has a transcript', async () => {
+    const text = mgr.transcript('smoke-echo')
+    if (!text.includes('HD_SMOKE_OK')) {
+      return `transcript is missing the sentinel (got ${JSON.stringify(text.slice(0, 120))})`
+    }
+    if (mgr.transcript('smoke-never-existed') !== '') return 'an unknown pane returned a transcript'
+    return null
+  })
+
   /**
    * The regression this exists for: dispose() kills the old process, but the
    * signal takes a few milliseconds to land — by which time the restart has

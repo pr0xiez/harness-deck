@@ -55,6 +55,7 @@ export function TerminalPane({
   const handleRef = useRef<TerminalHandle | null>(null)
   const spawnedRef = useRef(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
   const settings = useDeck((s) => s.settings)
   const updatePane = useDeck((s) => s.updatePane)
   const setPaneStatus = useDeck((s) => s.setPaneStatus)
@@ -261,6 +262,21 @@ export function TerminalPane({
     return () => window.removeEventListener('deck:find', handler)
   }, [paneId])
 
+  // The header button copies the readable form; the palette has the raw stream
+  // and the save dialog for the cases where that is the wrong answer.
+  const copyTranscript = useCallback(async (): Promise<void> => {
+    api.clipboard.write(await api.pty.transcript(paneId, true))
+    setCopied(true)
+  }, [paneId])
+
+  // The tick is the only acknowledgement — a clipboard write is otherwise
+  // completely silent, and the user has no way to tell it happened.
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 1200)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
   const statusLabel =
     pane.status === 'running'
       ? 'running'
@@ -292,6 +308,13 @@ export function TerminalPane({
             onClick={() => setSearchOpen((v) => !v)}
           >
             <Icon name="search" />
+          </button>
+          <button
+            className="icon-btn"
+            title={copied ? 'Transcript copied' : 'Copy transcript as plain text'}
+            onClick={() => void copyTranscript()}
+          >
+            <Icon name={copied ? 'check' : 'copy'} />
           </button>
           <button
             className="icon-btn"

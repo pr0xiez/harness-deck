@@ -13,6 +13,18 @@ interface Command {
   run: () => void
 }
 
+/** Names a workspace or pane in a way every filesystem will accept. */
+const slug = (text: string): string =>
+  text.trim().replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'pane'
+
+const pad = (value: number): string => String(value).padStart(2, '0')
+
+/** `<workspace>-<pane>-<yyyymmdd-hhmm>.txt`, local time — it is a local file. */
+function transcriptName(workspace: string, pane: string, at: Date): string {
+  const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}`
+  return `${slug(workspace)}-${slug(pane)}-${stamp}.txt`
+}
+
 export function CommandPalette(): React.JSX.Element {
   const state = useDeck()
   const [query, setQuery] = useState('')
@@ -135,6 +147,20 @@ export function CommandPalette(): React.JSX.Element {
       })
 
       if (activePane) {
+        const paneLabel =
+          activePane.name ||
+          activePane.processTitle ||
+          state.profiles.find((p) => p.id === activePane.profileId)?.name ||
+          activePane.command
+        const copyTranscript = async (strip: boolean): Promise<void> =>
+          api.clipboard.write(await api.pty.transcript(activePane.id, strip))
+        const saveTranscript = async (strip: boolean): Promise<void> => {
+          await api.saveText({
+            defaultName: transcriptName(workspace.name, paneLabel, new Date()),
+            text: await api.pty.transcript(activePane.id, strip)
+          })
+        }
+
         list.push(
           {
             id: 'pane:restart',
@@ -148,6 +174,34 @@ export function CommandPalette(): React.JSX.Element {
             group: 'Active pane',
             label: 'Send SIGHUP (stop process)',
             run: () => state.killPane(activePane.id)
+          },
+          {
+            id: 'pane:copy-transcript',
+            group: 'Active pane',
+            label: 'Copy pane transcript',
+            hint: 'plain text',
+            run: () => void copyTranscript(true)
+          },
+          {
+            id: 'pane:copy-transcript-raw',
+            group: 'Active pane',
+            label: 'Copy pane transcript with its escape codes',
+            hint: 'raw',
+            run: () => void copyTranscript(false)
+          },
+          {
+            id: 'pane:save-transcript',
+            group: 'Active pane',
+            label: 'Save pane transcript…',
+            hint: 'plain text',
+            run: () => void saveTranscript(true)
+          },
+          {
+            id: 'pane:save-transcript-raw',
+            group: 'Active pane',
+            label: 'Save pane transcript with its escape codes…',
+            hint: 'raw',
+            run: () => void saveTranscript(false)
           },
           {
             id: 'pane:zoom',

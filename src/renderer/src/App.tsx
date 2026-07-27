@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar'
 import { Toolbar } from './components/Toolbar'
 import { PaneArea } from './components/PaneArea'
 import { BroadcastBar } from './components/BroadcastBar'
+import { DeckSearch } from './components/DeckSearch'
 import { CommandPalette } from './components/CommandPalette'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
@@ -185,6 +186,14 @@ export function App(): React.JSX.Element {
       if (typing) return
 
       if (ctrl && event.shiftKey) {
+        // Alt widens the same find from one pane to the whole workspace. Matched
+        // on the physical key, because Option rewrites letters on macOS the way
+        // it rewrites digits.
+        if (event.altKey && code === 'KeyF') {
+          take()
+          if (workspace) state.setUi({ findAll: !state.ui.findAll })
+          return
+        }
         switch (key) {
           case 't':
             take()
@@ -346,6 +355,7 @@ export function App(): React.JSX.Element {
                 </div>
               </div>
             ) : null}
+            {active && ui.findAll ? <DeckSearch workspace={active} /> : null}
           </div>
           {active && ui.broadcast ? <BroadcastBar workspace={active} /> : null}
         </main>

@@ -29,6 +29,7 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
       ['Ctrl+Shift+C', 'Copy selection'],
       ['Ctrl+Shift+V', 'Paste'],
       ['Ctrl+Shift+F', 'Find in pane'],
+      ['Ctrl+Shift+Alt+F', 'Find across every pane in the workspace'],
       ['Ctrl+= / Ctrl+- / Ctrl+0', 'Font bigger / smaller / reset'],
       ['Ctrl+Shift+K', 'Clear the focused pane']
     ]

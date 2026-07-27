@@ -270,6 +270,20 @@ const NEW_WORKSPACE = `(() => {
   return true
 })()`
 
+/**
+ * Alt rewrites the character on macOS, so the app matches this chord on the
+ * physical key — which means a synthetic event has to carry `code` as well, or
+ * it exercises nothing.
+ */
+const TOGGLE_FIND_ALL = `(() => {
+  document.body.dispatchEvent(
+    new KeyboardEvent('keydown', {
+      key: 'F', code: 'KeyF', ctrlKey: true, shiftKey: true, altKey: true, bubbles: true
+    })
+  )
+  return true
+})()`
+
 const OPEN_TEMPLATES = `(() => {
   const button = document.querySelector('.ws-from-template')
   if (button) button.click()
@@ -281,6 +295,7 @@ const TEMPLATE_PROBE = `(() => ({
   names: Array.from(document.querySelectorAll('.tpl-row .tpl-name'), (el) => el.textContent)
 }))()`
 
+/** Escape closes every overlay in the app, so one helper serves them all. */
 const CLOSE_MODAL = `(() => {
   document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   return true
@@ -289,6 +304,73 @@ const CLOSE_MODAL = `(() => {
 interface TemplateProbe {
   open: boolean
   names: string[]
+}
+
+const FIND_ALL_PROBE = `(() => {
+  const bar = document.querySelector('.deck-search')
+  return {
+    open: !!bar,
+    box: !!bar && !!bar.querySelector('input'),
+    count: bar ? (bar.querySelector('.deck-search-count')?.textContent ?? '') : ''
+  }
+})()`
+
+/**
+ * A string no pane will ever have printed, typed the way React insists on: the
+ * point is not the answer but the walk — it makes the scan read every live
+ * xterm buffer for real, which is the half of the search a DOM probe can't see.
+ */
+const FIND_ALL_MISS = 'hd-smoke-nothing-prints-this'
+
+const SEARCH_FIND_ALL = `(() => {
+  const input = document.querySelector('.deck-search input')
+  if (!input) return false
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+  set.call(input, ${JSON.stringify(FIND_ALL_MISS)})
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  return true
+})()`
+
+interface FindAllProbe {
+  open: boolean
+  box: boolean
+  count: string
+}
+
+/**
+ * Opens the harness menu on its shortcut and picks the SSH entry out of it by
+ * its label, then reads back the dialog that entry is only useful for. No pane
+ * is opened: the point is that the menu still reaches the dialog and the dialog
+ * still comes up asking for a host, which is all of the wiring and none of the
+ * side effects of actually dialling somewhere.
+ */
+const OPEN_REMOTE_DIALOG = `(() => {
+  document.body.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true })
+  )
+  return true
+})()`
+
+const PICK_REMOTE_ENTRY = `(() => {
+  const item = [...document.querySelectorAll('.menu-item')].find((b) =>
+    (b.textContent || '').includes('Over SSH')
+  )
+  if (!item) return false
+  item.click()
+  return true
+})()`
+
+const REMOTE_DIALOG_PROBE = `(() => {
+  const modal = document.querySelector('.modal')
+  const labels = modal ? [...modal.querySelectorAll('.field-label')].map((l) => l.textContent) : []
+  const on = modal?.querySelector('.segmented.wide button.on')
+  return { open: !!modal, host: labels.includes('Host'), where: on?.textContent ?? '' }
+})()`
+
+interface RemoteDialogProbe {
+  open: boolean
+  host: boolean
+  where: string
 }
 
 /** Collects anything the renderer complained about, from before the page loads. */
@@ -439,6 +521,53 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
       return `its pane folder came back as ${JSON.stringify(folder)}`
     }
     return null
+  })
+
+  await record('find-across-panes opens, and searches every live pane', async () => {
+    const findAll = async (): Promise<FindAllProbe> =>
+      (await win.webContents.executeJavaScript(FIND_ALL_PROBE, true)) as FindAllProbe
+
+    await win.webContents.executeJavaScript(TOGGLE_FIND_ALL, true)
+    let bar: FindAllProbe = { open: false, box: false, count: '' }
+    const opened = await until(async () => {
+      bar = await findAll()
+      return bar.open
+    }, 10_000)
+    if (!opened) return 'Ctrl+Shift+Alt+F never put it in the DOM'
+    if (!bar.box) return 'it opened without its query box'
+
+    await win.webContents.executeJavaScript(SEARCH_FIND_ALL, true)
+    const answered = await until(async () => (await findAll()).count === 'no matches', 10_000)
+    if (!answered) return `the scan never reported back (it said ${JSON.stringify((await findAll()).count)})`
+
+    await win.webContents.executeJavaScript(TOGGLE_FIND_ALL, true)
+    const closed = await until(async () => !(await findAll()).open, 10_000)
+    return closed ? null : 'it would not close again'
+  })
+
+  await record('the harness menu offers a pane on another machine', async () => {
+    const dialog = async (): Promise<RemoteDialogProbe> =>
+      (await win.webContents.executeJavaScript(REMOTE_DIALOG_PROBE, true)) as RemoteDialogProbe
+
+    await win.webContents.executeJavaScript(OPEN_REMOTE_DIALOG, true)
+    const picked = await until(
+      async () => (await win.webContents.executeJavaScript(PICK_REMOTE_ENTRY, true)) === true,
+      10_000
+    )
+    if (!picked) return 'the harness menu never offered an SSH entry'
+
+    let bar: RemoteDialogProbe = { open: false, host: false, where: '' }
+    const opened = await until(async () => {
+      bar = await dialog()
+      return bar.open
+    }, 10_000)
+    if (!opened) return 'picking it opened no dialog'
+    if (bar.where !== 'SSH host') return `the dialog opened on ${JSON.stringify(bar.where)}`
+    if (!bar.host) return 'the dialog opened without asking for a host'
+
+    await win.webContents.executeJavaScript(CLOSE_MODAL, true)
+    const closed = await until(async () => !(await dialog()).open, 10_000)
+    return closed ? null : 'it would not close again'
   })
 
   await record('harnesses are detected', async () => {

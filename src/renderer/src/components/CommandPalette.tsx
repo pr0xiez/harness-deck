@@ -135,6 +135,13 @@ export function CommandPalette(): React.JSX.Element {
           run: () => state.setUi({ broadcast: !state.ui.broadcast })
         },
         {
+          id: 'ws:find-all',
+          group: 'Workspace',
+          label: 'Find across every pane…',
+          hint: 'Ctrl+Shift+Alt+F',
+          run: () => state.setUi({ findAll: true })
+        },
+        {
           id: 'ws:delete',
           group: 'Workspace',
           label: `Delete workspace ${workspace.name}`,

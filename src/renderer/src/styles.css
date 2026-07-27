@@ -1128,6 +1128,78 @@ code {
   color: #ffb3ad;
 }
 
+/* The same bar, one level out: it belongs to the deck rather than to a pane, so
+   it floats over the middle rather than tucking into a corner one pane owns. */
+.deck-search {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  /* Clears the pane-local layers (exit bar, overlay) it has to float above. */
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(760px, calc(100% - 24px));
+  padding: 5px 7px;
+  border-radius: 11px;
+  background: rgba(16, 20, 27, 0.97);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow);
+  color: var(--fg-2);
+}
+
+.deck-search-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.deck-search input {
+  width: 258px;
+  height: 24px;
+  padding: 0 7px;
+  font-size: 12px;
+  background: var(--bg);
+}
+
+.deck-search input.not-found {
+  border-color: var(--bad);
+  color: #ffb3ad;
+}
+
+.deck-search-count {
+  padding: 0 4px;
+  font: 11px/1 var(--mono);
+  white-space: nowrap;
+}
+
+.deck-search-hits {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.deck-search-hits::-webkit-scrollbar {
+  display: none;
+}
+
+/* Every chip here is a match, so none of them is the "off" state the broadcast
+   bar draws dashed — the outline marks the one the last jump landed in. */
+.deck-search .target-chip {
+  border-style: solid;
+}
+
+.deck-search .target-chip.on {
+  outline: 1px solid color-mix(in srgb, var(--badge, var(--fg-2)) 55%, transparent);
+}
+
+.deck-search .target-chip b {
+  color: var(--fg);
+  font-weight: 650;
+}
+
 /* ---------- empty states ---------- */
 
 .empty {
@@ -1444,6 +1516,24 @@ code {
 .row {
   display: flex;
   gap: 6px;
+}
+
+/* Fields side by side — a host and the directory on it are one thought. */
+.row.fields {
+  margin-bottom: 14px;
+}
+
+.row.fields > .field {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+/* The segmented control is glyph-width by default; these buttons carry words. */
+.segmented.wide button {
+  width: auto;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
 .row input {

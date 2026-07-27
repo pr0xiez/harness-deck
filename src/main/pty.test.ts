@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IPty } from '@lydell/node-pty'
+import { homedir } from 'node:os'
 import type { PaneSpec } from '@shared/types'
 import { PtyManager, stripAnsi, type Spawn } from './pty'
 import { ScrollbackStore, SCROLLBACK_LIMIT } from './scrollback'
@@ -67,6 +68,8 @@ interface Harness {
   mgr: PtyManager
   sent: Array<{ channel: string; payload: Record<string, unknown> }>
   spawned: FakePty[]
+  /** What the manager asked the pty layer for, in order. */
+  calls: Array<{ command: string; cwd: string; env: NodeJS.ProcessEnv }>
   /** Every `pty:data` payload for an id, concatenated. */
   dataFor(id: string): string
   /** The `quiet` flag of every `pty:quiet` event for an id, in order. */
@@ -80,8 +83,14 @@ function harness(
 ): Harness {
   const sent: Harness['sent'] = []
   const spawned: FakePty[] = []
-  const spawn: Spawn = () => {
+  const calls: Harness['calls'] = []
+  const spawn: Spawn = (command, _args, options) => {
     if (spawnImpl) spawnImpl()
+    calls.push({
+      command,
+      cwd: String(options?.cwd ?? ''),
+      env: (options?.env ?? {}) as NodeJS.ProcessEnv
+    })
     const proc = new FakePty()
     spawned.push(proc)
     return proc as unknown as IPty
@@ -96,6 +105,7 @@ function harness(
     mgr,
     sent,
     spawned,
+    calls,
     dataFor: (id) =>
       sent
         .filter((m) => m.channel === 'pty:data' && m.payload.id === id)
@@ -807,6 +817,41 @@ describe('resize', () => {
     }
 
     expect(() => mgr.resize('a', 90, 30)).not.toThrow()
+  })
+})
+
+describe('a pane that runs elsewhere', () => {
+  const envFor = (command: string, cwd?: string): NodeJS.ProcessEnv => {
+    const { mgr, calls } = harness()
+    mgr.ensure(spec('a', { command, ...(cwd === undefined ? {} : { cwd }) }), 80, 24)
+    return calls[0].env
+  }
+
+  it('hands the pane folder over as HD_CWD', () => {
+    expect(envFor('ssh').HD_CWD).toBe(process.cwd())
+    expect(envFor('docker').HD_CWD).toBe(process.cwd())
+    expect(envFor('C:\\Windows\\System32\\wsl.exe').HD_CWD).toBe(process.cwd())
+  })
+
+  // The folder the process actually got, not the one the pane asked for —
+  // otherwise a remote pane is told to cd somewhere this machine gave up on.
+  it('hands over the folder it fell back to, not the one that was gone', () => {
+    expect(envFor('ssh', '/harness-deck/no/such/folder').HD_CWD).toBe(homedir())
+  })
+
+  // WSL translates the path on the way through; ssh and docker carry it as it
+  // stands, and a stray WSLENV on either would be noise a remote shell inherits.
+  it('asks for the path translation on the WSL route only', () => {
+    expect(envFor('wsl.exe').WSLENV).toContain('HD_CWD/p')
+    expect(envFor('ssh').WSLENV).toBeUndefined()
+    expect(envFor('docker').WSLENV).toBeUndefined()
+  })
+
+  it('leaves a pane that runs here alone', () => {
+    expect(envFor('fake-agent').HD_CWD).toBeUndefined()
+    // `sshuttle` and `dockerize` are not ssh and docker.
+    expect(envFor('/usr/bin/sshuttle').HD_CWD).toBeUndefined()
+    expect(envFor('dockerize').HD_CWD).toBeUndefined()
   })
 })
 

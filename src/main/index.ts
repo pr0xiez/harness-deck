@@ -5,10 +5,12 @@ import {
   dialog,
   ipcMain,
   Menu,
+  nativeImage,
   session,
   shell,
   systemPreferences
 } from 'electron'
+import type { NativeImage } from 'electron'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -163,13 +165,29 @@ function askStopRunning(win: BrowserWindow | null): boolean {
   return response === 0
 }
 
+/**
+ * A packaged app takes its icon from the bundle — electron-builder picks up
+ * build/icon.icns, .ico and .png — but a dev run shows Electron's own default.
+ * Point that at the same artwork so the dock is right while working on the app.
+ * build/ is deliberately outside `files`, hence the isPackaged guard.
+ */
+function devIcon(): NativeImage | undefined {
+  if (app.isPackaged) return undefined
+  const image = nativeImage.createFromPath(join(app.getAppPath(), 'build', 'icon.png'))
+  return image.isEmpty() ? undefined : image
+}
+
 function createWindow(): BrowserWindow {
+  // macOS takes its dock icon from the app, not the window; the others read it
+  // off the window, so it goes in the constructor there.
+  const icon = devIcon()
   const win = new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 860,
     minHeight: 560,
     show: false,
+    ...(icon && !isMac ? { icon } : {}),
     // A frameless window on macOS has no traffic lights at all, so there we
     // only hide the titlebar and place the lights inside our own 34px bar.
     ...(isMac
@@ -454,6 +472,10 @@ if (!app.requestSingleInstanceLock()) {
     }
 
     restrictPermissions()
+    if (isMac) {
+      const icon = devIcon()
+      if (icon) app.dock?.setIcon(icon)
+    }
     ptys = new PtyManager(send)
     registerIpc()
     mainWindow = createWindow()

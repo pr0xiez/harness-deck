@@ -223,10 +223,27 @@ src/
   shared/        types shared across the process boundary
 scripts/
   release.mjs    cuts a release and publishes its manifest
+  make-icons.mjs rasterises build/icon.svg into .icns/.ico/.png
+build/
+  icon.svg       the app icon, and the only file to edit
 ```
 
 Processes live in the main process and are addressed by pane id, so a window
 reload — or React remounting a pane — never kills a running agent.
+
+### The app icon
+
+`build/icon.svg` is the master. After editing it, run:
+
+```bash
+npm run icons
+```
+
+That regenerates `icon.png` (1024px, also what Linux ships), `icon.icns` and
+`icon.ico`, which electron-builder picks up by name — no configuration needed.
+Electron itself does the rasterising, so there's no ImageMagick or librsvg to
+install. A packaged app gets its icon from the bundle; a `npm run dev` run
+loads `build/icon.png` directly so the dock looks right while developing.
 
 ## Testing
 

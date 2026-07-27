@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "icons": "electron scripts/make-icons.mjs",
     "smoke": "npm run build && electron . --smoke",
     "package": "npm run build && electron-builder",
     "release": "node scripts/release.mjs"

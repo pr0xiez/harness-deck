@@ -149,6 +149,20 @@ export function CommandPalette(): React.JSX.Element {
         }
       )
 
+      // Only once there are two answers to compare. One worktree pane has
+      // nothing to sit beside, and the entry would open an overlay with a
+      // single column in it.
+      const worktrees = workspace.panes.filter((pane) => pane.worktree).length
+      if (worktrees >= 2) {
+        list.push({
+          id: 'ws:compare',
+          group: 'Workspace',
+          label: 'Compare what the agents did',
+          hint: `${worktrees} worktrees, side by side`,
+          run: () => state.setUi({ compare: true })
+        })
+      }
+
       for (let columns = 1; columns <= 4; columns += 1) {
         list.push({
           id: `ws:cols-${columns}`,

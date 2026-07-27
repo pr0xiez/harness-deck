@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { addWorktree, diffStat, info, removeWorktree } from './git'
+import { addWorktree, diffRange, diffStat, info, removeWorktree } from './git'
 
 /**
  * These drive a real git against real repositories under the system temp
@@ -220,5 +220,169 @@ describeGit('diffStat', () => {
   it('is empty for a folder git knows nothing about', async () => {
     expect(await diffStat(base)).toBe('')
     expect(await diffStat(join(base, 'never-existed'))).toBe('')
+  })
+})
+
+/**
+ * An agent working in a worktree is the whole fixture: give it a checkout,
+ * change something in one of the ways an agent actually changes things, and ask
+ * what the compare view would draw. Everything below is measured from the
+ * branch point, which is what makes it different from `diffStat` above.
+ */
+describeGit('diffRange', () => {
+  /** A worktree of `root`, ready to be written to. */
+  async function agent(name: string): Promise<string> {
+    const branch = `hd/${name}`
+    const result = await addWorktree({ repo: root, branch, path: worktreeFor(branch) })
+    if (!result.path) throw new Error(result.error)
+    return result.path
+  }
+
+  it('reports no changes for a worktree nothing has touched', async () => {
+    const tree = await agent('quiet')
+    const diff = await diffRange({ dir: tree })
+
+    expect(diff.stat).toBe('')
+    expect(diff.patch).toBe('')
+    expect(diff.error).toBeUndefined()
+    expect(diff.branch).toBe('hd/quiet')
+    expect(diff.baseRef).toBe('main')
+  })
+
+  it('says so rather than showing an empty diff for a folder that is not a repo', async () => {
+    const diff = await diffRange({ dir: base })
+
+    expect(diff.error).toContain('not a git repository')
+    expect(diff.stat).toBe('')
+  })
+
+  /** The case `git diff --stat` alone gets wrong: the agent finished and committed. */
+  it('still shows work the agent committed', async () => {
+    const tree = await agent('committer')
+    writeFileSync(join(tree, 'shared.txt'), 'rewritten by the agent\n')
+    git(['add', '-A'], tree)
+    git(['commit', '-m', 'agent work'], tree)
+
+    expect(await diffStat(tree)).toBe('')
+    const diff = await diffRange({ dir: tree })
+    expect(diff.stat).toContain('shared.txt')
+    expect(diff.patch).toContain('+rewritten by the agent')
+  })
+
+  it('includes staged and unstaged work in one answer', async () => {
+    const tree = await agent('mixed')
+    writeFileSync(join(tree, 'staged.txt'), 'staged\n')
+    git(['add', 'staged.txt'], tree)
+    writeFileSync(join(tree, 'shared.txt'), 'unstaged\n')
+
+    const diff = await diffRange({ dir: tree })
+
+    expect(diff.stat).toContain('staged.txt')
+    expect(diff.stat).toContain('shared.txt')
+  })
+
+  /** The column that would otherwise be empty for an agent that only added files. */
+  it('shows new files git has never been told about', async () => {
+    const tree = await agent('creator')
+    writeFileSync(join(tree, 'brand-new.ts'), 'export const x = 1\n')
+
+    const diff = await diffRange({ dir: tree })
+
+    expect(diff.untracked).toBe(1)
+    expect(diff.stat).toContain('brand-new.ts')
+    expect(diff.stat).toContain('1 new file, not yet added to git')
+    expect(diff.patch).toContain('+export const x = 1')
+  })
+
+  it('measures from the branch point, not from wherever the trunk has got to', async () => {
+    const tree = await agent('parallel')
+    writeFileSync(join(tree, 'agent.txt'), 'agent\n')
+
+    // The user carries on working in the main checkout while the agent runs.
+    writeFileSync(join(root, 'human.txt'), 'human\n')
+    git(['add', '-A'], root)
+    git(['commit', '-m', 'meanwhile'], root)
+
+    const diff = await diffRange({ dir: tree })
+
+    expect(diff.stat).toContain('agent.txt')
+    expect(diff.stat).not.toContain('human.txt')
+  })
+
+  it('answers for a subdirectory with the whole worktree above it', async () => {
+    const tree = await agent('deep')
+    mkdirSync(join(tree, 'src', 'nested'), { recursive: true })
+    writeFileSync(join(tree, 'shared.txt'), 'edited\n')
+
+    const diff = await diffRange({ dir: join(tree, 'src', 'nested') })
+
+    expect(diff.root).toBe(tree)
+    expect(diff.stat).toContain('shared.txt')
+  })
+
+  it('falls back to HEAD in a main checkout, which has no branch point', async () => {
+    writeFileSync(join(root, 'shared.txt'), 'edited\n')
+
+    const diff = await diffRange({ dir: root })
+
+    expect(diff.base).toBe('HEAD')
+    expect(diff.baseRef).toBe('HEAD')
+    expect(diff.stat).toContain('shared.txt')
+  })
+
+  /** The acceptance criterion, at the only end where it can be enforced. */
+  it('caps a five-thousand-line diff and still says how long it was', async () => {
+    const tree = await agent('verbose')
+    const body = Array.from({ length: 5000 }, (_, n) => `line ${n}`).join('\n')
+    writeFileSync(join(tree, 'generated.txt'), `${body}\n`)
+    git(['add', '-A'], tree)
+
+    const diff = await diffRange({ dir: tree, limit: 200 })
+
+    expect(diff.patch.split('\n')).toHaveLength(200)
+    expect(diff.truncated).toBe(true)
+    expect(diff.patchLines).toBeGreaterThan(5000)
+    // The summary is never the expensive part, so it is never cut.
+    expect(diff.stat).toContain('generated.txt')
+  })
+
+  it('refuses to hand back more than its own ceiling, whatever it is asked for', async () => {
+    const tree = await agent('greedy')
+    const body = Array.from({ length: 9000 }, (_, n) => `line ${n}`).join('\n')
+    writeFileSync(join(tree, 'generated.txt'), `${body}\n`)
+    git(['add', '-A'], tree)
+
+    const diff = await diffRange({ dir: tree, limit: 100_000 })
+
+    expect(diff.patch.split('\n').length).toBeLessThanOrEqual(4000)
+    expect(diff.truncated).toBe(true)
+  })
+
+  /** "Run the formatter over everything" is a real prompt with a real answer. */
+  it('folds a summary that names hundreds of files, keeping git‘s total', async () => {
+    const tree = await agent('formatter')
+    for (let n = 0; n < 400; n++) writeFileSync(join(tree, `file-${n}.txt`), `${n}\n`)
+    git(['add', '-A'], tree)
+
+    const diff = await diffRange({ dir: tree })
+    const lines = diff.stat.split('\n')
+
+    expect(lines.length).toBeLessThanOrEqual(200)
+    expect(diff.stat).toContain('more files')
+    expect(lines[lines.length - 1]).toContain('400 files changed')
+  })
+
+  it('gives two agents two different answers', async () => {
+    const a = await agent('agent-a')
+    const b = await agent('agent-b')
+    writeFileSync(join(a, 'shared.txt'), 'agent a was here\n')
+    writeFileSync(join(b, 'shared.txt'), 'agent b was here\n')
+
+    const [first, second] = await Promise.all([diffRange({ dir: a }), diffRange({ dir: b })])
+
+    expect(first.patch).toContain('+agent a was here')
+    expect(first.patch).not.toContain('agent b')
+    expect(second.patch).toContain('+agent b was here')
+    expect(second.patch).not.toContain('agent a')
   })
 })

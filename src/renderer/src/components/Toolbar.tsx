@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { isLive, useDeck, type DeckWorkspace } from '../store'
+import { CompareView } from './CompareView'
 import { Icon } from './Icon'
 import { MicButton } from './MicButton'
 import { ProfileMenu } from './ProfileMenu'
@@ -27,6 +28,9 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
     home && workspace.cwd.startsWith(home) ? `~${workspace.cwd.slice(home.length)}` : workspace.cwd
   // The chip says "live", and a pane that has gone quiet still has a process.
   const running = workspace.panes.filter(isLive).length
+  // One worktree has nothing to be compared against; the offer only makes sense
+  // once two agents have been sent at the same task.
+  const worktrees = workspace.panes.filter((pane) => pane.worktree).length
 
   // Not a timer. A branch and a dirty count only change when something
   // happened, and the two moments that mean something happened are the window
@@ -136,6 +140,17 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
 
         <MicButton />
 
+        {worktrees >= 2 ? (
+          <button
+            className={`ghost-btn ${ui.compare ? 'on' : ''}`}
+            title={`See what each of the ${worktrees} worktree panes changed, side by side`}
+            onClick={() => setUi({ compare: !ui.compare })}
+          >
+            <Icon name="branch" />
+            <span>Compare</span>
+          </button>
+        ) : null}
+
         <button
           className={`ghost-btn ${ui.broadcast ? 'on' : ''}`}
           title="Broadcast a prompt to every pane (Ctrl+Shift+B)"
@@ -154,6 +169,12 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
           {menuOpen ? <ProfileMenu workspaceId={workspace.id} onClose={() => setMenuOpen(false)} /> : null}
         </div>
       </div>
+
+      {/* Mounted here rather than in App because the toolbar is what owns the
+          workspace — and the overlay is fixed, so nothing above it clips it. */}
+      {ui.compare && worktrees >= 2 ? (
+        <CompareView workspace={workspace} onClose={() => setUi({ compare: false })} />
+      ) : null}
     </div>
   )
 }

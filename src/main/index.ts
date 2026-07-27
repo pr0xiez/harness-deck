@@ -15,6 +15,7 @@ import { mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import type {
+  DiffRequest,
   PaneSpec,
   PersistedState,
   SavedProfile,
@@ -25,7 +26,7 @@ import type {
   VoiceProvider,
   WorktreeRequest
 } from '@shared/types'
-import { addWorktree, diffStat, info as repoInfo, removeWorktree } from './git'
+import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -452,6 +453,7 @@ function registerIpc(): void {
   ipcMain.handle('git:addWorktree', (_e, req: WorktreeRequest) => addWorktree(req))
   ipcMain.handle('git:removeWorktree', (_e, path: string) => removeWorktree(path))
   ipcMain.handle('git:diffStat', (_e, dir: string) => diffStat(dir))
+  ipcMain.handle('git:diffRange', (_e, req: DiffRequest) => diffRange(req))
 
   ipcMain.handle('update:state', () => currentState())
   ipcMain.handle('update:check', () => checkNow())

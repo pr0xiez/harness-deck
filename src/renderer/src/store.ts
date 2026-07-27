@@ -98,6 +98,8 @@ interface UiState {
   templatePicker: boolean
   /** The workspace-wide find bar. */
   findAll: boolean
+  /** The side-by-side diff over the active workspace's worktree panes. See HD-3. */
+  compare: boolean
 }
 
 interface DeckState {
@@ -244,7 +246,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     paneDialogFor: null,
     templateSaveFor: null,
     templatePicker: false,
-    findAll: false
+    findAll: false,
+    compare: false
   },
   update: null,
   updateDismissed: null,

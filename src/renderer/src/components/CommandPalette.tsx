@@ -193,6 +193,15 @@ export function CommandPalette(): React.JSX.Element {
             run: () => state.restartPane(activePane.id)
           },
           {
+            id: 'pane:read-only',
+            group: 'Active pane',
+            label: activePane.readOnly
+              ? 'Let this pane take input again'
+              : 'Lock this pane read-only',
+            hint: activePane.readOnly ? 'locked' : 'refuses typing, paste, broadcast, dictation',
+            run: () => state.updatePane(activePane.id, { readOnly: !activePane.readOnly })
+          },
+          {
             id: 'pane:auto-restart',
             group: 'Active pane',
             label: activePane.autoRestart

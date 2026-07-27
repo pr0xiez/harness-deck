@@ -608,7 +608,7 @@ function serialize(state: DeckState): PersistedState {
       ...ws,
       zoomedPaneId: null,
       panes: ws.panes.map(
-        ({ id, profileId, command, args, cwd, viaShell, name, env, autoRestart }) => ({
+        ({ id, profileId, command, args, cwd, viaShell, name, env, autoRestart, readOnly }) => ({
           id,
           profileId,
           command,
@@ -618,6 +618,7 @@ function serialize(state: DeckState): PersistedState {
           name,
           env,
           autoRestart,
+          readOnly,
           status: 'idle' as PaneStatus,
           exitCode: null,
           epoch: 0

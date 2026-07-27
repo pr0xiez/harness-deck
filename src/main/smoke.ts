@@ -145,6 +145,7 @@ const PROBE = `(() => ({
   deck: !!document.querySelector('.deck-panes'),
   workspaces: document.querySelectorAll('.ws-row').length,
   terminals: document.querySelectorAll('.xterm').length,
+  locks: document.querySelectorAll('.pane .pane-lock-btn').length,
   title: document.title
 }))()`
 
@@ -155,6 +156,7 @@ interface Probe {
   deck: boolean
   workspaces: number
   terminals: number
+  locks: number
   title: string
 }
 
@@ -261,6 +263,17 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
       p.workspaces < 1 && 'workspace list'
     ].filter(Boolean)
     return missing.length ? `missing ${missing.join(', ')}` : null
+  })
+
+  // The lock is only worth having if it is one click away on the pane you are
+  // looking at, and the class it hangs on is the one the locked styling keys
+  // off — so a header that renders without it is the whole feature missing.
+  await record('every pane offers the read-only lock', async () => {
+    const p = await probe()
+    if (p.terminals < 1) return 'the workspace came up with no panes at all'
+    return p.locks === p.terminals
+      ? null
+      : `${p.locks} lock toggle(s) across ${p.terminals} pane(s)`
   })
 
   await record('the broadcast bar opens on its shortcut', async () => {

@@ -27,6 +27,7 @@ export type IconName =
   | 'stop'
   | 'copy'
   | 'pencil'
+  | 'lock'
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   search: (
@@ -125,6 +126,12 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     <>
       <path d="M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" />
       <path d="M9.6 4.2 11.8 6.4" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="3.2" y="7" width="9.6" height="6.4" rx="1.5" />
+      <path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" />
     </>
   )
 }

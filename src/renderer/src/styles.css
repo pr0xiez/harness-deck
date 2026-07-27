@@ -934,6 +934,41 @@ code {
   box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 55%, transparent);
 }
 
+/* Tape across the header rather than another coloured dot: green, amber and
+   red are all spoken for by the process's own state, and a pane can be locked
+   in any of them. Active still wins the border — you must be able to see where
+   your keystrokes are going even when the answer is nowhere. */
+.pane.is-locked:not(.is-active) {
+  border-color: color-mix(in srgb, var(--fg-2) 55%, var(--line));
+}
+
+.pane.is-locked .pane-head {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--fg-2) 18%, transparent) 0 5px,
+    transparent 5px 11px
+  );
+}
+
+.pane-lock-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg-2) 26%, transparent);
+  color: var(--fg-1);
+  font: 650 9px/1.6 var(--mono);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.icon-btn.pane-lock-btn.on {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg-2) 26%, transparent);
+}
+
 .pane-actions {
   display: flex;
   gap: 1px;
@@ -1699,6 +1734,18 @@ code {
 .target-chip:not(.on):hover {
   color: var(--fg-1);
   border-color: var(--line-2);
+}
+
+/* A locked pane is shown for the same reason a deselected one is — so the
+   count reading one short is explained rather than mysterious. */
+.target-chip:disabled {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.target-chip:disabled:hover {
+  color: var(--fg-2);
+  border-color: var(--line);
 }
 
 .broadcast-empty {

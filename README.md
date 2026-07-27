@@ -283,9 +283,14 @@ tests still run on both.
 
 ## Releasing and updating
 
-Updates come from a release channel on this machine, not a server — the app is
-built and run on the same box, so there is nothing to host and no token to
-store.
+**Settings → Updates** picks where updates come from. **Local manifest** is the
+default: a release channel on this machine, no server, nothing to host and no
+token to store. **GitHub releases** follows what CI publishes, for a copy that
+was installed from there. **Off** stops the checking entirely. Nothing in the
+app reaches the network until the channel is changed by hand, so a dev run and
+the smoke test never do.
+
+### The local manifest
 
 ```bash
 npm run release            # 0.1.0 → 0.1.1, package, publish the manifest
@@ -319,6 +324,35 @@ The build has to run with the Windows toolchain (see the environment notes in
 the parent `CLAUDE.md`); on WSL the script locates the Windows npm itself, or
 set `WIN_NPM`. `HD_UPDATE_MANIFEST` points the app at a different manifest, and
 `HD_USER_DATA` does the same for the script.
+
+### The GitHub channel
+
+On **GitHub releases** the same 15-minute poll fetches the `latest*.yml` that
+electron-builder writes beside the installers — `latest.yml` on Windows,
+`latest-mac.yml` on macOS — from the rolling
+[`latest-main`](https://github.com/pr0xiez/harness-deck/releases/tag/latest-main)
+prerelease, which is where a copy installed from CI came from. Tagged releases
+are drafts until someone publishes them by hand, so they are not what an
+installed copy can see.
+
+Everything after that is the local path again: the version is compared the same
+way, the toast is the same toast. The difference is that the installer is not
+on this machine yet, so **Restart & install** fetches it into a temp directory
+first and only then runs the sha512 check that has always guarded the launch. A
+download that arrives corrupt fails that check, is deleted, and is never
+started. It is written as `.part` and renamed on completion, so a fetch cut off
+halfway is never mistaken for an installer.
+
+The repository to poll comes from `repository` in `package.json` — the same
+field electron-builder falls back to — so a fork changes it in one place.
+Nothing here holds a credential: release assets are fetched by tag over plain
+HTTPS, which means a private repository has no working GitHub channel.
+`HD_UPDATE_FEED` overrides the URL outright.
+
+A check that fails — offline, a 404, an unparseable feed — is reported in the
+toast and in Settings and leaves the poll running; the next tick tries again. A
+slow feed cannot pile up, because a check already in flight turns the next one
+away.
 
 ### Building both platforms in CI
 
@@ -378,20 +412,30 @@ asset is down to the `win`/`mac` in the installer names: both build an x64 zip,
 and under the old `${arch}`-only naming one would have silently replaced the
 other.
 
-Consequence worth knowing: with publishing taken away from electron-builder it no
-longer emits its `latest*.yml` update metadata. That costs nothing today, since
-the updater reads the local manifest, but wiring the updater to releases means
-restoring `--publish always` on the tag path too.
+Taking publishing away from electron-builder does **not** take the `latest*.yml`
+update metadata with it, which is what the in-app GitHub channel reads: since
+electron-builder 26 that file is written from the `publish` block in
+`electron-builder.yml` whatever `--publish` says, and `--publish never` only
+stops the upload. `scripts/publish-release.mjs` uploads it alongside the
+installers, and a workflow step fails the build if it ever stops appearing —
+turning `--publish always` back on to get it would buy nothing and put the race
+back. Reproduce it with `npx electron-builder --mac zip --arm64 --publish never`
+and look in `release/`.
+
+The installers are uploaded with their spaces turned into dashes
+(`Harness-Deck-0.1.0-win-x64.exe`). That is not cosmetic: `latest*.yml` names
+the installer in electron-builder's own "safe" form, which is the dashed one,
+and the updater resolves that name against the release. GitHub would otherwise
+rewrite the space to a period and the update would 404.
 
 Pull requests run the same build on both platforms and keep nothing — a PR proves
 the installers can be built, then discards them. The gate before packaging is
 `npm run typecheck`, `npm test` and the smoke test described under
 [Testing](#testing); the smoke report is kept as an artifact for a week.
 
-This is a distribution channel, not a second update channel — the in-app updater
-above reads the local `update.json` and knows nothing about GitHub releases.
-Wiring the toast to published releases would mean teaching `updater.ts` to fetch
-the `latest*.yml` that electron-builder uploads alongside the installers.
+This is also the second update channel: point **Settings → Updates** at GitHub
+releases and the toast follows `latest-main` — see
+[The GitHub channel](#the-github-channel) above.
 
 The mac runner builds unsigned (`CSC_IDENTITY_AUTO_DISCOVERY: false`) so it
 can't pick up a stray keychain identity. Add `CSC_LINK` and `CSC_KEY_PASSWORD`

@@ -2,6 +2,7 @@
   "name": "harness-deck",
   "version": "0.1.0",
   "description": "A desktop workspace for running coding agent CLIs (Claude Code, Copilot CLI, Codex CLI) side by side",
+  "repository": "github:pr0xiez/harness-deck",
   "main": "./out/main/index.js",
   "license": "MIT",
   "private": true,

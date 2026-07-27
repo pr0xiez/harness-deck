@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { PaneSpec } from '@shared/types'
 import { PtyManager } from './pty'
 import { detectProfiles } from './profiles'
+import { currentState } from './updater'
 
 /**
  * `--smoke` support: boots the app for real and asserts it works, so a build
@@ -184,6 +185,19 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     // A runner has no agent CLIs installed, so only the shell is guaranteed —
     // an empty list at all, though, means detection itself is broken.
     return available.length ? null : `none of ${profiles.length} profiles resolved to a binary`
+  })
+
+  // The GitHub channel is opt-in, and a build that reaches for it on its own
+  // would only show up as a hang behind a runner's egress rules. This asserts
+  // it stayed local, and that the feed it *would* use resolved — which is the
+  // half of the wiring that can break without any network at all.
+  await record('the updater stays off the network', async () => {
+    const state = currentState()
+    if (state.channel !== 'local') return `booted on the ${state.channel} channel`
+    if (!state.feedUrl.startsWith('https://github.com/')) {
+      return `no release feed resolved (${state.feedUrl || 'empty'}) — check "repository" in package.json`
+    }
+    return state.stage === 'error' ? `the local channel reported: ${state.error}` : null
   })
 
   // Everything below drives node-pty directly. If the native prebuild didn't

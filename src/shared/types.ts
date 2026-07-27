@@ -80,6 +80,8 @@ export interface Settings {
   sidebarCollapsed: boolean
   voice: VoiceSettings
   attention: AttentionSettings
+  /** Which release channel the updater watches. See HD-10. */
+  updateChannel: UpdateChannel
   /** Recent broadcast prompts, most recent first. */
   broadcastHistory: string[]
   /** Prompts the user keeps around to send again. */
@@ -231,15 +233,26 @@ export interface UpdateInfo {
   size?: number
 }
 
+/**
+ * Where updates come from: a manifest `npm run release` writes on this machine,
+ * the GitHub release CI publishes to, or nowhere at all.
+ */
+export type UpdateChannel = 'local' | 'github' | 'off'
+
 export interface UpdateState {
   stage: 'idle' | 'available' | 'error'
   /** Version of the running app. */
   current: string
   /** Set only when a newer release is sitting in the channel, ready to install. */
   available: UpdateInfo | null
+  /** The channel the state was produced by — the others are not being polled. */
+  channel: UpdateChannel
   /** The manifest the app is watching — shown in Settings so it can be checked. */
   manifestPath: string
+  /** The `latest*.yml` the GitHub channel reads, for the same reason. */
+  feedUrl: string
   lastCheckedAt: string | null
+  /** Why the last check failed. A check that fails leaves the poll running. */
   error?: string
   /** False in `npm run dev`: there is no installed copy to replace. */
   installable: boolean

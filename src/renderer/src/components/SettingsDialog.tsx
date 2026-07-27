@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { UpdateChannel } from '@shared/types'
 import { useDeck } from '../store'
 import { DEFAULT_SETTINGS } from '../store'
 import { Field, Modal, Toggle } from './ui'
@@ -161,14 +162,31 @@ export function SettingsDialog(): React.JSX.Element {
 
         <section className="settings-wide">
           <h3>Updates</h3>
+          <Field
+            label="Release channel"
+            hint="GitHub releases is the only one that reaches the network."
+          >
+            <select
+              value={settings.updateChannel}
+              onChange={(event) =>
+                updateSettings({ updateChannel: event.target.value as UpdateChannel })
+              }
+            >
+              <option value="local">Local manifest</option>
+              <option value="github">GitHub releases</option>
+              <option value="off">Off</option>
+            </select>
+          </Field>
           <div className="detect-list">
             <div className={`detect-row ${update?.stage === 'available' ? 'ok' : ''}`}>
               <span className="detect-name">
-                {update?.stage === 'available' && update.available
-                  ? `Version ${update.available.version} is ready to install`
-                  : update?.stage === 'error'
-                    ? update.error
-                    : `Up to date on ${update?.current ?? info?.versions.app}`}
+                {settings.updateChannel === 'off'
+                  ? `Not checking for updates — running ${update?.current ?? info?.versions.app}`
+                  : update?.stage === 'available' && update.available
+                    ? `Version ${update.available.version} is ready to install`
+                    : update?.stage === 'error'
+                      ? update.error
+                      : `Up to date on ${update?.current ?? info?.versions.app}`}
               </span>
               <code className="detect-path">
                 {update?.lastCheckedAt
@@ -178,7 +196,11 @@ export function SettingsDialog(): React.JSX.Element {
             </div>
           </div>
           <div className="row">
-            <button className="btn subtle" onClick={() => void checkForUpdate()}>
+            <button
+              className="btn subtle"
+              disabled={settings.updateChannel === 'off'}
+              onClick={() => void checkForUpdate()}
+            >
               <Icon name="refresh" />
               <span>Check now</span>
             </button>
@@ -189,16 +211,22 @@ export function SettingsDialog(): React.JSX.Element {
               </button>
             ) : null}
           </div>
-          <span className="field-hint">
-            Releases are picked up from{' '}
-            <button
-              className="link"
-              onClick={() => api.openPath(update?.manifestPath ?? '')}
-              title={update?.manifestPath}
-            >
-              {update?.manifestPath}
-            </button>
-          </span>
+          {settings.updateChannel === 'github' ? (
+            <span className="field-hint">
+              Releases are picked up from <code>{update?.feedUrl || 'nowhere — see package.json'}</code>
+            </span>
+          ) : settings.updateChannel === 'local' ? (
+            <span className="field-hint">
+              Releases are picked up from{' '}
+              <button
+                className="link"
+                onClick={() => api.openPath(update?.manifestPath ?? '')}
+                title={update?.manifestPath}
+              >
+                {update?.manifestPath}
+              </button>
+            </span>
+          ) : null}
         </section>
 
         <section className="settings-wide muted">

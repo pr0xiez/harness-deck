@@ -144,9 +144,13 @@ if (!tagged) {
   if (!renotes.ok) console.warn(`  warning: could not refresh the notes (${renotes.status})`)
 }
 
-// GitHub rewrites spaces in an asset name to periods, so a same-named asset has
-// to be matched in that form or replacing it would never find it.
-const assetName = (name) => name.replace(/ /g, '.')
+// GitHub will not take a space in an asset name and rewrites it, so the name is
+// settled here rather than left to it — a same-named asset also has to be
+// matched in the final form or replacing it would never find it. Dashes, not
+// GitHub's own periods: latest*.yml names the installer as electron-builder's
+// "safe" form, which replaces a space with a dash, and the in-app updater
+// resolves that name against this release. The two have to agree.
+const assetName = (name) => name.replace(/ /g, '-')
 
 for (const file of files) {
   const name = assetName(file)

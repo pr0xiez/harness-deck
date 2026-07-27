@@ -19,6 +19,7 @@ import type {
   PersistedState,
   SavedProfile,
   TranscribeRequest,
+  UpdateChannel,
   VoiceProvider,
   WorktreeRequest
 } from '@shared/types'
@@ -27,7 +28,7 @@ import { PtyManager } from './pty'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
-import { checkNow, currentState, disposeUpdater, initUpdater, install } from './updater'
+import { checkNow, currentState, disposeUpdater, initUpdater, install, setChannel } from './updater'
 import { formatReport, runSmoke, SMOKE_USER_DATA, watchRendererErrors } from './smoke'
 
 app.setName('Harness Deck')
@@ -404,6 +405,7 @@ function registerIpc(): void {
 
   ipcMain.handle('update:state', () => currentState())
   ipcMain.handle('update:check', () => checkNow())
+  ipcMain.handle('update:setChannel', (_e, channel: UpdateChannel) => setChannel(channel))
   ipcMain.handle('update:install', () => install())
 
   ipcMain.handle('pty:ensure', (_e, spec: PaneSpec, cols: number, rows: number) =>

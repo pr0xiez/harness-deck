@@ -41,6 +41,13 @@ OpenAI, Groq or a local Whisper server. See [Dictation](#dictation).
 background pane produces output, and the process title the agent reports (so a
 pane says what Claude is doing, not just "claude").
 
+**Attention routing** — A running pane that stops producing output has hit a
+prompt, an approval gate, or finished, so it turns amber and the workspace it
+lives in shows a waiting count. `Ctrl+Shift+J` jumps to the next one, the dock
+badge counts them, and a background window notifies once as each goes quiet.
+How long the silence has to last, and whether it notifies or badges at all, are
+in Settings.
+
 **Survives restarts** — Workspaces, panes, folders and layout are saved to
 `workspaces.json` in the app's user-data folder. Reloading the window
 re-attaches to the running processes and repaints the last ~512 KB of output.
@@ -186,6 +193,7 @@ pane, and `Cmd+Alt+I` for developer tools.
 | `Ctrl+Shift+W` | Close focused pane |
 | `Ctrl+Shift+R` | Restart the process in the focused pane |
 | `Ctrl+Shift+Z` | Zoom / restore the focused pane |
+| `Ctrl+Shift+J` | Jump to the next pane waiting for you |
 | `Alt+1` … `Alt+9` | Focus pane by position |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous pane |
 | `Ctrl+Shift+←/→` | Move the focused pane in the layout |

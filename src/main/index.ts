@@ -23,7 +23,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { detectProfiles } from './profiles'
-import { PtyManager } from './pty'
+import { DEFAULT_QUIET_MS, PtyManager } from './pty'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
@@ -38,6 +38,18 @@ let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
 /** Set when we are quitting to hand over to an installer — skip the pane prompt. */
 let quittingForUpdate = false
+/**
+ * How long a pane may be silent before it counts as waiting. The renderer owns
+ * settings, so the value is whatever it last handed over — kept here because
+ * the timer runs beside the pty, and re-reading the state file per burst of
+ * output would be absurd.
+ */
+let quietMs = DEFAULT_QUIET_MS
+
+function rememberAttention(state: PersistedState | null): void {
+  const value = state?.settings?.attention?.quietMs
+  if (typeof value === 'number' && value > 0) quietMs = value
+}
 
 /**
  * Smoke-test hooks:
@@ -380,8 +392,15 @@ function registerIpc(): void {
     defaultCwd: process.env.HD_DEFAULT_CWD || homedir()
   }))
 
-  ipcMain.handle('state:load', () => loadState())
-  ipcMain.on('state:save', (_e, state: PersistedState) => saveState(state))
+  ipcMain.handle('state:load', () => {
+    const state = loadState()
+    rememberAttention(state)
+    return state
+  })
+  ipcMain.on('state:save', (_e, state: PersistedState) => {
+    rememberAttention(state)
+    saveState(state)
+  })
   ipcMain.handle('state:location', () => stateLocation())
 
   ipcMain.handle('profiles:list', () => detectProfiles())
@@ -513,7 +532,7 @@ if (!app.requestSingleInstanceLock()) {
       const icon = devIcon()
       if (icon) app.dock?.setIcon(icon)
     }
-    ptys = new PtyManager(send)
+    ptys = new PtyManager(send, undefined, () => quietMs)
     registerIpc()
     mainWindow = createWindow()
 

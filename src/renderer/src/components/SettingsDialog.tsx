@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useDeck } from '../store'
-import { DEFAULT_SETTINGS } from '../store'
+import { DEFAULT_ATTENTION, DEFAULT_SETTINGS } from '../store'
 import { Field, Modal, Toggle } from './ui'
 import { Icon } from './Icon'
 import { VoiceSettings } from './VoiceSettings'
@@ -10,6 +10,7 @@ const api = window.harness
 export function SettingsDialog(): React.JSX.Element {
   const settings = useDeck((s) => s.settings)
   const updateSettings = useDeck((s) => s.updateSettings)
+  const updateAttention = useDeck((s) => s.updateAttention)
   const info = useDeck((s) => s.info)
   const profiles = useDeck((s) => s.profiles)
   const setUi = useDeck((s) => s.setUi)
@@ -128,6 +129,37 @@ export function SettingsDialog(): React.JSX.Element {
             hint="Agents ring the bell when they need you."
             checked={settings.bellNotifications}
             onChange={(bellNotifications) => updateSettings({ bellNotifications })}
+          />
+        </section>
+
+        <section>
+          <h3>Attention</h3>
+          <Field
+            label="Quiet time before a pane counts as waiting"
+            hint="Milliseconds of silence from a running process. Lower catches an agent at a prompt sooner; higher stops a slow thinker looking finished."
+          >
+            <input
+              type="number"
+              min={500}
+              max={60000}
+              step={250}
+              value={settings.attention.quietMs}
+              onChange={(event) =>
+                updateAttention({ quietMs: Number(event.target.value) || DEFAULT_ATTENTION.quietMs })
+              }
+            />
+          </Field>
+          <Toggle
+            label="Notify when a pane starts waiting"
+            hint="Once per pane, and only while the window is in the background."
+            checked={settings.attention.notify}
+            onChange={(notify) => updateAttention({ notify })}
+          />
+          <Toggle
+            label="Count waiting panes on the app icon"
+            hint="A dock badge on macOS and Linux; a flashing taskbar button on Windows."
+            checked={settings.attention.badge}
+            onChange={(badge) => updateAttention({ badge })}
           />
         </section>
 

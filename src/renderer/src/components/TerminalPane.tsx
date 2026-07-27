@@ -264,9 +264,17 @@ export function TerminalPane({
   const statusLabel =
     pane.status === 'running'
       ? 'running'
-      : pane.status === 'exited'
-        ? `exited ${pane.exitCode ?? ''}`.trim()
-        : 'idle'
+      : pane.status === 'waiting'
+        ? 'waiting for you — the process is alive but has gone quiet'
+        : pane.status === 'exited'
+          ? `exited ${pane.exitCode ?? ''}`.trim()
+          : 'idle'
+
+  // An agent produces output constantly, so "there was output" told you nothing
+  // — waiting is the signal that replaces it. A shell is quiet by nature, and
+  // there the old dot still earns its place.
+  const showActivity =
+    pane.activity && !active && pane.status !== 'waiting' && profile?.kind !== 'agent'
 
   return (
     <section
@@ -283,7 +291,7 @@ export function TerminalPane({
           {title}
         </span>
         <span className={`pane-status ${pane.status}`} title={statusLabel} />
-        {pane.activity && !active ? <span className="pane-dot" title="new output" /> : null}
+        {showActivity ? <span className="pane-dot" title="new output" /> : null}
         <span className="pane-index">{index + 1}</span>
         <div className="pane-actions">
           <button

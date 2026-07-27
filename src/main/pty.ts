@@ -10,6 +10,10 @@ import { shellEnv } from './shell-env'
 const REPLAY_LIMIT = 512 * 1024
 /** Coalesce pty output into one IPC message per tick to keep the UI cheap. */
 const FLUSH_MS = 8
+/** Silence from a running process before it counts as waiting, absent a setting. */
+export const DEFAULT_QUIET_MS = 2500
+/** Floor for the setting: a quiet window near zero would fire on every burst. */
+const MIN_QUIET_MS = 50
 
 interface Session {
   id: string
@@ -22,6 +26,11 @@ interface Session {
   chunkLen: number
   pending: string[]
   flushTimer: NodeJS.Timeout | null
+  /** When the child last wrote something — the clock the quiet timer runs off. */
+  lastDataAt: number
+  /** The process is alive but has said nothing for a while: it wants you. */
+  quiet: boolean
+  quietTimer: NodeJS.Timeout | null
 }
 
 type Sender = (channel: string, payload: unknown) => void
@@ -32,9 +41,14 @@ export type Spawn = typeof nodePty.spawn
 export class PtyManager {
   private sessions = new Map<string, Session>()
 
+  /**
+   * `quietMs` is read per timer rather than captured, because the user owns it:
+   * it lives in the renderer's settings and can change while panes are running.
+   */
   constructor(
     private send: Sender,
-    private spawn: Spawn = nodePty.spawn
+    private spawn: Spawn = nodePty.spawn,
+    private quietMs: () => number = () => DEFAULT_QUIET_MS
   ) {}
 
   /**
@@ -46,6 +60,12 @@ export class PtyManager {
     if (existing) {
       if (existing.proc && (existing.cols !== cols || existing.rows !== rows)) {
         this.resize(spec.id, cols, rows)
+      }
+      // A fresh window knows nothing of an event sent to the old one, and
+      // EnsureResult has no room for it — so let the clock re-announce it.
+      if (existing.quiet && existing.status === 'running') {
+        existing.quiet = false
+        this.armQuiet(existing)
       }
       return {
         created: false,
@@ -66,7 +86,10 @@ export class PtyManager {
       chunks: [],
       chunkLen: 0,
       pending: [],
-      flushTimer: null
+      flushTimer: null,
+      lastDataAt: 0,
+      quiet: false,
+      quietTimer: null
     }
     this.sessions.set(spec.id, session)
 
@@ -94,6 +117,9 @@ export class PtyManager {
       proc.onExit(({ exitCode, signal }) => {
         session.proc = null
         if (!this.isCurrent(session)) return
+        // An exited pane is not waiting for you, it is dead, and pane.status
+        // already says so — so the clock stops here rather than firing after.
+        this.clearQuiet(session)
         session.status = 'exited'
         session.exitCode = exitCode
         this.flush(session)
@@ -153,6 +179,7 @@ export class PtyManager {
     if (!session) return
     if (session.flushTimer) clearTimeout(session.flushTimer)
     session.flushTimer = null
+    this.clearQuiet(session)
     // Unregister before killing. The process dies from our SIGHUP a few
     // milliseconds later, and a restart has already claimed the id by then —
     // whatever it reports on the way out is no longer this pane's news.
@@ -187,10 +214,40 @@ export class PtyManager {
 
   private queue(session: Session, data: string): void {
     if (!this.isCurrent(session)) return
+    session.lastDataAt = Date.now()
+    if (session.quiet) {
+      session.quiet = false
+      this.send('pty:quiet', { id: session.id, quiet: false })
+    }
+    this.armQuiet(session)
     session.pending.push(data)
     this.record(session, data)
     if (session.flushTimer) return
     session.flushTimer = setTimeout(() => this.flush(session), FLUSH_MS)
+  }
+
+  /**
+   * Restarts the silence clock. Only output from the child arms it: our own
+   * notices (see appendLocal) are not the process saying anything, and a pane
+   * that has never written a byte has not "stopped" producing output.
+   */
+  private armQuiet(session: Session): void {
+    if (session.quietTimer) clearTimeout(session.quietTimer)
+    session.quietTimer = setTimeout(
+      () => {
+        session.quietTimer = null
+        if (!this.isCurrent(session) || session.status !== 'running' || session.quiet) return
+        session.quiet = true
+        this.send('pty:quiet', { id: session.id, quiet: true })
+      },
+      Math.max(MIN_QUIET_MS, this.quietMs())
+    )
+  }
+
+  private clearQuiet(session: Session): void {
+    if (session.quietTimer) clearTimeout(session.quietTimer)
+    session.quietTimer = null
+    session.quiet = false
   }
 
   private flush(session: Session): void {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useDeck } from '../store'
+import { isLive, useDeck } from '../store'
 import { Icon } from './Icon'
 
 const api = window.harness
@@ -15,10 +15,8 @@ export function TitleBar(): React.JSX.Element {
   const showUpdate = useDeck((s) => s.showUpdate)
   const updateReady = update?.stage === 'available' ? update.available : null
   const active = workspaces.find((w) => w.id === activeId)
-  const runningCount = workspaces.reduce(
-    (total, ws) => total + ws.panes.filter((p) => p.status === 'running').length,
-    0
-  )
+  // Waiting counts as running: the process is alive, it has just stopped talking.
+  const runningCount = workspaces.reduce((total, ws) => total + ws.panes.filter(isLive).length, 0)
 
   useEffect(() => {
     void api.window.isMaximized().then(setMaximized)

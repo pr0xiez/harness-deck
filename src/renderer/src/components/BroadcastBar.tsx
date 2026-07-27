@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useDeck, type DeckWorkspace } from '../store'
+import { isLive, useDeck, type DeckWorkspace } from '../store'
 import { registerVoiceSink } from '../voice'
 import { Icon } from './Icon'
 import { MicButton } from './MicButton'
@@ -49,7 +49,9 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
   )
 
   const targets = workspace.panes.filter((pane) => {
-    if (pane.status !== 'running') return false
+    // A pane that has gone quiet is the one most worth prompting — it is the
+    // agent sitting at its prompt waiting for the next instruction.
+    if (!isLive(pane)) return false
     if (!agentsOnly) return true
     return profiles.find((p) => p.id === pane.profileId)?.kind === 'agent'
   })

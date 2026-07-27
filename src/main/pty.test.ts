@@ -7,6 +7,8 @@ import { PtyManager, type Spawn } from './pty'
 const FLUSH_MS = 8
 /** Matches REPLAY_LIMIT in pty.ts. */
 const REPLAY_LIMIT = 512 * 1024
+/** Matches DEFAULT_QUIET_MS in pty.ts. */
+const QUIET_MS = 2500
 
 let pidSeq = 1000
 
@@ -61,9 +63,11 @@ interface Harness {
   spawned: FakePty[]
   /** Every `pty:data` payload for an id, concatenated. */
   dataFor(id: string): string
+  /** The `quiet` flag of every `pty:quiet` event for an id, in order. */
+  quietFor(id: string): boolean[]
 }
 
-function harness(spawnImpl?: () => never): Harness {
+function harness(spawnImpl?: () => never, quietMs = QUIET_MS): Harness {
   const sent: Harness['sent'] = []
   const spawned: FakePty[] = []
   const spawn: Spawn = () => {
@@ -74,7 +78,8 @@ function harness(spawnImpl?: () => never): Harness {
   }
   const mgr = new PtyManager(
     (channel, payload) => sent.push({ channel, payload: payload as Record<string, unknown> }),
-    spawn
+    spawn,
+    () => quietMs
   )
   return {
     mgr,
@@ -84,7 +89,11 @@ function harness(spawnImpl?: () => never): Harness {
       sent
         .filter((m) => m.channel === 'pty:data' && m.payload.id === id)
         .map((m) => String(m.payload.data))
-        .join('')
+        .join(''),
+    quietFor: (id) =>
+      sent
+        .filter((m) => m.channel === 'pty:quiet' && m.payload.id === id)
+        .map((m) => Boolean(m.payload.quiet))
   }
 }
 
@@ -176,6 +185,136 @@ describe('output', () => {
     const { replay } = mgr.ensure(spec('a'), 100, 40)
     expect(replay.length).toBeLessThanOrEqual(REPLAY_LIMIT)
     expect(replay.endsWith('LATEST')).toBe(true)
+  })
+})
+
+/**
+ * The signal here is the inverse of the obvious one: output *stopping* while
+ * the process is still alive is what means "an agent is at a prompt". Every
+ * test below is about the edges of that — silence that is really a dead
+ * process, or a timer outliving the session that armed it.
+ */
+describe('quiet', () => {
+  it('announces a running pane that has stopped producing output', () => {
+    const { mgr, spawned, quietFor } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('thinking…')
+
+    vi.advanceTimersByTime(QUIET_MS - 1)
+    expect(quietFor('a')).toEqual([])
+
+    vi.advanceTimersByTime(1)
+    expect(quietFor('a')).toEqual([true])
+  })
+
+  it('says it once, however long the silence lasts', () => {
+    const { mgr, spawned, quietFor } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('thinking…')
+    vi.advanceTimersByTime(QUIET_MS * 10)
+
+    expect(quietFor('a')).toEqual([true])
+  })
+
+  it('takes the window from the injected setting, not a constant', () => {
+    const { mgr, spawned, quietFor } = harness(undefined, 400)
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('thinking…')
+
+    vi.advanceTimersByTime(399)
+    expect(quietFor('a')).toEqual([])
+    vi.advanceTimersByTime(1)
+    expect(quietFor('a')).toEqual([true])
+  })
+
+  it('reports the pane busy again on the first byte after the silence', () => {
+    const { mgr, spawned, quietFor } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('thinking…')
+    vi.advanceTimersByTime(QUIET_MS)
+
+    spawned[0].emit('and back')
+    expect(quietFor('a')).toEqual([true, false])
+
+    vi.advanceTimersByTime(QUIET_MS)
+    expect(quietFor('a')).toEqual([true, false, true])
+  })
+
+  it('stays silent about a pane that only ever went on producing output', () => {
+    const { mgr, spawned, quietFor } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    for (let i = 0; i < 10; i++) {
+      spawned[0].emit(`line ${i}\r\n`)
+      vi.advanceTimersByTime(QUIET_MS - 10)
+    }
+
+    expect(quietFor('a')).toEqual([])
+  })
+
+  it('says nothing about a pane whose process exited mid-silence', () => {
+    const { mgr, spawned, quietFor } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('nearly done')
+
+    vi.advanceTimersByTime(QUIET_MS - 10)
+    spawned[0].exit(0)
+    vi.advanceTimersByTime(QUIET_MS * 2)
+
+    expect(quietFor('a')).toEqual([])
+    expect(mgr.status('a')).toEqual({ status: 'exited', exitCode: 0 })
+  })
+
+  it('says nothing more once a pane that was already waiting exits', () => {
+    const { mgr, spawned, quietFor } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('waiting for you')
+    vi.advanceTimersByTime(QUIET_MS)
+    expect(quietFor('a')).toEqual([true])
+
+    spawned[0].exit(0)
+    vi.advanceTimersByTime(QUIET_MS * 2)
+
+    expect(quietFor('a')).toEqual([true])
+  })
+
+  /** Same disposal race as the restart tests below: a stale timer must not speak. */
+  it('drops the pending timer when the pane is disposed', () => {
+    const { mgr, spawned, quietFor } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('half a thought')
+
+    mgr.dispose('a')
+    vi.advanceTimersByTime(QUIET_MS * 2)
+
+    expect(quietFor('a')).toEqual([])
+  })
+
+  it('does not let a replaced session report quiet for the pane that took its id', () => {
+    const { mgr, spawned, quietFor } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    const old = spawned[0]
+    old.emit('output from the first run')
+
+    mgr.dispose('a')
+    mgr.ensure(spec('a'), 100, 40)
+    old.emit('stale output from the process being replaced')
+    vi.advanceTimersByTime(QUIET_MS * 2)
+
+    expect(quietFor('a')).toEqual([])
+  })
+
+  it('re-announces a quiet pane to a window that reattached', () => {
+    const { mgr, spawned, quietFor } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('waiting for you')
+    vi.advanceTimersByTime(QUIET_MS)
+    expect(quietFor('a')).toEqual([true])
+
+    // A reloaded window never heard the first event.
+    mgr.ensure(spec('a'), 100, 40)
+    vi.advanceTimersByTime(QUIET_MS)
+
+    expect(quietFor('a')).toEqual([true, true])
   })
 })
 

@@ -61,16 +61,49 @@ function idleSpec(id: string): PaneSpec {
     : { id, command: '/bin/sh', args: ['-c', 'sleep 60'], cwd: process.cwd() }
 }
 
+/** Talks, falls silent for well over SMOKE_QUIET_MS, talks again, then waits. */
+function chattySpec(id: string): PaneSpec {
+  return process.platform === 'win32'
+    ? {
+        id,
+        command: 'cmd.exe',
+        args: [
+          '/c',
+          'echo HD_QUIET_1 & ping -n 3 127.0.0.1 >NUL & echo HD_QUIET_2 & ping -n 60 127.0.0.1 >NUL'
+        ],
+        cwd: process.cwd()
+      }
+    : {
+        id,
+        command: '/bin/sh',
+        args: ['-c', 'echo HD_QUIET_1; sleep 2; echo HD_QUIET_2; sleep 60'],
+        cwd: process.cwd()
+      }
+}
+
+/** Short enough that one smoke run can watch a pane go quiet and come back. */
+const SMOKE_QUIET_MS = 250
+
 interface Recorder {
   mgr: PtyManager
   dataFor(id: string): string
   exitsFor(id: string): number
+  quietFor(id: string): boolean[]
 }
 
 function recordingManager(): Recorder {
-  const messages: Array<{ channel: string; payload: { id?: string; data?: string } }> = []
-  const mgr = new PtyManager((channel, payload) =>
-    messages.push({ channel, payload: payload as { id?: string; data?: string } })
+  const messages: Array<{
+    channel: string
+    payload: { id?: string; data?: string; quiet?: boolean }
+  }> = []
+  const mgr = new PtyManager(
+    (channel, payload) =>
+      messages.push({
+        channel,
+        payload: payload as { id?: string; data?: string; quiet?: boolean }
+      }),
+    undefined,
+    () => SMOKE_QUIET_MS
   )
   return {
     mgr,
@@ -79,7 +112,11 @@ function recordingManager(): Recorder {
         .filter((m) => m.channel === 'pty:data' && m.payload.id === id)
         .map((m) => m.payload.data ?? '')
         .join(''),
-    exitsFor: (id) => messages.filter((m) => m.channel === 'pty:exit' && m.payload.id === id).length
+    exitsFor: (id) => messages.filter((m) => m.channel === 'pty:exit' && m.payload.id === id).length,
+    quietFor: (id) =>
+      messages
+        .filter((m) => m.channel === 'pty:quiet' && m.payload.id === id)
+        .map((m) => Boolean(m.payload.quiet))
   }
 }
 
@@ -188,7 +225,7 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
 
   // Everything below drives node-pty directly. If the native prebuild didn't
   // survive packaging, this is where it shows up.
-  const { mgr, dataFor, exitsFor } = recordingManager()
+  const { mgr, dataFor, exitsFor, quietFor } = recordingManager()
 
   await record('a pane runs a process to completion', async () => {
     const spec = echoSpec('smoke-echo', 'HD_SMOKE_OK')
@@ -234,6 +271,29 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     if (exitsFor(id)) return `${exitsFor(id)} exit event(s) reported for a running pane`
     mgr.dispose(id)
     return null
+  })
+
+  /**
+   * Attention routing rests on a timer that only a live process can exercise:
+   * a stub pty proves the bookkeeping, but not that real output ever reaches
+   * the clock that arms it.
+   */
+  await record('a pane that falls silent is reported waiting, and busy again', async () => {
+    const id = 'smoke-quiet'
+    const result = mgr.ensure(chattySpec(id), 80, 24)
+    if (result.error) return `spawn failed: ${result.error}`
+
+    const wentQuiet = await until(() => quietFor(id).includes(true), 15_000)
+    if (!wentQuiet) return 'the pane never reported going quiet'
+
+    const cameBack = await until(() => quietFor(id).includes(false), 15_000)
+    mgr.dispose(id)
+    if (!cameBack) return 'the second burst of output never cleared the quiet flag'
+
+    const [first, second] = quietFor(id)
+    return first === true && second === false
+      ? null
+      : `unexpected sequence ${JSON.stringify(quietFor(id).slice(0, 4))}`
   })
 
   await record('a failed command is reported, not thrown', async () => {

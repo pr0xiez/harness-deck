@@ -17,6 +17,7 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
       ['Ctrl+Shift+W', 'Close focused pane'],
       ['Ctrl+Shift+R', 'Restart the process in the focused pane'],
       ['Ctrl+Shift+Z', 'Zoom / restore the focused pane'],
+      ['Ctrl+Shift+J', 'Jump to the next pane waiting for you'],
       ['Alt+1 … Alt+9', 'Focus pane by position'],
       ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous pane'],
       ['Ctrl+Shift+← / →', 'Move the focused pane in the layout']

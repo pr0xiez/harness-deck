@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useDeck, type DeckWorkspace } from '../store'
+import { isLive, useDeck, type DeckWorkspace } from '../store'
 import { ACCENTS } from '../theme'
 import { Dropdown } from './ui'
 import { Icon } from './Icon'
@@ -38,6 +38,7 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
   const duplicateWorkspace = useDeck((s) => s.duplicateWorkspace)
   const moveWorkspace = useDeck((s) => s.moveWorkspace)
 
+  const waiting = workspace.panes.filter((p) => p.status === 'waiting').length
   const running = workspace.panes.filter((p) => p.status === 'running').length
   const exited = workspace.panes.filter((p) => p.status === 'exited').length
   const activity = workspace.panes.some((p) => p.activity)
@@ -77,11 +78,21 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
         </span>
       ) : null}
 
+      {/* A waiting count outranks the rest: the whole point is to see it on a
+          workspace you are not looking at. */}
       <span className="ws-badges">
-        {activity ? <span className="dot activity" title="new output" /> : null}
-        {running ? <span className="count running">{running}</span> : null}
-        {!running && exited ? <span className="count exited">{exited}</span> : null}
-        {!running && !exited && workspace.panes.length ? (
+        {activity && !waiting ? <span className="dot activity" title="new output" /> : null}
+        {waiting ? (
+          <span
+            className="count waiting"
+            title={`${waiting} pane${waiting === 1 ? '' : 's'} waiting for you (Ctrl+Shift+J)`}
+          >
+            {waiting}
+          </span>
+        ) : null}
+        {!waiting && running ? <span className="count running">{running}</span> : null}
+        {!waiting && !running && exited ? <span className="count exited">{exited}</span> : null}
+        {!waiting && !running && !exited && workspace.panes.length ? (
           <span className="count idle">{workspace.panes.length}</span>
         ) : null}
       </span>
@@ -141,7 +152,7 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
                 className="menu-item danger"
                 onClick={async () => {
                   setMenuOpen(false)
-                  const live = workspace.panes.filter((p) => p.status === 'running').length
+                  const live = workspace.panes.filter(isLive).length
                   if (
                     live &&
                     !(await api.confirm({

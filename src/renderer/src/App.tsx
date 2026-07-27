@@ -26,8 +26,21 @@ export function App(): React.JSX.Element {
   const mounted = useDeck((s) => s.mounted)
   const ui = useDeck((s) => s.ui)
   const addWorkspace = useDeck((s) => s.addWorkspace)
+  const badgeEnabled = useDeck((s) => s.settings.attention.badge)
+  const waitingCount = useDeck((s) =>
+    s.workspaces.reduce(
+      (total, ws) => total + ws.panes.filter((p) => p.status === 'waiting').length,
+      0
+    )
+  )
 
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
+
+  // Panes waiting for you are the app's only unread count, so the platform gets
+  // to show it: a dock badge, or a taskbar flash on Windows.
+  useEffect(() => {
+    api.attention.setBadge(badgeEnabled ? waitingCount : 0)
+  }, [badgeEnabled, waitingCount])
 
   // Route pty output into the matching terminal and track background activity.
   useEffect(() => {
@@ -46,9 +59,26 @@ export function App(): React.JSX.Element {
       useDeck.getState().setPaneStatus(id, 'exited', exitCode)
     })
 
+    // Output *stopping* is the signal worth having: the agent has hit a prompt,
+    // an approval gate, or finished. The main process owns the clock; all that
+    // is left here is turning it into a status the UI can route on.
+    const offQuiet = api.pty.onQuiet(({ id, quiet }) => {
+      const state = useDeck.getState()
+      const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === id)
+      // An exit is the newer truth — a dead pane is not waiting for you — and
+      // the guard doubles as the once-per-transition rule for the notification.
+      if (!pane || pane.status !== (quiet ? 'running' : 'waiting')) return
+      state.setPaneStatus(id, quiet ? 'waiting' : 'running')
+      if (!quiet || !state.settings.attention.notify || document.hasFocus()) return
+      new Notification('Harness Deck', {
+        body: `${pane.name || pane.processTitle || pane.command} is waiting for you`
+      })
+    })
+
     return () => {
       offData()
       offExit()
+      offQuiet()
     }
   }, [])
 
@@ -172,6 +202,14 @@ export function App(): React.JSX.Element {
             take()
             if (paneId) getTerminal(paneId)?.term.clear()
             return
+          case 'j': {
+            take()
+            // Nothing waiting is a no-op, not an error — the same key is how
+            // you check whether anything is waiting at all.
+            const next = state.focusNextWaiting()
+            if (next) getTerminal(next)?.term.focus()
+            return
+          }
           case 'c': {
             take()
             const selection = paneId ? getTerminal(paneId)?.term.getSelection() : ''

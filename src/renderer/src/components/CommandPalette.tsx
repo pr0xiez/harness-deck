@@ -123,6 +123,20 @@ export function CommandPalette(): React.JSX.Element {
         })
       })
 
+      const waiting = state.workspaces.reduce(
+        (total, ws) => total + ws.panes.filter((p) => p.status === 'waiting').length,
+        0
+      )
+      list.push({
+        id: 'pane:next-waiting',
+        group: 'Panes',
+        label: waiting
+          ? `Jump to the next waiting pane (${waiting} waiting)`
+          : 'Jump to the next waiting pane',
+        hint: 'Ctrl+Shift+J',
+        run: () => state.focusNextWaiting()
+      })
+
       workspace.panes.forEach((pane, index) => {
         const profile = state.profiles.find((p) => p.id === pane.profileId)
         list.push({

@@ -368,6 +368,12 @@ code {
   color: color-mix(in srgb, var(--bad) 75%, #fff);
 }
 
+.count.waiting {
+  background: color-mix(in srgb, var(--warn) 26%, var(--bg-3));
+  color: color-mix(in srgb, var(--warn) 85%, #fff);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 35%, transparent);
+}
+
 .dot.activity {
   width: 6px;
   height: 6px;
@@ -841,6 +847,11 @@ code {
     0 10px 26px rgba(0, 0, 0, 0.4);
 }
 
+/* Only worth saying on a pane you are not already looking at. */
+.pane.waiting:not(.is-active) {
+  border-color: color-mix(in srgb, var(--warn) 32%, var(--line));
+}
+
 .pane-head {
   display: flex;
   align-items: center;
@@ -891,8 +902,28 @@ code {
   box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 55%, transparent);
 }
 
+/* Amber, and the only pane dot that moves — a stopped agent is the one thing
+   worth catching out of the corner of your eye. */
+.pane-status.waiting {
+  background: var(--warn);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 55%, transparent);
+  animation: waiting-pulse 1.8s ease-in-out infinite;
+}
+
 .pane-status.exited {
   background: var(--bad);
+}
+
+@keyframes waiting-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-status.waiting {
+    animation: none;
+  }
 }
 
 .pane-dot {

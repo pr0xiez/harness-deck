@@ -117,6 +117,8 @@ interface DeckState {
   setPaneStatus: (paneId: string, status: PaneStatus, exitCode?: number | null) => void
   setActivePane: (workspaceId: string, paneId: string) => void
   cyclePane: (delta: number) => void
+  /** Focuses the next pane that has gone quiet; returns its id, or null. */
+  focusNextWaiting: () => string | null
   movePane: (workspaceId: string, paneId: string, delta: number) => void
   toggleZoom: (workspaceId: string, paneId: string) => void
   setLayout: (workspaceId: string, layout: LayoutMode) => void
@@ -124,6 +126,7 @@ interface DeckState {
 
   updateSettings: (patch: Partial<Settings>) => void
   updateVoice: (patch: Partial<VoiceSettings>) => void
+  updateAttention: (patch: Partial<AttentionSettings>) => void
   setUi: (patch: Partial<UiState>) => void
 }
 
@@ -259,10 +262,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   installUpdate: async () => {
     const { update, updateInstalling, settings, workspaces } = get()
     if (!update?.available || updateInstalling) return
-    const running = workspaces.reduce(
-      (total, ws) => total + ws.panes.filter((p) => p.status === 'running').length,
-      0
-    )
+    const running = workspaces.reduce((total, ws) => total + ws.panes.filter(isLive).length, 0)
     if (running && settings.confirmCloseRunning) {
       const ok = await api.confirm({
         title: 'Install update',
@@ -415,7 +415,7 @@ export const useDeck = create<DeckState>((set, get) => ({
       .find((w) => w.id === workspaceId)
       ?.panes.find((p) => p.id === paneId)
     if (!pane) return
-    if (pane.status === 'running' && state.settings.confirmCloseRunning) {
+    if (isLive(pane) && state.settings.confirmCloseRunning) {
       const profile = state.profiles.find((p) => p.id === pane.profileId)
       const ok = await api.confirm({
         title: 'Close pane',
@@ -486,6 +486,22 @@ export const useDeck = create<DeckState>((set, get) => ({
     get().setActivePane(ws.id, next.id)
   },
 
+  focusNextWaiting: () => {
+    const { workspaces, activeWorkspaceId } = get()
+    const active = workspaces.find((w) => w.id === activeWorkspaceId)
+    const flat = workspaces.flatMap((ws) => ws.panes.map((pane) => ({ ws, pane })))
+    // Start just after the focused pane, so pressing it again walks the queue
+    // rather than landing on the same pane every time.
+    const from =
+      flat.findIndex(({ ws, pane }) => ws.id === active?.id && pane.id === active?.activePaneId) + 1
+    const ordered = [...flat.slice(from), ...flat.slice(0, from)]
+    const next = ordered.find(({ pane }) => pane.status === 'waiting')
+    if (!next) return null
+    if (next.ws.id !== activeWorkspaceId) get().setActiveWorkspace(next.ws.id)
+    get().setActivePane(next.ws.id, next.pane.id)
+    return next.pane.id
+  },
+
   movePane: (workspaceId, paneId, delta) =>
     set({
       workspaces: get().workspaces.map((w) => {
@@ -522,8 +538,19 @@ export const useDeck = create<DeckState>((set, get) => ({
   updateVoice: (patch) =>
     set({ settings: { ...get().settings, voice: { ...get().settings.voice, ...patch } } }),
 
+  updateAttention: (patch) =>
+    set({ settings: { ...get().settings, attention: { ...get().settings.attention, ...patch } } }),
+
   setUi: (patch) => set({ ui: { ...get().ui, ...patch } })
 }))
+
+/**
+ * A waiting pane is a running one that has gone quiet, so everything that asks
+ * "is there still a process on the end of this?" — close prompts, broadcast
+ * targets, the running count — has to count it.
+ */
+export const isLive = (pane: { status: PaneStatus }): boolean =>
+  pane.status === 'running' || pane.status === 'waiting'
 
 export const activeWorkspace = (state: DeckState): DeckWorkspace | undefined =>
   state.workspaces.find((w) => w.id === state.activeWorkspaceId)

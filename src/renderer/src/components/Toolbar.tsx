@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useDeck, type DeckWorkspace } from '../store'
+import { isLive, useDeck, type DeckWorkspace } from '../store'
 import { Icon } from './Icon'
 import { MicButton } from './MicButton'
 import { ProfileMenu } from './ProfileMenu'
@@ -23,7 +23,8 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
 
   const displayCwd =
     home && workspace.cwd.startsWith(home) ? `~${workspace.cwd.slice(home.length)}` : workspace.cwd
-  const running = workspace.panes.filter((p) => p.status === 'running').length
+  // The chip says "live", and a pane that has gone quiet still has a process.
+  const running = workspace.panes.filter(isLive).length
 
   return (
     <div className="toolbar" style={{ ['--ws-accent' as string]: workspace.accent }}>

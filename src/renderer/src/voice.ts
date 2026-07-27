@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { VoiceSettings } from '@shared/types'
 import { voiceBaseUrl, voiceModel, voiceProvider } from '@shared/voice'
-import { useDeck } from './store'
+import { isLive, useDeck } from './store'
 import { getTerminal } from './terminals'
 
 const api = window.harness
@@ -553,7 +553,7 @@ function deliver(target: VoiceTarget, raw: string): void {
       .workspaces.flatMap((w) => w.panes)
       .find((p) => p.id === target.paneId)
     if (!pane) return copyInstead(text, 'That pane is gone')
-    if (pane.status !== 'running') return copyInstead(text, 'That pane is not running')
+    if (!isLive(pane)) return copyInstead(text, 'That pane is not running')
     api.pty.write(target.paneId, text)
     if (voice.submit) window.setTimeout(() => api.pty.write(target.paneId, '\r'), 80)
     getTerminal(target.paneId)?.term.focus()

@@ -68,6 +68,39 @@ export interface Workspace {
   zoomedPaneId: string | null
 }
 
+/**
+ * A workspace saved without its folder, so the same set of panes can be pointed
+ * at another repo. See HD-5.
+ */
+export interface WorkspaceTemplate {
+  id: string
+  name: string
+  accent: string
+  layout: LayoutMode
+  columns: number
+  panes: TemplatePane[]
+  /** ISO date it was saved, shown in the picker. */
+  createdAt: string
+}
+
+/** A pane inside a template. It carries no absolute path and no worktree. */
+export interface TemplatePane {
+  profileId: string
+  command: string
+  args: string[]
+  /** Folder relative to the workspace folder, `/`-separated. Empty is the folder itself. */
+  cwd: string
+  viaShell?: boolean
+  env?: Record<string, string>
+  name?: string
+  /**
+   * The pane ran in a worktree of its workspace. The path cannot travel — two
+   * workspaces sharing one worktree directory is the thing worktree panes exist
+   * to avoid — so only the intent does, and a fresh one is made on the way in.
+   */
+  worktree?: boolean
+}
+
 export interface Settings {
   fontSize: number
   fontFamily: string
@@ -153,6 +186,8 @@ export interface PersistedState {
   workspaces: Workspace[]
   activeWorkspaceId: string | null
   settings: Settings
+  /** Optional: a state file written before templates existed has none. */
+  templates?: WorkspaceTemplate[]
 }
 
 export interface AppInfo {

@@ -11,9 +11,16 @@ import type {
   Settings,
   UpdateState,
   VoiceSettings,
-  Workspace
+  Workspace,
+  WorkspaceTemplate
 } from '@shared/types'
 import { ACCENTS, MONO_STACK } from './theme'
+import {
+  freshPane,
+  templateDirs,
+  templateFromWorkspace,
+  workspaceFromTemplate
+} from './templates'
 
 const api = window.harness
 
@@ -78,6 +85,10 @@ interface UiState {
   paneMenuFor: string | null
   /** Pane whose edit dialog is open. */
   paneDialogFor: string | null
+  /** Workspace being saved as a template. */
+  templateSaveFor: string | null
+  /** The "new workspace from template" picker. */
+  templatePicker: boolean
 }
 
 interface DeckState {
@@ -85,6 +96,8 @@ interface DeckState {
   info: AppInfo | null
   profiles: Profile[]
   workspaces: DeckWorkspace[]
+  /** Workspaces with their folder taken off, ready to point at another one. */
+  templates: WorkspaceTemplate[]
   activeWorkspaceId: string | null
   /** Workspaces whose terminals are mounted (they keep running once visited). */
   mounted: string[]
@@ -112,6 +125,14 @@ interface DeckState {
 
   addWorkspace: (name?: string, cwd?: string) => string
   duplicateWorkspace: (id: string) => string
+  /** Keeps a workspace's panes without its folder; returns the template id. */
+  saveTemplate: (workspaceId: string, name: string) => string
+  removeTemplate: (id: string) => void
+  /**
+   * Builds a workspace from a template against `cwd`, having first said out loud
+   * which of its folders are missing. Returns '' when nothing was created.
+   */
+  newWorkspaceFromTemplate: (templateId: string, cwd: string) => Promise<string>
   removeWorkspace: (id: string) => void
   updateWorkspace: (id: string, patch: Partial<DeckWorkspace>) => void
   setActiveWorkspace: (id: string) => void
@@ -195,6 +216,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   info: null,
   profiles: [],
   workspaces: [],
+  templates: [],
   activeWorkspaceId: null,
   mounted: [],
   settings: DEFAULT_SETTINGS,
@@ -205,7 +227,9 @@ export const useDeck = create<DeckState>((set, get) => ({
     broadcast: false,
     profileMenu: false,
     paneMenuFor: null,
-    paneDialogFor: null
+    paneDialogFor: null,
+    templateSaveFor: null,
+    templatePicker: false
   },
   update: null,
   updateDismissed: null,
@@ -265,6 +289,8 @@ export const useDeck = create<DeckState>((set, get) => ({
       info,
       profiles,
       workspaces,
+      // A state file written before templates existed simply has none.
+      templates: saved?.templates ?? [],
       settings,
       activeWorkspaceId,
       mounted: activeWorkspaceId ? [activeWorkspaceId] : []
@@ -333,17 +359,7 @@ export const useDeck = create<DeckState>((set, get) => ({
       id: uid('ws'),
       name: `${source.name} copy`,
       zoomedPaneId: null,
-      panes: source.panes.map((pane) => ({
-        ...pane,
-        id: uid('pane'),
-        status: 'idle' as PaneStatus,
-        exitCode: null,
-        epoch: 0,
-        activity: false,
-        bell: false,
-        processTitle: undefined,
-        autostart: true
-      }))
+      panes: source.panes.map((pane) => freshPane(pane, uid('pane')))
     }
     copy.activePaneId = copy.panes[0]?.id ?? null
     const index = workspaces.findIndex((w) => w.id === id)
@@ -351,6 +367,66 @@ export const useDeck = create<DeckState>((set, get) => ({
     next.splice(index + 1, 0, copy)
     set({ workspaces: next, activeWorkspaceId: copy.id, mounted: [...get().mounted, copy.id] })
     return copy.id
+  },
+
+  saveTemplate: (workspaceId, name) => {
+    const { workspaces, templates } = get()
+    const source = workspaces.find((w) => w.id === workspaceId)
+    if (!source) return ''
+    const template = templateFromWorkspace(
+      source,
+      name.trim() || source.name,
+      uid('tpl'),
+      new Date().toISOString()
+    )
+    // Saving under a name that is already taken replaces it, so refining a
+    // template is re-saving it rather than collecting five near-identical ones.
+    set({
+      templates: [...templates.filter((t) => t.name !== template.name), template]
+    })
+    return template.id
+  },
+
+  removeTemplate: (id) => set({ templates: get().templates.filter((t) => t.id !== id) }),
+
+  newWorkspaceFromTemplate: async (templateId, cwd) => {
+    const template = get().templates.find((t) => t.id === templateId)
+    if (!template || !cwd) return ''
+
+    // `resolveCwd()` in the main process swaps a folder that has gone for the
+    // user's home. That is the right answer for a pane whose project moved and
+    // the wrong one here — a template quietly landing in $HOME looks like it
+    // worked — so the folders are checked before a single pane exists.
+    const missing = await api.fs.missingDirs(templateDirs(template, cwd))
+    if (missing.includes(cwd)) {
+      await api.confirm({
+        title: 'Folder not found',
+        message: `${cwd} is not there.`,
+        detail: `“${template.name}” was not created. Pick a folder that exists and try again.`,
+        confirmLabel: 'OK'
+      })
+      return ''
+    }
+    if (missing.length) {
+      const ok = await api.confirm({
+        title: 'Missing folders',
+        message: `${missing.length} folder${missing.length === 1 ? '' : 's'} “${template.name}” expects ${missing.length === 1 ? 'is' : 'are'} not in ${cwd}.`,
+        detail: `${missing.join('\n')}\n\nThose panes would open in ${cwd} instead.`,
+        confirmLabel: 'Create workspace anyway'
+      })
+      if (!ok) return ''
+    }
+
+    // HD-2 hooks in here: a template pane with `worktree: true` wants its own
+    // worktree of this folder, and it lands in the workspace folder until
+    // something creates one and points it there.
+    const workspace = workspaceFromTemplate(template, cwd, uid, missing)
+    set({
+      workspaces: [...get().workspaces, workspace],
+      activeWorkspaceId: workspace.id,
+      mounted: [...get().mounted, workspace.id]
+    })
+    return workspace.id
   },
 
   removeWorkspace: (id) => {
@@ -595,6 +671,7 @@ function serialize(state: DeckState): PersistedState {
     version: 1,
     activeWorkspaceId: state.activeWorkspaceId,
     settings: state.settings,
+    templates: state.templates,
     workspaces: state.workspaces.map((ws) => ({
       ...ws,
       zoomedPaneId: null,

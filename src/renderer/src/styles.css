@@ -1381,6 +1381,101 @@ code {
   font-size: 11.5px;
 }
 
+/* ---------- templates ---------- */
+
+.tpl-panes {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 7px;
+}
+
+.tpl-pane {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: var(--bg-2);
+  font-size: 12px;
+}
+
+.tpl-pane-dir {
+  font: 11px/1.4 var(--mono);
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tpl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tpl-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tpl-pick {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  text-align: left;
+  color: var(--fg);
+}
+
+.tpl-pick:hover:not(:disabled) {
+  background: var(--bg-2);
+  border-color: var(--line-2);
+}
+
+.tpl-pick:disabled {
+  opacity: 0.5;
+}
+
+.tpl-mark {
+  flex: 0 0 auto;
+  width: 4px;
+  align-self: stretch;
+  border-radius: 3px;
+}
+
+.tpl-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.tpl-name {
+  font-size: 12.5px;
+}
+
+.tpl-detail {
+  font: 10.5px/1.4 var(--mono);
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tpl-empty {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg-1);
+}
+
 /* Pushes the launcher button to the left of the footer's Cancel/Apply pair. */
 .modal-foot .foot-note {
   flex: 1;

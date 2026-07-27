@@ -24,6 +24,7 @@ import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
 import { checkNow, currentState, disposeUpdater, initUpdater, install } from './updater'
+import { formatReport, runSmoke, SMOKE_USER_DATA, watchRendererErrors } from './smoke'
 
 app.setName('Harness Deck')
 
@@ -41,10 +42,14 @@ let quittingForUpdate = false
  *   --capture-keys=ctrl+shift+p press these chords first (comma separated)
  *   --capture-quit              exit once the PNG is written
  *   --dump-profiles             print detected harnesses as JSON and exit
+ *   --smoke                     boot, assert the app works, print JSON, exit 0/1
+ *   --smoke-json=<file>         also write that report to a file
  *   --voice-check[=ms]          record from the mic, transcribe, print JSON, exit
  *   --voice-endpoint=<url>      transcribe against this endpoint for the check
  *   --voice-model=<name>        model to ask that endpoint for
  */
+const smoke = process.argv.includes('--smoke')
+const smokeJson = argValue('--smoke-json')
 const captureTarget = argValue('--capture')
 const captureDelay = Number(argValue('--capture-delay') ?? 2500)
 const captureKeys = argValue('--capture-keys')
@@ -60,6 +65,13 @@ const voiceOverride = {
 function argValue(flag: string): string | undefined {
   const match = process.argv.find((a) => a.startsWith(`${flag}=`))
   return match?.slice(flag.length + 1)
+}
+
+// A smoke run gets its own state directory, so it can neither read nor damage a
+// real session's layout — and its single-instance lock is separate too, which
+// means it can run while the app is open.
+if (smoke && !process.argv.some((a) => a.startsWith('--user-data-dir'))) {
+  app.setPath('userData', SMOKE_USER_DATA)
 }
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -179,7 +191,7 @@ function createWindow(): BrowserWindow {
   // where the sessions outlive the window and the warning moves to quit.
   let closeConfirmed = false
   win.on('close', (event) => {
-    if (closeConfirmed || captureTarget || voiceCheck || quittingForUpdate || isMac) return
+    if (closeConfirmed || captureTarget || voiceCheck || smoke || quittingForUpdate || isMac) return
     if (skipStopPrompt()) return
     event.preventDefault()
     if (askStopRunning(win)) {
@@ -213,6 +225,43 @@ function createWindow(): BrowserWindow {
     win.loadURL(devUrl)
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+
+  // Boots the app, checks it actually works, and sets the exit code. The error
+  // watcher is attached before the page loads so a failure during startup is
+  // caught rather than missed.
+  if (smoke) {
+    const rendererErrors = watchRendererErrors(win)
+    // A page that never loads would otherwise hang a CI job until it is killed
+    // with no output at all.
+    const watchdog = setTimeout(() => {
+      console.error('[smoke] timed out after 180s')
+      console.error(rendererErrors.join('\n') || '(the renderer reported nothing)')
+      app.exit(1)
+    }, 180_000)
+    watchdog.unref()
+
+    win.webContents.once('did-finish-load', () => {
+      void (async () => {
+        let code = 1
+        try {
+          const report = await runSmoke(win, rendererErrors)
+          console.log(JSON.stringify(report, null, 2))
+          console.log(formatReport(report))
+          if (smokeJson) {
+            const target = resolve(smokeJson)
+            mkdirSync(dirname(target), { recursive: true })
+            writeFileSync(target, JSON.stringify(report, null, 2))
+          }
+          code = report.ok ? 0 : 1
+        } catch (err) {
+          console.error('[smoke] the run itself failed:', err)
+        }
+        ptys?.disposeAll()
+        // exit, not quit — quit would let a handler swallow the status.
+        app.exit(code)
+      })()
+    })
   }
 
   if (captureTarget) {
@@ -437,7 +486,7 @@ if (!app.requestSingleInstanceLock()) {
   let quitConfirmed = false
   app.on('before-quit', (event) => {
     const ask =
-      isMac && !quitConfirmed && !captureTarget && !voiceCheck && !quittingForUpdate
+      isMac && !quitConfirmed && !captureTarget && !voiceCheck && !smoke && !quittingForUpdate
     if (ask && !skipStopPrompt() && !askStopRunning(mainWindow)) {
       event.preventDefault()
       return

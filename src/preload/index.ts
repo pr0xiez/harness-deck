@@ -16,6 +16,7 @@ import type {
   SaveTextResult,
   TranscribeRequest,
   TranscribeResult,
+  UpdateChannel,
   UpdateState,
   VoiceKeyState,
   VoiceProvider,
@@ -64,6 +65,9 @@ const api = {
   update: {
     state: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
     check: (): Promise<UpdateState> => ipcRenderer.invoke('update:check'),
+    /** The main process starts on `local` and only polls elsewhere once told to. */
+    setChannel: (channel: UpdateChannel): Promise<UpdateState> =>
+      ipcRenderer.invoke('update:setChannel', channel),
     install: (): Promise<InstallResult> => ipcRenderer.invoke('update:install'),
     onChange: (handler: (state: UpdateState) => void): (() => void) =>
       subscribe('update:changed', handler)

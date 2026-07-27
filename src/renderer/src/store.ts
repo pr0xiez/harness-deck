@@ -47,6 +47,8 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarCollapsed: false,
   voice: DEFAULT_VOICE,
   attention: DEFAULT_ATTENTION,
+  // Nothing reaches the network until this is changed by hand.
+  updateChannel: 'local',
   broadcastHistory: [],
   broadcastSnippets: []
 }

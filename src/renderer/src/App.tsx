@@ -25,6 +25,7 @@ export function App(): React.JSX.Element {
   const activeWorkspaceId = useDeck((s) => s.activeWorkspaceId)
   const mounted = useDeck((s) => s.mounted)
   const ui = useDeck((s) => s.ui)
+  const updateChannel = useDeck((s) => s.settings.updateChannel)
   const addWorkspace = useDeck((s) => s.addWorkspace)
   const badgeEnabled = useDeck((s) => s.settings.attention.badge)
   const waitingCount = useDeck((s) =>
@@ -88,6 +89,13 @@ export function App(): React.JSX.Element {
     void api.update.state().then(setUpdate)
     return api.update.onChange(setUpdate)
   }, [])
+
+  // The updater starts on the local manifest and stays there until this says
+  // otherwise, so a dev run or a smoke test never reaches for the network.
+  useEffect(() => {
+    if (!hydrated) return
+    void api.update.setChannel(updateChannel).then(useDeck.getState().setUpdate)
+  }, [hydrated, updateChannel])
 
   useEffect(() => {
     let frame = 0

@@ -103,13 +103,17 @@ jobs:
           retention-days: 7
 
       # Never electron-builder's own publisher, on either path: both platform
-      # jobs would target one release at the same moment, and it has no way to
-      # cope with that. scripts/publish-release.mjs does the same job in a form
-      # that tolerates the race. The cost is that electron-builder no longer
-      # emits its latest*.yml update metadata, which buys nothing today — the
-      # in-app updater reads a local update.json written by scripts/release.mjs
-      # and never looks at GitHub. Wiring the updater to releases means turning
-      # this back to `always` on the tag path as well as changing updater.ts.
+      # jobs would target one release at the same moment, and GitHubPublisher
+      # creates the release it uploads into with no answer for the other job
+      # creating it first. scripts/publish-release.mjs does the same job in a
+      # form that tolerates the race, and uploads the update metadata with the
+      # installers.
+      #
+      # `never` stops it uploading, not writing: since electron-builder 26 the
+      # latest*.yml the in-app updater reads is emitted from the publish config
+      # in electron-builder.yml regardless of the policy. The step below is what
+      # holds that true — turning this to `always` to get the metadata back
+      # would only reintroduce the race.
       - name: Package
         run: npx electron-builder --publish never
         env:
@@ -117,6 +121,12 @@ jobs:
           # whatever identity happens to be in its keychain. To sign for real,
           # delete this and add CSC_LINK + CSC_KEY_PASSWORD secrets.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # The GitHub update channel is this file and nothing else, and a build
+      # that stops writing it fails silently everywhere else — installed copies
+      # would just never hear about a release again.
+      - name: Check the update metadata exists
+        run: node -e "const fs=require('fs'); const f=fs.existsSync('release')?fs.readdirSync('release').filter(n=>/^latest.*\.yml$/.test(n)):[]; if(!f.length){console.error('no latest*.yml in release/ — the in-app updater would have nothing to read');process.exit(1)} console.log('update metadata: '+f.join(', '))"
 
       # A `v*` tag cuts a draft release named for the version. Every other build
       # of main refreshes `latest-main`, a prerelease that always holds the

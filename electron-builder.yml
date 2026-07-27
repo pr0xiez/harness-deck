@@ -3,9 +3,10 @@ productName: Harness Deck
 directories:
   output: release
   buildResources: build
-# Only used when electron-builder runs with `--publish always` (the tag job in
-# .github/workflows/build.yml). Unrelated to the in-app updater, which reads a
-# local manifest — see scripts/release.mjs.
+# electron-builder never uploads for us (see .github/workflows/build.yml), but
+# this is what makes it write the latest*.yml the in-app updater's GitHub
+# channel reads. The updater takes the owner/repo from package.json's
+# `repository` instead, since electron-builder.yml is not packaged.
 publish:
   provider: github
   owner: pr0xiez

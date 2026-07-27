@@ -141,6 +141,35 @@ interface Probe {
   title: string
 }
 
+/**
+ * The broadcast bar is only in the DOM while it is open, so nothing else here
+ * would ever mount it. Driving it through the real shortcut exercises the
+ * global key handler on the way past.
+ */
+const TOGGLE_BROADCAST = `(() => {
+  document.body.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'B', ctrlKey: true, shiftKey: true, bubbles: true })
+  )
+  return true
+})()`
+
+const BROADCAST_PROBE = `(() => {
+  const bar = document.querySelector('.broadcast')
+  return {
+    open: !!bar,
+    box: !!bar && !!bar.querySelector('textarea'),
+    snippets: !!bar && !!bar.querySelector('.snippet-btn'),
+    send: !!bar && !!bar.querySelector('.btn.primary')
+  }
+})()`
+
+interface BroadcastProbe {
+  open: boolean
+  box: boolean
+  snippets: boolean
+  send: boolean
+}
+
 /** Collects anything the renderer complained about, from before the page loads. */
 export function watchRendererErrors(win: BrowserWindow): string[] {
   const errors: string[] = []
@@ -186,6 +215,9 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
   const probe = async (): Promise<Probe> =>
     (await win.webContents.executeJavaScript(PROBE, true)) as Probe
 
+  const broadcast = async (): Promise<BroadcastProbe> =>
+    (await win.webContents.executeJavaScript(BROADCAST_PROBE, true)) as BroadcastProbe
+
   // Harness detection runs a login shell, which is slow on a cold CI runner —
   // the renderer shows `.boot` until it finishes.
   await record('renderer mounts', async () => {
@@ -212,6 +244,27 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
       p.workspaces < 1 && 'workspace list'
     ].filter(Boolean)
     return missing.length ? `missing ${missing.join(', ')}` : null
+  })
+
+  await record('the broadcast bar opens on its shortcut', async () => {
+    await win.webContents.executeJavaScript(TOGGLE_BROADCAST, true)
+    let bar: BroadcastProbe = { open: false, box: false, snippets: false, send: false }
+    const opened = await until(async () => {
+      bar = await broadcast()
+      return bar.open
+    }, 10_000)
+    if (!opened) return 'Ctrl+Shift+B never put it in the DOM'
+
+    const missing = [
+      !bar.box && 'the prompt box',
+      !bar.snippets && 'the snippet menu',
+      !bar.send && 'the send button'
+    ].filter(Boolean)
+    if (missing.length) return `it opened without ${missing.join(', ')}`
+
+    await win.webContents.executeJavaScript(TOGGLE_BROADCAST, true)
+    const closed = await until(async () => !(await broadcast()).open, 10_000)
+    return closed ? null : 'it would not close again'
   })
 
   await record('harnesses are detected', async () => {

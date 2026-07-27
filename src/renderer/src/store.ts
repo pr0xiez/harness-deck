@@ -50,6 +50,9 @@ export const DEFAULT_SETTINGS: Settings = {
   broadcastSnippets: []
 }
 
+/** How far back ↑ reaches in the broadcast box before prompts are forgotten. */
+const BROADCAST_HISTORY = 50
+
 /** Panes carry a bit of state we never want to write to disk. */
 interface StoredPane extends Omit<Pane, 'status' | 'exitCode' | 'activity' | 'bell' | 'processTitle'> {
   autostart?: boolean
@@ -127,6 +130,8 @@ interface DeckState {
   updateSettings: (patch: Partial<Settings>) => void
   updateVoice: (patch: Partial<VoiceSettings>) => void
   updateAttention: (patch: Partial<AttentionSettings>) => void
+  /** Files a sent prompt at the front of the broadcast history. */
+  rememberBroadcast: (prompt: string) => void
   setUi: (patch: Partial<UiState>) => void
 }
 
@@ -540,6 +545,15 @@ export const useDeck = create<DeckState>((set, get) => ({
 
   updateAttention: (patch) =>
     set({ settings: { ...get().settings, attention: { ...get().settings.attention, ...patch } } }),
+
+  rememberBroadcast: (prompt) => {
+    const text = prompt.trim()
+    if (!text) return
+    const { settings } = get()
+    // Re-sending an old prompt moves it back to the top rather than doubling it.
+    const broadcastHistory = [text, ...settings.broadcastHistory.filter((p) => p !== text)]
+    set({ settings: { ...settings, broadcastHistory: broadcastHistory.slice(0, BROADCAST_HISTORY) } })
+  },
 
   setUi: (patch) => set({ ui: { ...get().ui, ...patch } })
 }))

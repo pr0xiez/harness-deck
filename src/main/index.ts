@@ -11,7 +11,7 @@ import {
   systemPreferences
 } from 'electron'
 import type { NativeImage } from 'electron'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import type {
@@ -33,7 +33,13 @@ import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
 import { checkNow, currentState, disposeUpdater, initUpdater, install, setChannel } from './updater'
-import { formatReport, runSmoke, SMOKE_USER_DATA, watchRendererErrors } from './smoke'
+import {
+  formatReport,
+  runSmoke,
+  seedSmokeState,
+  SMOKE_USER_DATA,
+  watchRendererErrors
+} from './smoke'
 
 app.setName('Harness Deck')
 
@@ -474,6 +480,17 @@ function registerIpc(): void {
     return strip ? stripAnsi(text) : text
   })
 
+  ipcMain.handle('fs:missingDirs', (_e, paths: string[]) =>
+    (paths ?? []).filter((path) => {
+      try {
+        return !path || !statSync(path).isDirectory()
+      } catch {
+        // Unreadable is as good as gone for anything about to spawn there.
+        return true
+      }
+    })
+  )
+
   ipcMain.handle('dialog:pickDirectory', async (_e, current?: string) => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -593,6 +610,8 @@ if (!app.requestSingleInstanceLock()) {
     pruneScrollback(scrollback)
     ptys = new PtyManager(send, undefined, () => quietMs, scrollback)
     registerIpc()
+    // Before the window, so the renderer hydrates a state file it did not write.
+    if (smoke) seedSmokeState()
     mainWindow = createWindow()
 
     initUpdater({

@@ -3,6 +3,7 @@ import { isLive, useDeck, type DeckWorkspace } from '../store'
 import { ACCENTS } from '../theme'
 import { Dropdown } from './ui'
 import { Icon } from './Icon'
+import { SaveTemplateDialog, TemplatePicker } from './TemplateDialog'
 
 const api = window.harness
 
@@ -37,6 +38,7 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
   const removeWorkspace = useDeck((s) => s.removeWorkspace)
   const duplicateWorkspace = useDeck((s) => s.duplicateWorkspace)
   const moveWorkspace = useDeck((s) => s.moveWorkspace)
+  const setUi = useDeck((s) => s.setUi)
 
   const waiting = workspace.panes.filter((p) => p.status === 'waiting').length
   const running = workspace.panes.filter((p) => p.status === 'running').length
@@ -128,6 +130,12 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
               <button className="menu-item" onClick={() => { setMenuOpen(false); duplicateWorkspace(workspace.id) }}>
                 Duplicate with panes
               </button>
+              <button
+                className="menu-item"
+                onClick={() => { setMenuOpen(false); setUi({ templateSaveFor: workspace.id }) }}
+              >
+                Save as template…
+              </button>
               <div className="menu-sep" />
               <div className="menu-swatches">
                 {ACCENTS.map((colour) => (
@@ -186,6 +194,9 @@ export function Sidebar(): React.JSX.Element {
   const collapsed = useDeck((s) => s.settings.sidebarCollapsed)
   const updateSettings = useDeck((s) => s.updateSettings)
   const home = useDeck((s) => s.info?.homeDir ?? '')
+  const templates = useDeck((s) => s.templates)
+  const ui = useDeck((s) => s.ui)
+  const setUi = useDeck((s) => s.setUi)
 
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
@@ -234,7 +245,23 @@ export function Sidebar(): React.JSX.Element {
             <span>From folder…</span>
           </button>
         ) : null}
+        {/* Only once there is something to pick — an empty picker is a dead end,
+            and saving the first template is a workspace action, not this one. */}
+        {!collapsed && templates.length ? (
+          <button className="btn subtle full ws-from-template" onClick={() => setUi({ templatePicker: true })}>
+            <Icon name="copy" />
+            <span>From template…</span>
+          </button>
+        ) : null}
       </div>
+
+      {ui.templateSaveFor ? (
+        <SaveTemplateDialog
+          workspaceId={ui.templateSaveFor}
+          onClose={() => setUi({ templateSaveFor: null })}
+        />
+      ) : null}
+      {ui.templatePicker ? <TemplatePicker onClose={() => setUi({ templatePicker: false })} /> : null}
     </aside>
   )
 }

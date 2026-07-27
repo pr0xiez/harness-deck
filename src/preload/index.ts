@@ -62,6 +62,16 @@ const api = {
     setBadge: (count: number): void => ipcRenderer.send('app:setBadge', count)
   },
 
+  fs: {
+    /**
+     * Which of these folders are not there. The renderer has no filesystem of
+     * its own, and instantiating a template has to know before it makes panes
+     * that would silently spawn in `homedir()` instead.
+     */
+    missingDirs: (paths: string[]): Promise<string[]> =>
+      ipcRenderer.invoke('fs:missingDirs', paths)
+  },
+
   update: {
     state: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
     check: (): Promise<UpdateState> => ipcRenderer.invoke('update:check'),

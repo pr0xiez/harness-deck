@@ -2,11 +2,12 @@ import type { BrowserWindow } from 'electron'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { PaneSpec } from '@shared/types'
+import type { PaneSpec, PersistedState, WorkspaceTemplate } from '@shared/types'
 import { PtyManager } from './pty'
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { ScrollbackStore } from './scrollback'
+import { loadState, saveState } from './store'
 import { currentState } from './updater'
 
 /**
@@ -38,6 +39,36 @@ export interface SmokeReport {
 
 /** Where a smoke run keeps its state, so it can never clobber a real profile. */
 export const SMOKE_USER_DATA = join(tmpdir(), 'harness-deck-smoke')
+
+/**
+ * Written to the state file before the window opens, so the template check has
+ * the whole round trip to look at: the renderer has to hydrate it out of a file
+ * it did not write, and put it back unchanged the next time anything is saved.
+ */
+export const SMOKE_TEMPLATE: WorkspaceTemplate = {
+  id: 'tpl_smoke',
+  name: 'Smoke template',
+  accent: '#94a3b8',
+  layout: 'grid',
+  columns: 2,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  panes: [{ profileId: 'shell:default', command: 'echo', args: ['ok'], cwd: 'packages/api', name: 'api' }]
+}
+
+export function seedSmokeState(): void {
+  const existing = loadState()
+  if (existing?.templates?.length) return
+  // Spread over whatever is already there rather than replacing it: --smoke can
+  // be pointed at a real profile with --user-data-dir, and all this run needs is
+  // a template on the other side of hydrate(). `settings` is left exactly as
+  // found — absent if it was absent, since hydrate() spreads its own defaults
+  // underneath whatever it reads.
+  const seeded = {
+    ...(existing ?? { workspaces: [], activeWorkspaceId: null }),
+    templates: [SMOKE_TEMPLATE]
+  }
+  saveState(seeded as PersistedState)
+}
 
 const wait = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms))
 
@@ -148,6 +179,7 @@ const PROBE = `(() => ({
   deck: !!document.querySelector('.deck-panes'),
   workspaces: document.querySelectorAll('.ws-row').length,
   terminals: document.querySelectorAll('.xterm').length,
+  templates: document.querySelectorAll('.ws-from-template').length,
   title: document.title
 }))()`
 
@@ -158,6 +190,8 @@ interface Probe {
   deck: boolean
   workspaces: number
   terminals: number
+  /** The sidebar only offers this once a template has come out of the state file. */
+  templates: number
   title: string
 }
 
@@ -188,6 +222,35 @@ interface BroadcastProbe {
   box: boolean
   snippets: boolean
   send: boolean
+}
+
+/** Anything that changes persisted state; here to make the renderer save. */
+const NEW_WORKSPACE = `(() => {
+  document.body.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'N', ctrlKey: true, shiftKey: true, bubbles: true })
+  )
+  return true
+})()`
+
+const OPEN_TEMPLATES = `(() => {
+  const button = document.querySelector('.ws-from-template')
+  if (button) button.click()
+  return !!button
+})()`
+
+const TEMPLATE_PROBE = `(() => ({
+  open: !!document.querySelector('.tpl-list'),
+  names: Array.from(document.querySelectorAll('.tpl-row .tpl-name'), (el) => el.textContent)
+}))()`
+
+const CLOSE_MODAL = `(() => {
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  return true
+})()`
+
+interface TemplateProbe {
+  open: boolean
+  names: string[]
 }
 
 /** Collects anything the renderer complained about, from before the page loads. */
@@ -238,6 +301,9 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
   const broadcast = async (): Promise<BroadcastProbe> =>
     (await win.webContents.executeJavaScript(BROADCAST_PROBE, true)) as BroadcastProbe
 
+  const picker = async (): Promise<TemplateProbe> =>
+    (await win.webContents.executeJavaScript(TEMPLATE_PROBE, true)) as TemplateProbe
+
   // Harness detection runs a login shell, which is slow on a cold CI runner —
   // the renderer shows `.boot` until it finishes.
   await record('renderer mounts', async () => {
@@ -285,6 +351,45 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     await win.webContents.executeJavaScript(TOGGLE_BROADCAST, true)
     const closed = await until(async () => !(await broadcast()).open, 10_000)
     return closed ? null : 'it would not close again'
+  })
+
+  /**
+   * A template is the one thing in the state file the renderer has to carry
+   * across untouched: it is written by something else, read once at hydrate,
+   * and rewritten by serialize on the next save. Dropping it there would look
+   * like the template only lasting until you did anything else.
+   */
+  await record('a saved template survives hydrate and serialize', async () => {
+    const offered = await until(async () => (await probe()).templates > 0, 15_000)
+    if (!offered) return 'the seeded template never reached the sidebar'
+
+    await win.webContents.executeJavaScript(OPEN_TEMPLATES, true)
+    let list: TemplateProbe = { open: false, names: [] }
+    const opened = await until(async () => {
+      list = await picker()
+      return list.open
+    }, 10_000)
+    if (!opened) return 'the picker never opened'
+    if (!list.names.includes(SMOKE_TEMPLATE.name)) {
+      return `the picker listed ${JSON.stringify(list.names)}`
+    }
+
+    await win.webContents.executeJavaScript(CLOSE_MODAL, true)
+    const closed = await until(async () => !(await picker()).open, 10_000)
+    if (!closed) return 'the picker would not close again'
+
+    const before = loadState()?.workspaces.length ?? 0
+    await win.webContents.executeJavaScript(NEW_WORKSPACE, true)
+    const written = await until(() => (loadState()?.workspaces.length ?? 0) > before, 15_000)
+    if (!written) return 'the renderer never wrote its state back'
+
+    const template = loadState()?.templates?.find((t) => t.id === SMOKE_TEMPLATE.id)
+    if (!template) return 'it was dropped on the way back to disk'
+    const folder = template.panes[0]?.cwd
+    if (folder !== SMOKE_TEMPLATE.panes[0].cwd) {
+      return `its pane folder came back as ${JSON.stringify(folder)}`
+    }
+    return null
   })
 
   await record('harnesses are detected', async () => {

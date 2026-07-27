@@ -66,6 +66,30 @@ export function CommandPalette(): React.JSX.Element {
       }
     )
 
+    if (state.templates.length) {
+      list.push({
+        id: 'ws:new-template',
+        group: 'Workspaces',
+        label: 'New workspace from template…',
+        hint: `${state.templates.length} saved`,
+        run: () => state.setUi({ templatePicker: true })
+      })
+      // Named entries too, so the common case is one search and one folder pick
+      // rather than a trip through the picker.
+      state.templates.forEach((template) => {
+        list.push({
+          id: `ws:template:${template.id}`,
+          group: 'Templates',
+          label: `New workspace from “${template.name}”…`,
+          hint: `${template.panes.length} pane${template.panes.length === 1 ? '' : 's'}`,
+          run: async () => {
+            const dir = await api.pickDirectory(state.settings.defaultCwd)
+            if (dir) await state.newWorkspaceFromTemplate(template.id, dir)
+          }
+        })
+      })
+    }
+
     if (workspace) {
       list.push(
         {
@@ -82,6 +106,13 @@ export function CommandPalette(): React.JSX.Element {
           group: 'Workspace',
           label: 'Duplicate workspace with its panes',
           run: () => state.duplicateWorkspace(workspace.id)
+        },
+        {
+          id: 'ws:save-template',
+          group: 'Workspace',
+          label: 'Save workspace as a template…',
+          hint: 'its panes, without its folder',
+          run: () => state.setUi({ templateSaveFor: workspace.id })
         },
         {
           id: 'ws:layout-grid',

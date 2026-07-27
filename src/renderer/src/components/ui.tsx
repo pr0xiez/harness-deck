@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from './Icon'
 
 interface ModalProps {
@@ -47,15 +48,34 @@ interface DropdownProps {
   children: ReactNode
   className?: string
   align?: 'left' | 'right'
+  /**
+   * When set, the menu is portalled to <body> and positioned from this element's box,
+   * so a scrolling ancestor can't clip it and it stays inside the window. Use it for
+   * menus that live in narrow or overflowing containers, like the sidebar.
+   */
+  anchor?: RefObject<HTMLElement | null>
 }
 
-/** Anchored popover — the parent needs `position: relative`. */
-export function Dropdown({ onClose, children, className, align = 'left' }: DropdownProps): React.JSX.Element {
+const EDGE = 8
+const GAP = 6
+
+/** Anchored popover — with no `anchor`, the parent needs `position: relative`. */
+export function Dropdown({
+  onClose,
+  children,
+  className,
+  align = 'left',
+  anchor
+}: DropdownProps): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
 
   useEffect(() => {
     const onDown = (event: MouseEvent): void => {
-      if (!ref.current?.contains(event.target as Node)) onClose()
+      const target = event.target as Node
+      // Ignore the anchor itself so its own click can toggle the menu shut.
+      if (ref.current?.contains(target) || anchor?.current?.contains(target)) return
+      onClose()
     }
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
@@ -69,13 +89,47 @@ export function Dropdown({ onClose, children, className, align = 'left' }: Dropd
       window.removeEventListener('mousedown', onDown, true)
       window.removeEventListener('keydown', onKey, true)
     }
-  }, [onClose])
+  }, [onClose, anchor])
 
-  return (
-    <div ref={ref} className={`dropdown ${align} ${className ?? ''}`} role="menu">
+  useLayoutEffect(() => {
+    if (!anchor) return
+    const place = (): void => {
+      const from = anchor.current?.getBoundingClientRect()
+      const menu = ref.current
+      if (!from || !menu) return
+      const { offsetWidth: w, offsetHeight: h } = menu
+
+      let left = align === 'right' ? from.right - w : from.left
+      left = Math.min(Math.max(left, EDGE), Math.max(EDGE, window.innerWidth - w - EDGE))
+
+      let top = from.bottom + GAP
+      if (top + h > window.innerHeight - EDGE) {
+        // Not enough room below — flip above the anchor, then clamp.
+        top = Math.max(EDGE, from.top - GAP - h)
+      }
+      setPos({ top, left })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
+  }, [anchor, align, children])
+
+  const menu = (
+    <div
+      ref={ref}
+      className={`dropdown ${anchor ? 'floating' : align} ${className ?? ''}`}
+      role="menu"
+      style={anchor ? { top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? undefined : 'hidden' } : undefined}
+    >
       {children}
     </div>
   )
+
+  return anchor ? createPortal(menu, document.body) : menu
 }
 
 interface FieldProps {

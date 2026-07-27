@@ -382,7 +382,8 @@ code {
   opacity: 0;
 }
 
-.ws-row:hover .ws-menu-anchor {
+.ws-row:hover .ws-menu-anchor,
+.ws-menu-anchor.is-open {
   opacity: 1;
 }
 
@@ -943,6 +944,9 @@ code {
   left: 8px;
   right: 8px;
   bottom: 8px;
+  /* Above xterm's own layers — its scrollbar (11) and overview ruler (8) share
+     this stacking context and would otherwise paint over the buttons. */
+  z-index: 12;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -962,6 +966,7 @@ code {
 .pane-overlay {
   position: absolute;
   inset: 0;
+  z-index: 12;
   display: grid;
   place-items: center;
   background: rgba(11, 14, 19, 0.72);
@@ -1104,6 +1109,15 @@ code {
 
 .dropdown.right {
   right: 0;
+}
+
+/* Portalled to <body> and positioned from the anchor's box, so a scrolling
+   container (e.g. the workspace list) can't clip it. */
+.dropdown.floating {
+  position: fixed;
+  top: 0;
+  left: 0;
+  max-width: calc(100vw - 16px);
 }
 
 .profile-menu {

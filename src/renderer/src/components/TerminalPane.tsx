@@ -183,6 +183,7 @@ export function TerminalPane({
     if (!pane.autostart) return
     spawnedRef.current = true
 
+    let cancelled = false
     const { term } = handle
     void (async () => {
       const result = await api.pty.ensure(
@@ -197,12 +198,26 @@ export function TerminalPane({
         Math.max(term.cols, 20),
         Math.max(term.rows, 5)
       )
+      // A restart may have torn this terminal down while the spawn was in flight.
+      if (cancelled) return
       if (result.replay) term.write(result.replay)
       handle.attach()
-      setPaneStatus(paneId, result.status, result.exitCode ?? null)
+      // A process can die before the spawn reply gets back here, and that exit
+      // event is the newer truth — never report it as running again.
+      const current = useDeck
+        .getState()
+        .workspaces.flatMap((w) => w.panes)
+        .find((p) => p.id === paneId)
+      if (!(current?.status === 'exited' && result.status === 'running')) {
+        setPaneStatus(paneId, result.status, result.exitCode ?? null)
+      }
       handle.refit()
       if (active) term.focus()
     })()
+
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneId, pane.epoch, pane.autostart])
 

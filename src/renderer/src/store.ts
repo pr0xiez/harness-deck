@@ -7,6 +7,7 @@ import type {
   PaneStatus,
   PersistedState,
   Profile,
+  SavedProfile,
   Settings,
   UpdateState,
   VoiceSettings,
@@ -70,6 +71,8 @@ interface UiState {
   broadcast: boolean
   profileMenu: boolean
   paneMenuFor: string | null
+  /** Pane whose edit dialog is open. */
+  paneDialogFor: string | null
 }
 
 interface DeckState {
@@ -91,6 +94,9 @@ interface DeckState {
 
   hydrate: () => Promise<void>
   refreshProfiles: () => Promise<void>
+  /** Keeps a launcher in the harness menu; an existing id is edited in place. */
+  saveLauncher: (profile: SavedProfile) => Promise<void>
+  removeLauncher: (id: string) => Promise<void>
 
   setUpdate: (update: UpdateState) => void
   checkForUpdate: () => Promise<void>
@@ -148,6 +154,10 @@ function paneFromProfile(profile: Profile, cwd: string, overrides: Partial<PaneV
     args: [...profile.args],
     viaShell: profile.viaShell,
     cwd,
+    env: profile.env,
+    // A saved launcher can be deleted while panes opened from it are still
+    // running, so the pane keeps the label rather than looking it up later.
+    ...(profile.id.startsWith('custom:') ? { name: profile.name } : {}),
     status: 'idle',
     exitCode: null,
     epoch: 0,
@@ -184,7 +194,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     help: false,
     broadcast: false,
     profileMenu: false,
-    paneMenuFor: null
+    paneMenuFor: null,
+    paneDialogFor: null
   },
   update: null,
   updateDismissed: null,
@@ -194,7 +205,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   hydrate: async () => {
     const [info, profiles, saved] = await Promise.all([
       api.info(),
-      api.listProfiles(),
+      api.profiles.list(),
       api.loadState()
     ])
 
@@ -250,7 +261,12 @@ export const useDeck = create<DeckState>((set, get) => ({
     })
   },
 
-  refreshProfiles: async () => set({ profiles: await api.listProfiles() }),
+  refreshProfiles: async () => set({ profiles: await api.profiles.list() }),
+
+  // Both hand back the whole merged list, detected launchers included.
+  saveLauncher: async (profile) => set({ profiles: await api.profiles.saveCustom(profile) }),
+
+  removeLauncher: async (id) => set({ profiles: await api.profiles.removeCustom(id) }),
 
   setUpdate: (update) => set({ update }),
 
@@ -380,7 +396,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   addPane: (workspaceId, profile, overrides) => {
     const workspace = get().workspaces.find((w) => w.id === workspaceId)
     if (!workspace) return ''
-    const pane = paneFromProfile(profile, overrides?.cwd || workspace.cwd, overrides)
+    const pane = paneFromProfile(profile, overrides?.cwd || profile.cwd || workspace.cwd, overrides)
     set({
       workspaces: get().workspaces.map((w) =>
         w.id === workspaceId

@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react'
 import type { Profile } from '@shared/types'
 import { useDeck } from '../store'
-import { Dropdown, Field, Modal } from './ui'
+import { Dropdown } from './ui'
+import { PaneDialog } from './PaneDialog'
 import { Icon } from './Icon'
-
-const api = window.harness
 
 interface Props {
   workspaceId: string
@@ -21,15 +20,20 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
   const profiles = useDeck((s) => s.profiles)
   const addPane = useDeck((s) => s.addPane)
   const refreshProfiles = useDeck((s) => s.refreshProfiles)
+  const removeLauncher = useDeck((s) => s.removeLauncher)
   const [customOpen, setCustomOpen] = useState(false)
 
   const groups = useMemo<Group[]>(() => {
     const native = profiles.filter((p) => p.kind === 'agent' && !p.id.startsWith('wsl:'))
     const wsl = profiles.filter((p) => p.kind === 'agent' && p.id.startsWith('wsl:'))
+    // The bare `custom` entry is the "Custom command…" action at the foot of the
+    // menu, not a launcher anyone saved.
+    const saved = profiles.filter((p) => p.id.startsWith('custom:'))
     const shells = profiles.filter((p) => p.kind === 'shell')
     return [
       { label: 'Coding agents', profiles: native },
       ...(wsl.length ? [{ label: 'Inside WSL', profiles: wsl }] : []),
+      ...(saved.length ? [{ label: 'Saved launchers', profiles: saved }] : []),
       { label: 'Shells', profiles: shells }
     ]
   }, [profiles])
@@ -41,7 +45,7 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
 
   if (customOpen) {
     return (
-      <CustomCommandDialog
+      <PaneDialog
         workspaceId={workspaceId}
         onClose={() => {
           setCustomOpen(false)
@@ -72,6 +76,21 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
                   {profile.available ? profile.detail : 'not installed — opens anyway'}
                 </span>
               </span>
+              {profile.id.startsWith('custom:') ? (
+                // A span, because a launcher row is itself a button — and
+                // forgetting the launcher leaves any pane opened from it alone.
+                <span
+                  className="icon-btn tiny danger menu-forget"
+                  role="button"
+                  title={`Forget ${profile.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    void removeLauncher(profile.id)
+                  }}
+                >
+                  <Icon name="trash" size={11} />
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -103,80 +122,5 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
         </span>
       </button>
     </Dropdown>
-  )
-}
-
-interface CustomProps {
-  workspaceId: string
-  onClose: () => void
-}
-
-function CustomCommandDialog({ workspaceId, onClose }: CustomProps): React.JSX.Element {
-  const workspace = useDeck((s) => s.workspaces.find((w) => w.id === workspaceId))
-  const addPane = useDeck((s) => s.addPane)
-  const profiles = useDeck((s) => s.profiles)
-  const [command, setCommand] = useState('')
-  const [name, setName] = useState('')
-  const [cwd, setCwd] = useState(workspace?.cwd ?? '')
-
-  const submit = (): void => {
-    const cmdline = command.trim()
-    if (!cmdline) return
-    const custom = profiles.find((p) => p.id === 'custom')
-    if (!custom) return
-    addPane(workspaceId, custom, {
-      command: cmdline,
-      args: [],
-      viaShell: true,
-      cwd,
-      name: name.trim() || cmdline.split(/\s+/)[0]
-    })
-    onClose()
-  }
-
-  return (
-    <Modal
-      title="Custom command"
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn primary" onClick={submit} disabled={!command.trim()}>
-            Open pane
-          </button>
-        </>
-      }
-    >
-      <Field label="Command line" hint="Runs through your login shell, so aliases and functions work.">
-        <input
-          autoFocus
-          value={command}
-          placeholder="claude --resume  ·  npm run dev  ·  git log --oneline"
-          onChange={(event) => setCommand(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') submit()
-          }}
-        />
-      </Field>
-      <Field label="Pane name" hint="Optional.">
-        <input value={name} placeholder="auto" onChange={(event) => setName(event.target.value)} />
-      </Field>
-      <Field label="Working directory">
-        <div className="row">
-          <input value={cwd} onChange={(event) => setCwd(event.target.value)} />
-          <button
-            className="btn subtle"
-            onClick={async () => {
-              const dir = await api.pickDirectory(cwd)
-              if (dir) setCwd(dir)
-            }}
-          >
-            <Icon name="folder" />
-          </button>
-        </div>
-      </Field>
-    </Modal>
   )
 }

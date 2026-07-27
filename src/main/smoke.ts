@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { PaneSpec } from '@shared/types'
 import { PtyManager } from './pty'
 import { detectProfiles } from './profiles'
+import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 
 /**
  * `--smoke` support: boots the app for real and asserts it works, so a build
@@ -52,6 +53,21 @@ function echoSpec(id: string, text: string): PaneSpec {
   return process.platform === 'win32'
     ? { id, command: 'cmd.exe', args: ['/c', `echo ${text}`], cwd: process.cwd() }
     : { id, command: '/bin/sh', args: ['-c', `echo ${text}`], cwd: process.cwd() }
+}
+
+/**
+ * The value a pane's `env` has to carry through untouched. It has a space and
+ * an `=` in it because nothing between the dialog and the process may treat it
+ * as a KEY=VALUE line to re-split.
+ */
+const ENV_VALUE = 'sonnet 4-5=x y'
+
+/** A command that prints one variable out of its own environment. */
+function envSpec(id: string): PaneSpec {
+  const env = { HD_SMOKE_ENV: ENV_VALUE }
+  return process.platform === 'win32'
+    ? { id, command: 'cmd.exe', args: ['/c', 'echo %HD_SMOKE_ENV%'], cwd: process.cwd(), env }
+    : { id, command: '/bin/sh', args: ['-c', 'printf %s "$HD_SMOKE_ENV"'], cwd: process.cwd(), env }
 }
 
 /** A command that stays up long enough to be restarted out from under. */
@@ -234,6 +250,45 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     if (exitsFor(id)) return `${exitsFor(id)} exit event(s) reported for a running pane`
     mgr.dispose(id)
     return null
+  })
+
+  await record("a pane's environment reaches its process intact", async () => {
+    const id = 'smoke-env'
+    const result = mgr.ensure(envSpec(id), 80, 24)
+    if (result.error) return `spawn failed: ${result.error}`
+
+    const exited = await until(() => mgr.status(id)?.status === 'exited', 20_000)
+    if (!exited) return 'process never exited'
+    if (!dataFor(id).includes(ENV_VALUE)) {
+      return `the variable never arrived (got ${JSON.stringify(dataFor(id).slice(0, 120))})`
+    }
+    return null
+  })
+
+  await record('a saved launcher joins the detected list', async () => {
+    const id = 'custom:smoke'
+    try {
+      saveCustomProfile({
+        id,
+        name: 'Smoke launcher',
+        command: 'echo',
+        args: ['ok'],
+        env: { HD_SMOKE_ENV: ENV_VALUE },
+        icon: 'SL',
+        accent: '#94a3b8',
+        viaShell: true
+      })
+      const found = (await detectProfiles()).find((p) => p.id === id)
+      if (!found) return 'saveCustom() wrote it but detectProfiles() did not return it'
+      if (found.kind !== 'custom') return `it came back as kind ${found.kind}`
+      if (found.env?.HD_SMOKE_ENV !== ENV_VALUE) return 'its environment did not survive the round trip'
+      removeCustomProfile(id)
+      if ((await detectProfiles()).some((p) => p.id === id)) return 'removeCustom() left it behind'
+      return null
+    } finally {
+      // A failed assertion must not leave the launcher in the next run's list.
+      removeCustomProfile(id)
+    }
   })
 
   await record('a failed command is reported, not thrown', async () => {

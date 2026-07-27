@@ -25,6 +25,7 @@ export type IconName =
   | 'refresh'
   | 'mic'
   | 'stop'
+  | 'pencil'
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   search: (
@@ -112,7 +113,13 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <path d="M8 11.6v2.6M5.8 14.2h4.4" />
     </>
   ),
-  stop: <rect x="4.5" y="4.5" width="7" height="7" rx="1.5" />
+  stop: <rect x="4.5" y="4.5" width="7" height="7" rx="1.5" />,
+  pencil: (
+    <>
+      <path d="M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" />
+      <path d="M9.6 4.2 11.8 6.4" />
+    </>
+  )
 }
 
 interface Props {

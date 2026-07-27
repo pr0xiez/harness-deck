@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useDeck, type DeckWorkspace } from '../store'
 import { TerminalPane } from './TerminalPane'
 import { ProfileMenu } from './ProfileMenu'
+import { PaneDialog } from './PaneDialog'
 import { Icon } from './Icon'
 
 interface Props {
@@ -14,6 +15,12 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
   const addPane = useDeck((s) => s.addPane)
   const setActivePane = useDeck((s) => s.setActivePane)
   const requestClosePane = useDeck((s) => s.requestClosePane)
+  const setUi = useDeck((s) => s.setUi)
+  // The dialog belongs to whichever workspace holds the pane, so it is rendered
+  // beside the grid rather than inside a pane that a restart is about to unmount.
+  const dialogFor = useDeck((s) =>
+    workspace.panes.some((p) => p.id === s.ui.paneDialogFor) ? s.ui.paneDialogFor : null
+  )
   const [addOpen, setAddOpen] = useState(false)
 
   const zoomed = workspace.zoomedPaneId
@@ -27,6 +34,7 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
 
   const quickPicks = [
     ...profiles.filter((p) => p.kind === 'agent' && p.available).slice(0, 6),
+    ...profiles.filter((p) => p.id.startsWith('custom:')).slice(0, 4),
     ...profiles.filter((p) => p.id === 'shell:default')
   ]
 
@@ -83,6 +91,14 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
             ) : null}
           </div>
         </div>
+      ) : null}
+
+      {dialogFor ? (
+        <PaneDialog
+          workspaceId={workspace.id}
+          paneId={dialogFor}
+          onClose={() => setUi({ paneDialogFor: null })}
+        />
       ) : null}
 
       {workspace.panes.length ? (

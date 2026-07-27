@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import type { RemoteKind } from '@shared/remote'
 import type { Profile } from '@shared/types'
 import { useDeck } from '../store'
 import { Dropdown } from './ui'
@@ -21,7 +22,7 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
   const addPane = useDeck((s) => s.addPane)
   const refreshProfiles = useDeck((s) => s.refreshProfiles)
   const removeLauncher = useDeck((s) => s.removeLauncher)
-  const [customOpen, setCustomOpen] = useState(false)
+  const [dialogFor, setDialogFor] = useState<'local' | RemoteKind | null>(null)
 
   const groups = useMemo<Group[]>(() => {
     const native = profiles.filter((p) => p.kind === 'agent' && !p.id.startsWith('wsl:'))
@@ -43,12 +44,13 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
     onClose()
   }
 
-  if (customOpen) {
+  if (dialogFor) {
     return (
       <PaneDialog
         workspaceId={workspaceId}
+        where={dialogFor}
         onClose={() => {
-          setCustomOpen(false)
+          setDialogFor(null)
           onClose()
         }}
       />
@@ -97,13 +99,33 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
       ))}
 
       <div className="menu-sep" />
-      <button className="menu-item" onClick={() => setCustomOpen(true)}>
+      <button className="menu-item" onClick={() => setDialogFor('local')}>
         <span className="profile-badge" style={{ ['--badge' as string]: '#94a3b8' }}>
           »
         </span>
         <span className="profile-text">
           <span className="profile-name">Custom command…</span>
           <span className="profile-detail">Any command line, in a login shell</span>
+        </span>
+      </button>
+      {/* No list to pick from: a container probe hangs on a wedged daemon and an
+          ssh config is a parser, so the host is typed and kept as a launcher. */}
+      <button className="menu-item" onClick={() => setDialogFor('ssh')}>
+        <span className="profile-badge" style={{ ['--badge' as string]: '#38bdf8' }}>
+          SS
+        </span>
+        <span className="profile-text">
+          <span className="profile-name">Over SSH…</span>
+          <span className="profile-detail">A harness on another machine</span>
+        </span>
+      </button>
+      <button className="menu-item" onClick={() => setDialogFor('docker')}>
+        <span className="profile-badge" style={{ ['--badge' as string]: '#2496ed' }}>
+          DK
+        </span>
+        <span className="profile-text">
+          <span className="profile-name">In a container…</span>
+          <span className="profile-detail">docker exec into a running container</span>
         </span>
       </button>
       <button

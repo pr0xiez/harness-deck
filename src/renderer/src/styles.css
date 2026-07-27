@@ -1415,6 +1415,24 @@ code {
   gap: 6px;
 }
 
+/* Fields side by side — a host and the directory on it are one thought. */
+.row.fields {
+  margin-bottom: 14px;
+}
+
+.row.fields > .field {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+/* The segmented control is glyph-width by default; these buttons carry words. */
+.segmented.wide button {
+  width: auto;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
 .row input {
   flex: 1;
 }

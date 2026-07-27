@@ -2,6 +2,7 @@ import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as nodePty from '@lydell/node-pty'
 import type { IPty } from '@lydell/node-pty'
+import { commandName } from '@shared/remote'
 import type { EnsureResult, PaneSpec, PaneStatus } from '@shared/types'
 import { shellCommandLine } from './profiles'
 import { shellEnv } from './shell-env'
@@ -311,12 +312,18 @@ function buildEnv(spec: PaneSpec, cwd: string): NodeJS.ProcessEnv {
   env.TERM_PROGRAM = 'harness-deck'
   delete env.ELECTRON_RUN_AS_NODE
 
-  // Panes that run through wsl.exe get the pane's directory handed over as a
-  // translated unix path (WSLENV's /p flag does the conversion for us).
-  if (/(^|[\\/])wsl(\.exe)?$/i.test(spec.command)) {
+  // A pane that runs elsewhere cannot use the cwd we spawned in — that path
+  // belongs to this machine. It gets the folder handed over as HD_CWD instead,
+  // and the launcher's argv decides what to do with it (see shared/remote.ts).
+  // ssh and docker carry it themselves, with SendEnv and -e; wsl.exe needs
+  // WSLENV's /p flag, which translates the path on the way through.
+  const name = commandName(spec.command)
+  if (name === 'wsl' || name === 'ssh' || name === 'docker') {
     env.HD_CWD = cwd
-    const existing = env.WSLENV ? `${env.WSLENV}:` : ''
-    if (!/(^|:)HD_CWD\//.test(env.WSLENV || '')) env.WSLENV = `${existing}HD_CWD/p`
+    if (name === 'wsl') {
+      const existing = env.WSLENV ? `${env.WSLENV}:` : ''
+      if (!/(^|:)HD_CWD\//.test(env.WSLENV || '')) env.WSLENV = `${existing}HD_CWD/p`
+    }
   }
   return env
 }

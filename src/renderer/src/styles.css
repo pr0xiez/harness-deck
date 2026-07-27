@@ -1700,6 +1700,182 @@ code {
   color: var(--fg);
 }
 
+/* ---------- compare ---------- */
+
+/* Below the scrim at 60, so the palette and any dialog still layer over it. */
+.compare {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  background: rgba(7, 9, 14, 0.96);
+  backdrop-filter: blur(4px);
+}
+
+.cmp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 11px 12px 11px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cmp-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 640;
+}
+
+.cmp-lead {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-2);
+}
+
+.cmp-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cmp-head-right .segmented button {
+  width: auto;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+
+.cmp-cols {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.cmp-col {
+  flex: 1 1 0;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.cmp-col-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding: 7px 6px 7px 8px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  /* The same rule the pane header draws, so a column reads as its pane. */
+  box-shadow: inset 3px 0 0 0 color-mix(in srgb, var(--pane-accent) 70%, transparent);
+}
+
+.cmp-col-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--fg);
+}
+
+.cmp-col-sub {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line);
+  font: 10.5px/1.4 var(--mono);
+  color: var(--fg-2);
+}
+
+.cmp-branch {
+  color: color-mix(in srgb, var(--pane-accent) 75%, var(--fg));
+}
+
+.cmp-base::before {
+  content: '·';
+  margin-right: 5px;
+}
+
+.cmp-col-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.cmp-note {
+  margin: 6px 12px;
+  color: var(--fg-2);
+}
+
+.cmp-note.bad {
+  color: color-mix(in srgb, var(--bad) 70%, var(--fg-1));
+}
+
+.cmp-rule {
+  margin: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.cmp-diff {
+  margin: 0;
+  font: 11px/1.55 var(--mono);
+  white-space: pre;
+  user-select: text;
+}
+
+.cmp-line {
+  display: block;
+  padding: 0 12px;
+}
+
+/* Diff colour comes off the same palette as everything else — the status dots
+   are already green for good and red for gone, and a diff means the same. */
+.cmp-line.add {
+  color: color-mix(in srgb, var(--ok) 60%, #fff);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.cmp-line.del {
+  color: color-mix(in srgb, var(--bad) 60%, #fff);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+}
+
+.cmp-line.hunk {
+  color: color-mix(in srgb, var(--pane-accent) 80%, #fff);
+  background: color-mix(in srgb, var(--pane-accent) 8%, transparent);
+}
+
+.cmp-line.meta {
+  color: var(--fg-2);
+}
+
+.cmp-fold {
+  margin: 10px 12px 4px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line-2);
+  color: var(--fg-2);
+}
+
+/* .link is monospace because it usually is a path; here it is a sentence. */
+.cmp-fold .link {
+  font: inherit;
+}
+
 /* ---------- command palette ---------- */
 
 .palette-scrim {

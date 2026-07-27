@@ -254,6 +254,44 @@ export interface WorktreeResult {
   error?: string
 }
 
+/** One pane's work, asked for by the compare view. See HD-3. */
+export interface DiffRequest {
+  /** The pane's folder. The answer is about the whole worktree above it. */
+  dir: string
+  /** Most patch lines to send back. The main process never ships more than this. */
+  limit?: number
+}
+
+/**
+ * What one column of the compare view draws. Measured from the branch point
+ * rather than from HEAD, and inclusive of staged, committed and untracked work
+ * — an agent that finished its task and committed it has changed everything,
+ * and plain `git diff` would report nothing at all.
+ */
+export interface DiffResult {
+  /** Echoed back, so a late answer can be matched to the pane that asked. */
+  dir: string
+  /** Empty when the folder is not a git repository. */
+  root: string
+  branch: string
+  /** The commit the diff is measured from. */
+  base: string
+  /** What that commit belongs to — a branch name, or `HEAD`. For the header. */
+  baseRef: string
+  /** `git diff --stat`, with a block of its own for files git has not been told about. */
+  stat: string
+  /** The patch, cut to `limit` lines. */
+  patch: string
+  /** Lines the patch has in full, so the fold can say how much is missing. */
+  patchLines: number
+  /** True when `patch` stops short of `patchLines`. */
+  truncated: boolean
+  /** New files in the tree, counted whether or not each one got a diff of its own. */
+  untracked: number
+  /** Why there is nothing to show, when that is not simply "nothing changed". */
+  error?: string
+}
+
 /** A launcher the user saved, merged with the detected ones. See HD-4. */
 export interface SavedProfile {
   id: string

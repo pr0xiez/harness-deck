@@ -90,6 +90,8 @@ interface UiState {
   templateSaveFor: string | null
   /** The "new workspace from template" picker. */
   templatePicker: boolean
+  /** The side-by-side diff over the active workspace's worktree panes. See HD-3. */
+  compare: boolean
 }
 
 interface DeckState {
@@ -235,7 +237,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     paneMenuFor: null,
     paneDialogFor: null,
     templateSaveFor: null,
-    templatePicker: false
+    templatePicker: false,
+    compare: false
   },
   update: null,
   updateDismissed: null,

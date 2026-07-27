@@ -12,7 +12,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PaneSpec, PersistedState, WorkspaceTemplate } from '@shared/types'
-import { addWorktree, info as repoInfo, removeWorktree } from './git'
+import { addWorktree, diffRange, info as repoInfo, removeWorktree } from './git'
 import { PtyManager } from './pty'
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
@@ -498,6 +498,47 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
       if (existsSync(a.path)) return 'the worktree directory is still there'
 
       return (await repoInfo(base)) === null ? null : 'a folder that is not a repo reported one'
+    } finally {
+      // A failed assertion above must not leave a repo in the temp directory.
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  /**
+   * HD-3 in one assertion, and it is about the two things a plain `git diff`
+   * gets wrong for an agent: work it committed, and files it created without
+   * telling git. Both have to reach the column, and a diff nobody would read
+   * has to be cut before it is handed to a renderer.
+   */
+  await record('a worktree diff covers committed and brand-new work, and is capped', async () => {
+    if (!gitInstalled()) return null
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'hd-smoke-diff-')))
+    try {
+      const root = join(base, 'repo')
+      seedRepo(root)
+      const path = join(base, '.harness-deck', 'repo', 'hd', 'smoke-diff')
+      const made = await addWorktree({ repo: root, branch: 'hd/smoke-diff', path })
+      if (!made.ok || !made.path) return `the worktree was refused: ${made.error}`
+
+      const clean = await diffRange({ dir: made.path })
+      if (clean.stat) return `an untouched worktree reported ${JSON.stringify(clean.stat)}`
+      if (clean.baseRef !== 'main') return `it measured against ${clean.baseRef}`
+
+      writeFileSync(join(made.path, 'shared.txt'), 'the agent rewrote this\n')
+      execFileSync('git', ['add', '-A'], { cwd: made.path, stdio: 'ignore' })
+      execFileSync('git', ['commit', '-m', 'agent work'], { cwd: made.path, stdio: 'ignore' })
+      writeFileSync(join(made.path, 'notes.md'), Array(4000).fill('a new line').join('\n'))
+
+      const diff = await diffRange({ dir: made.path, limit: 120 })
+      if (!diff.stat.includes('shared.txt')) return 'the committed change never reached the summary'
+      if (!diff.stat.includes('notes.md')) return 'the new file never reached the summary'
+      if (diff.untracked !== 1) return `it counted ${diff.untracked} new files`
+      if (!diff.patch.includes('+the agent rewrote this')) return 'the patch is missing the edit'
+
+      const lines = diff.patch.split('\n').length
+      if (lines > 120) return `${lines} lines came back for a cap of 120`
+      if (!diff.truncated) return 'a 4,000-line diff came back marked complete'
+      return diff.patchLines > 4000 ? null : `it reported only ${diff.patchLines} lines in full`
     } finally {
       // A failed assertion above must not leave a repo in the temp directory.
       rmSync(base, { recursive: true, force: true })

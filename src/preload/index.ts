@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppInfo,
+  DiffRequest,
+  DiffResult,
   EnsureResult,
   InstallResult,
   PaneSpec,
@@ -55,7 +57,9 @@ const api = {
       ipcRenderer.invoke('git:addWorktree', req),
     removeWorktree: (path: string): Promise<WorktreeResult> =>
       ipcRenderer.invoke('git:removeWorktree', path),
-    diffStat: (dir: string): Promise<string> => ipcRenderer.invoke('git:diffStat', dir)
+    diffStat: (dir: string): Promise<string> => ipcRenderer.invoke('git:diffStat', dir),
+    /** What a pane changed since its branch left the trunk, already capped. See HD-3. */
+    diffRange: (req: DiffRequest): Promise<DiffResult> => ipcRenderer.invoke('git:diffRange', req)
   },
 
   attention: {

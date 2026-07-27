@@ -1,7 +1,18 @@
 import type { BrowserWindow } from 'electron'
+import { execFileSync } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PaneSpec } from '@shared/types'
+import { addWorktree, info as repoInfo, removeWorktree } from './git'
 import { PtyManager } from './pty'
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
@@ -100,6 +111,32 @@ function chattySpec(id: string): PaneSpec {
 
 /** Short enough that one smoke run can watch a pane go quiet and come back. */
 const SMOKE_QUIET_MS = 250
+
+/** A machine without git is not a failing app — there is simply nothing to ask. */
+function gitInstalled(): boolean {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** One commit, one file, so a worktree of it has something to disagree about. */
+function seedRepo(root: string): void {
+  const git = (...args: string[]): void => {
+    execFileSync('git', args, { cwd: root, stdio: 'ignore' })
+  }
+  mkdirSync(root, { recursive: true })
+  git('init')
+  git('symbolic-ref', 'HEAD', 'refs/heads/main')
+  git('config', 'user.email', 'smoke@harness.deck')
+  git('config', 'user.name', 'Harness Deck Smoke')
+  git('config', 'commit.gpgsign', 'false')
+  writeFileSync(join(root, 'shared.txt'), 'base\n')
+  git('add', '-A')
+  git('commit', '-m', 'init')
+}
 
 interface Recorder {
   mgr: PtyManager
@@ -304,6 +341,60 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
       return `no release feed resolved (${state.feedUrl || 'empty'}) — check "repository" in package.json`
     }
     return state.stage === 'error' ? `the local channel reported: ${state.error}` : null
+  })
+
+  /**
+   * HD-2 in one assertion: two panes pointed at one repo have to end up writing
+   * to different directories, and closing one must never be able to take the
+   * main checkout with it. Cheap, and it runs against a real git — which is the
+   * only thing that can tell us whether the plumbing commands still mean what
+   * `git.ts` thinks they mean.
+   */
+  await record('two worktrees of one repo are independent checkouts', async () => {
+    if (!gitInstalled()) return null
+    // Resolved, because macOS hands out a /var symlink for the temp directory
+    // and git reports the /private path back.
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'hd-smoke-git-')))
+    try {
+      const root = join(base, 'repo')
+      seedRepo(root)
+      const at = (branch: string): string =>
+        join(base, '.harness-deck', 'repo', ...branch.split('/'))
+
+      const a = await addWorktree({ repo: root, branch: 'hd/smoke-a', path: at('hd/smoke-a') })
+      if (!a.ok || !a.path) return `the first worktree was refused: ${a.error}`
+      const b = await addWorktree({ repo: root, branch: 'hd/smoke-b', path: at('hd/smoke-b') })
+      if (!b.ok || !b.path) return `the second worktree was refused: ${b.error}`
+      if (a.path === b.path) return 'both panes were handed the same directory'
+
+      const shared = (dir: string): string => join(dir, 'shared.txt')
+      writeFileSync(shared(a.path), 'agent a\n')
+      writeFileSync(shared(b.path), 'agent b\n')
+      if (readFileSync(shared(a.path), 'utf8') === readFileSync(shared(b.path), 'utf8')) {
+        return 'one agent overwrote the other'
+      }
+      if (readFileSync(shared(root), 'utf8') !== 'base\n') return 'the main checkout was written to'
+
+      const repo = await repoInfo(a.path)
+      if (repo?.worktreeOf !== root) {
+        return `the worktree does not point back at its repo (${repo?.worktreeOf ?? 'nothing'})`
+      }
+      if (repo.branch !== 'hd/smoke-a') return `it is on ${repo.branch}`
+      if (repo.dirty !== 1) return `it reports ${repo.dirty} uncommitted change(s), expected 1`
+
+      const refused = await removeWorktree(root)
+      if (refused.ok) return 'the main working tree was removable'
+      if (!existsSync(shared(root))) return 'the main checkout was deleted'
+
+      const removed = await removeWorktree(a.path)
+      if (!removed.ok) return `removing a worktree failed: ${removed.error}`
+      if (existsSync(a.path)) return 'the worktree directory is still there'
+
+      return (await repoInfo(base)) === null ? null : 'a folder that is not a repo reported one'
+    } finally {
+      // A failed assertion above must not leave a repo in the temp directory.
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 
   // Everything below drives node-pty directly. If the native prebuild didn't

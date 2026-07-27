@@ -7,6 +7,7 @@ import type {
   PaneStatus,
   PersistedState,
   Profile,
+  RepoInfo,
   SavedProfile,
   Settings,
   UpdateState,
@@ -88,6 +89,8 @@ interface DeckState {
   activeWorkspaceId: string | null
   /** Workspaces whose terminals are mounted (they keep running once visited). */
   mounted: string[]
+  /** What git says about the folders on screen, keyed by folder. Never saved. */
+  repos: Record<string, RepoInfo | null>
   settings: Settings
   ui: UiState
   update: UpdateState | null
@@ -99,6 +102,8 @@ interface DeckState {
 
   hydrate: () => Promise<void>
   refreshProfiles: () => Promise<void>
+  /** Re-reads git for one folder. Called on window focus and when a pane falls quiet. */
+  refreshRepo: (dir: string) => Promise<void>
   /** Keeps a launcher in the harness menu; an existing id is edited in place. */
   saveLauncher: (profile: SavedProfile) => Promise<void>
   removeLauncher: (id: string) => Promise<void>
@@ -197,6 +202,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   workspaces: [],
   activeWorkspaceId: null,
   mounted: [],
+  repos: {},
   settings: DEFAULT_SETTINGS,
   ui: {
     palette: false,
@@ -272,6 +278,15 @@ export const useDeck = create<DeckState>((set, get) => ({
   },
 
   refreshProfiles: async () => set({ profiles: await api.profiles.list() }),
+
+  // Keyed by folder rather than by workspace, so a workspace whose folder
+  // changed while the call was in flight gets the answer to the question it is
+  // now asking, and a stale one lands harmlessly on the folder it was about.
+  refreshRepo: async (dir) => {
+    if (!dir) return
+    const repo = await api.git.info(dir)
+    set({ repos: { ...get().repos, [dir]: repo } })
+  },
 
   // Both hand back the whole merged list, detected launchers included.
   saveLauncher: async (profile) => set({ profiles: await api.profiles.saveCustom(profile) }),
@@ -448,7 +463,33 @@ export const useDeck = create<DeckState>((set, get) => ({
       })
       if (!ok) return
     }
+
+    // A worktree is this app's own doing, so closing the pane is the moment to
+    // offer to undo it. Only a folder git still calls a *linked* worktree is
+    // ever offered: `worktree` is persisted state, and a repo that moved on
+    // since it was written must not turn this into a prompt to delete someone's
+    // main checkout.
+    const worktree = pane.worktree ? await api.git.info(pane.worktree) : null
+    const remove =
+      pane.worktree && worktree?.worktreeOf
+        ? await api.confirm({
+            title: 'Remove worktree',
+            message: 'Also delete the worktree this pane was working in?',
+            detail: worktree.dirty
+              ? `${worktree.dirty} uncommitted change${worktree.dirty === 1 ? '' : 's'} in ${pane.worktree} will be lost. The branch ${worktree.branch} is kept.`
+              : `${pane.worktree} is checked out on ${worktree.branch}. Only the folder goes; the branch is kept.`,
+            confirmLabel: 'Delete worktree'
+          })
+        : false
+
     get().closePane(workspaceId, paneId)
+
+    // After the pane, so the process that was living in the directory is
+    // already on its way out before git tries to take the directory away.
+    if (remove && pane.worktree) {
+      const result = await api.git.removeWorktree(pane.worktree)
+      if (!result.ok) console.warn(`[worktree] ${result.error}`)
+    }
   },
 
   restartPane: (paneId) => {
@@ -598,7 +639,7 @@ function serialize(state: DeckState): PersistedState {
     workspaces: state.workspaces.map((ws) => ({
       ...ws,
       zoomedPaneId: null,
-      panes: ws.panes.map(({ id, profileId, command, args, cwd, viaShell, name, env }) => ({
+      panes: ws.panes.map(({ id, profileId, command, args, cwd, viaShell, name, env, worktree }) => ({
         id,
         profileId,
         command,
@@ -607,6 +648,8 @@ function serialize(state: DeckState): PersistedState {
         viaShell,
         name,
         env,
+        // Kept, or a restart would forget that this folder is ours to remove.
+        worktree,
         status: 'idle' as PaneStatus,
         exitCode: null,
         epoch: 0

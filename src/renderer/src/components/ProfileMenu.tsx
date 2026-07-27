@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Profile } from '@shared/types'
+import { worktreeBranch, worktreePath } from '@shared/worktree'
 import { useDeck } from '../store'
 import { Dropdown } from './ui'
 import { PaneDialog } from './PaneDialog'
 import { Icon } from './Icon'
+
+const api = window.harness
 
 interface Props {
   workspaceId: string
@@ -18,10 +21,21 @@ interface Group {
 
 export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): React.JSX.Element {
   const profiles = useDeck((s) => s.profiles)
+  const cwd = useDeck((s) => s.workspaces.find((w) => w.id === workspaceId)?.cwd ?? '')
+  const repo = useDeck((s) => s.repos[cwd] ?? null)
+  const refreshRepo = useDeck((s) => s.refreshRepo)
   const addPane = useDeck((s) => s.addPane)
   const refreshProfiles = useDeck((s) => s.refreshProfiles)
   const removeLauncher = useDeck((s) => s.removeLauncher)
   const [customOpen, setCustomOpen] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  // Opening the menu is as good a moment as any to re-ask: the folder may have
+  // become a repo, or stopped being one, since the toolbar last looked.
+  useEffect(() => {
+    void refreshRepo(cwd)
+  }, [cwd, refreshRepo])
 
   const groups = useMemo<Group[]>(() => {
     const native = profiles.filter((p) => p.kind === 'agent' && !p.id.startsWith('wsl:'))
@@ -40,6 +54,38 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
 
   const add = (profile: Profile): void => {
     addPane(workspaceId, profile)
+    onClose()
+  }
+
+  /**
+   * The point of the whole feature: this pane gets a checkout of its own, so two
+   * agents on one task stop overwriting each other. The branch it lands on may
+   * come back numbered — the repo, not the menu, knows what is already taken.
+   */
+  const addInWorktree = async (profile: Profile): Promise<void> => {
+    if (!repo || busy) return
+    setBusy(profile.id)
+    setError(null)
+    const branch = worktreeBranch(profile.name)
+    const result = await api.git.addWorktree({
+      repo: repo.root,
+      branch,
+      path: worktreePath(repo.root, branch)
+    })
+    setBusy(null)
+    if (!result.ok || !result.path) {
+      setError(result.error || 'git would not create the worktree.')
+      return
+    }
+    // Two panes running the same harness are only told apart by the tree they
+    // are in, and when the repo already held that branch it is the number git
+    // handed out that differs — so the header says which one this is.
+    const folder = result.path.split(/[\\/]/).filter(Boolean).pop() ?? branch
+    addPane(workspaceId, profile, {
+      cwd: result.path,
+      worktree: result.path,
+      name: `${profile.name} · ${folder}`
+    })
     onClose()
   }
 
@@ -76,6 +122,21 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
                   {profile.available ? profile.detail : 'not installed — opens anyway'}
                 </span>
               </span>
+              {repo && profile.kind === 'agent' ? (
+                // A span, because the row is itself a button — same reason the
+                // forget control below is one.
+                <span
+                  className={`icon-btn tiny menu-worktree ${busy === profile.id ? 'busy' : ''}`}
+                  role="button"
+                  title={`Open ${profile.name} in a worktree of its own, branched off ${repo.branch}`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    void addInWorktree(profile)
+                  }}
+                >
+                  <Icon name="branch" size={11} />
+                </span>
+              ) : null}
               {profile.id.startsWith('custom:') ? (
                 // A span, because a launcher row is itself a button — and
                 // forgetting the launcher leaves any pane opened from it alone.
@@ -95,6 +156,18 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
           ))}
         </div>
       ))}
+
+      {repo ? (
+        <div className="menu-note">
+          <Icon name="branch" size={11} />
+          <span>
+            {busy
+              ? 'Creating the worktree…'
+              : 'opens the agent in its own worktree, so two of them can work at once.'}
+          </span>
+        </div>
+      ) : null}
+      {error ? <div className="menu-note bad">{error}</div> : null}
 
       <div className="menu-sep" />
       <button className="menu-item" onClick={() => setCustomOpen(true)}>

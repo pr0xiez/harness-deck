@@ -187,6 +187,51 @@ interface BroadcastProbe {
   send: boolean
 }
 
+/**
+ * Alt rewrites the character on macOS, so the app matches this chord on the
+ * physical key — which means a synthetic event has to carry `code` as well, or
+ * it exercises nothing.
+ */
+const TOGGLE_FIND_ALL = `(() => {
+  document.body.dispatchEvent(
+    new KeyboardEvent('keydown', {
+      key: 'F', code: 'KeyF', ctrlKey: true, shiftKey: true, altKey: true, bubbles: true
+    })
+  )
+  return true
+})()`
+
+const FIND_ALL_PROBE = `(() => {
+  const bar = document.querySelector('.deck-search')
+  return {
+    open: !!bar,
+    box: !!bar && !!bar.querySelector('input'),
+    count: bar ? (bar.querySelector('.deck-search-count')?.textContent ?? '') : ''
+  }
+})()`
+
+/**
+ * A string no pane will ever have printed, typed the way React insists on: the
+ * point is not the answer but the walk — it makes the scan read every live
+ * xterm buffer for real, which is the half of the search a DOM probe can't see.
+ */
+const FIND_ALL_MISS = 'hd-smoke-nothing-prints-this'
+
+const SEARCH_FIND_ALL = `(() => {
+  const input = document.querySelector('.deck-search input')
+  if (!input) return false
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+  set.call(input, ${JSON.stringify(FIND_ALL_MISS)})
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  return true
+})()`
+
+interface FindAllProbe {
+  open: boolean
+  box: boolean
+  count: string
+}
+
 /** Collects anything the renderer complained about, from before the page loads. */
 export function watchRendererErrors(win: BrowserWindow): string[] {
   const errors: string[] = []
@@ -281,6 +326,28 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
 
     await win.webContents.executeJavaScript(TOGGLE_BROADCAST, true)
     const closed = await until(async () => !(await broadcast()).open, 10_000)
+    return closed ? null : 'it would not close again'
+  })
+
+  await record('find-across-panes opens, and searches every live pane', async () => {
+    const findAll = async (): Promise<FindAllProbe> =>
+      (await win.webContents.executeJavaScript(FIND_ALL_PROBE, true)) as FindAllProbe
+
+    await win.webContents.executeJavaScript(TOGGLE_FIND_ALL, true)
+    let bar: FindAllProbe = { open: false, box: false, count: '' }
+    const opened = await until(async () => {
+      bar = await findAll()
+      return bar.open
+    }, 10_000)
+    if (!opened) return 'Ctrl+Shift+Alt+F never put it in the DOM'
+    if (!bar.box) return 'it opened without its query box'
+
+    await win.webContents.executeJavaScript(SEARCH_FIND_ALL, true)
+    const answered = await until(async () => (await findAll()).count === 'no matches', 10_000)
+    if (!answered) return `the scan never reported back (it said ${JSON.stringify((await findAll()).count)})`
+
+    await win.webContents.executeJavaScript(TOGGLE_FIND_ALL, true)
+    const closed = await until(async () => !(await findAll()).open, 10_000)
     return closed ? null : 'it would not close again'
   })
 

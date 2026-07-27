@@ -78,6 +78,8 @@ interface UiState {
   paneMenuFor: string | null
   /** Pane whose edit dialog is open. */
   paneDialogFor: string | null
+  /** The workspace-wide find bar. */
+  findAll: boolean
 }
 
 interface DeckState {
@@ -205,7 +207,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     broadcast: false,
     profileMenu: false,
     paneMenuFor: null,
-    paneDialogFor: null
+    paneDialogFor: null,
+    findAll: false
   },
   update: null,
   updateDismissed: null,

@@ -17,8 +17,10 @@ import { dirname, join, resolve } from 'node:path'
 import type {
   PaneSpec,
   PersistedState,
+  SavedProfile,
   TranscribeRequest,
-  VoiceProvider
+  VoiceProvider,
+  WorktreeRequest
 } from '@shared/types'
 import { detectProfiles } from './profiles'
 import { PtyManager } from './pty'
@@ -131,6 +133,22 @@ function installMenu(): void {
       { role: 'windowMenu' }
     ])
   )
+}
+
+/**
+ * How many panes are waiting, shown where the platform puts it: a dock badge on
+ * macOS and Linux, and a flashing taskbar button on Windows, which has no badge
+ * of its own without an overlay icon to draw the number onto.
+ */
+function setBadge(count: number): void {
+  const value = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0
+  if (process.platform === 'win32') {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+      mainWindow.flashFrame(value > 0)
+    }
+    return
+  }
+  app.setBadgeCount(value)
 }
 
 function send(channel: string, payload: unknown): void {
@@ -367,6 +385,22 @@ function registerIpc(): void {
   ipcMain.handle('state:location', () => stateLocation())
 
   ipcMain.handle('profiles:list', () => detectProfiles())
+  // Stubs until HD-4 lands the store behind them: saving changes nothing, so a
+  // caller written against the real thing still gets a usable list back.
+  ipcMain.handle('profiles:saveCustom', (_e, _profile: SavedProfile) => detectProfiles())
+  ipcMain.handle('profiles:removeCustom', (_e, _id: string) => detectProfiles())
+
+  // Stubs until HD-2 lands src/main/git.ts.
+  ipcMain.handle('git:info', (_e, _dir: string) => null)
+  ipcMain.handle('git:addWorktree', (_e, _req: WorktreeRequest) => ({
+    ok: false,
+    error: 'not implemented'
+  }))
+  ipcMain.handle('git:removeWorktree', (_e, _path: string) => ({
+    ok: false,
+    error: 'not implemented'
+  }))
+  ipcMain.handle('git:diffStat', (_e, _dir: string) => '')
 
   ipcMain.handle('update:state', () => currentState())
   ipcMain.handle('update:check', () => checkNow())
@@ -383,6 +417,8 @@ function registerIpc(): void {
   ipcMain.on('pty:dispose', (_e, id: string) => ptys!.dispose(id))
   ipcMain.handle('pty:status', (_e, id: string) => ptys!.status(id))
   ipcMain.handle('pty:running', () => ptys!.runningIds())
+  // Stub until HD-8 lands the accessor on PtyManager.
+  ipcMain.handle('pty:transcript', (_e, _id: string) => '')
 
   ipcMain.handle('dialog:pickDirectory', async (_e, current?: string) => {
     if (!mainWindow) return null
@@ -438,6 +474,7 @@ function registerIpc(): void {
     if (/^(https?|ms-settings):/.test(url)) shell.openExternal(url)
   })
   ipcMain.on('app:openPath', (_e, path: string) => shell.openPath(path))
+  ipcMain.on('app:setBadge', (_e, count: number) => setBadge(count))
 
   ipcMain.handle('app:capture', async (_e, target: string) => {
     if (!mainWindow) return null

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   AppInfo,
+  AttentionSettings,
   LayoutMode,
   Pane,
   PaneStatus,
@@ -25,6 +26,12 @@ export const DEFAULT_VOICE: VoiceSettings = {
   autoStop: true
 }
 
+export const DEFAULT_ATTENTION: AttentionSettings = {
+  quietMs: 2500,
+  notify: true,
+  badge: true
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 13,
   fontFamily: MONO_STACK,
@@ -37,7 +44,10 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultCwd: '',
   bellNotifications: true,
   sidebarCollapsed: false,
-  voice: DEFAULT_VOICE
+  voice: DEFAULT_VOICE,
+  attention: DEFAULT_ATTENTION,
+  broadcastHistory: [],
+  broadcastSnippets: []
 }
 
 /** Panes carry a bit of state we never want to write to disk. */
@@ -194,7 +204,8 @@ export const useDeck = create<DeckState>((set, get) => ({
       ...saved?.settings,
       defaultCwd,
       // Nested, so a state file written before a field existed still gets it.
-      voice: { ...DEFAULT_VOICE, ...saved?.settings?.voice }
+      voice: { ...DEFAULT_VOICE, ...saved?.settings?.voice },
+      attention: { ...DEFAULT_ATTENTION, ...saved?.settings?.attention }
     }
 
     let workspaces: DeckWorkspace[] = (saved?.workspaces ?? []).map((ws) => ({

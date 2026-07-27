@@ -1,6 +1,7 @@
 /** Types shared between the main process, the preload bridge and the renderer. */
 
-export type PaneStatus = 'idle' | 'running' | 'exited'
+/** `waiting` is a running process that has stopped producing output — see HD-1. */
+export type PaneStatus = 'idle' | 'running' | 'waiting' | 'exited'
 export type LayoutMode = 'grid' | 'tabs'
 export type ProfileKind = 'agent' | 'shell' | 'custom'
 
@@ -47,6 +48,8 @@ export interface Pane extends PaneSpec {
   activity?: boolean
   /** The process rang the terminal bell. */
   bell?: boolean
+  /** Set when the pane's cwd is a worktree this app created for it. */
+  worktree?: string
 }
 
 export interface Workspace {
@@ -76,6 +79,20 @@ export interface Settings {
   bellNotifications: boolean
   sidebarCollapsed: boolean
   voice: VoiceSettings
+  attention: AttentionSettings
+  /** Recent broadcast prompts, most recent first. */
+  broadcastHistory: string[]
+  /** Prompts the user keeps around to send again. */
+  broadcastSnippets: string[]
+}
+
+/** When a quiet pane counts as wanting attention, and how loudly it says so. */
+export interface AttentionSettings {
+  /** Milliseconds of silence from a running process before it counts as waiting. */
+  quietMs: number
+  notify: boolean
+  /** Bounce the dock / flash the taskbar as well as notifying. */
+  badge: boolean
 }
 
 /** Speech-to-text service. `custom` is any OpenAI-compatible endpoint. */
@@ -161,6 +178,47 @@ export interface PtyExitEvent {
   id: string
   exitCode: number
   signal?: number
+}
+
+export interface PtyQuietEvent {
+  id: string
+  /** True when the pane went quiet, false on the first byte after that. */
+  quiet: boolean
+}
+
+/** A git repository behind a workspace or pane folder. See HD-2. */
+export interface RepoInfo {
+  root: string
+  branch: string
+  dirty: number
+  /** Set when this folder is a linked worktree rather than the main one. */
+  worktreeOf?: string
+}
+
+export interface WorktreeRequest {
+  repo: string
+  /** Branch to create; the caller guarantees it is unique. */
+  branch: string
+  path: string
+}
+
+export interface WorktreeResult {
+  ok: boolean
+  path?: string
+  error?: string
+}
+
+/** A launcher the user saved, merged with the detected ones. See HD-4. */
+export interface SavedProfile {
+  id: string
+  name: string
+  command: string
+  args: string[]
+  cwd?: string
+  env?: Record<string, string>
+  icon: string
+  accent: string
+  viaShell?: boolean
 }
 
 /** What a waiting release tells the user about itself. */

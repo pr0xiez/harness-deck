@@ -9,11 +9,16 @@ import type {
   Profile,
   PtyDataEvent,
   PtyExitEvent,
+  PtyQuietEvent,
+  RepoInfo,
+  SavedProfile,
   TranscribeRequest,
   TranscribeResult,
   UpdateState,
   VoiceKeyState,
-  VoiceProvider
+  VoiceProvider,
+  WorktreeRequest,
+  WorktreeResult
 } from '@shared/types'
 
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -29,7 +34,30 @@ const api = {
   saveState: (state: PersistedState): void => ipcRenderer.send('state:save', state),
   stateLocation: (): Promise<string> => ipcRenderer.invoke('state:location'),
 
+  /** @deprecated Use `profiles.list`. Kept so older call sites keep compiling. */
   listProfiles: (): Promise<Profile[]> => ipcRenderer.invoke('profiles:list'),
+
+  profiles: {
+    list: (): Promise<Profile[]> => ipcRenderer.invoke('profiles:list'),
+    /** Returns the full detected + saved list, so callers can drop the result straight into state. */
+    saveCustom: (profile: SavedProfile): Promise<Profile[]> =>
+      ipcRenderer.invoke('profiles:saveCustom', profile),
+    removeCustom: (id: string): Promise<Profile[]> =>
+      ipcRenderer.invoke('profiles:removeCustom', id)
+  },
+
+  git: {
+    info: (dir: string): Promise<RepoInfo | null> => ipcRenderer.invoke('git:info', dir),
+    addWorktree: (req: WorktreeRequest): Promise<WorktreeResult> =>
+      ipcRenderer.invoke('git:addWorktree', req),
+    removeWorktree: (path: string): Promise<WorktreeResult> =>
+      ipcRenderer.invoke('git:removeWorktree', path),
+    diffStat: (dir: string): Promise<string> => ipcRenderer.invoke('git:diffStat', dir)
+  },
+
+  attention: {
+    setBadge: (count: number): void => ipcRenderer.send('app:setBadge', count)
+  },
 
   update: {
     state: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
@@ -52,7 +80,11 @@ const api = {
     running: (): Promise<string[]> => ipcRenderer.invoke('pty:running'),
     onData: (handler: (event: PtyDataEvent) => void): (() => void) =>
       subscribe('pty:data', handler),
-    onExit: (handler: (event: PtyExitEvent) => void): (() => void) => subscribe('pty:exit', handler)
+    onExit: (handler: (event: PtyExitEvent) => void): (() => void) => subscribe('pty:exit', handler),
+    onQuiet: (handler: (event: PtyQuietEvent) => void): (() => void) =>
+      subscribe('pty:quiet', handler),
+    /** The pane's replay buffer as one string — the last ~512 KB it produced. */
+    transcript: (id: string): Promise<string> => ipcRenderer.invoke('pty:transcript', id)
   },
 
   pickDirectory: (current?: string): Promise<string | null> =>

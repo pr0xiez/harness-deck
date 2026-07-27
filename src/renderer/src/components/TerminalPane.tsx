@@ -14,6 +14,13 @@ import { Icon } from './Icon'
 
 const api = window.harness
 
+/**
+ * Drawn above scrollback that came off disk. Without it a pane restored after a
+ * quit reads as though the process below it produced that output — which is the
+ * one thing a transcript must never be wrong about.
+ */
+const PREVIOUS_SESSION_RULE = '\x1b[2m— previous session —\x1b[0m\r\n'
+
 interface Props {
   pane: PaneView
   workspaceId: string
@@ -202,6 +209,7 @@ export function TerminalPane({
       )
       // A restart may have torn this terminal down while the spawn was in flight.
       if (cancelled) return
+      if (result.previousSession) term.write(PREVIOUS_SESSION_RULE)
       if (result.replay) term.write(result.replay)
       handle.attach()
       // A process can die before the spawn reply gets back here, and that exit

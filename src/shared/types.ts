@@ -171,6 +171,12 @@ export interface EnsureResult {
   exitCode?: number | null
   /** Buffered output to replay into a fresh terminal. */
   replay: string
+  /**
+   * The replay opens with output from before the app was last quit, restored
+   * from disk. History, not a live process — `status` still describes the one
+   * running now. See HD-6.
+   */
+  previousSession?: boolean
   error?: string
 }
 

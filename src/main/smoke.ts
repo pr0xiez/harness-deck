@@ -1,10 +1,12 @@
 import type { BrowserWindow } from 'electron'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PaneSpec } from '@shared/types'
 import { PtyManager } from './pty'
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
+import { ScrollbackStore } from './scrollback'
 import { currentState } from './updater'
 
 /**
@@ -108,7 +110,7 @@ interface Recorder {
   quietFor(id: string): boolean[]
 }
 
-function recordingManager(): Recorder {
+function recordingManager(scrollback: ScrollbackStore | null = null): Recorder {
   const messages: Array<{
     channel: string
     payload: { id?: string; data?: string; quiet?: boolean }
@@ -120,7 +122,8 @@ function recordingManager(): Recorder {
         payload: payload as { id?: string; data?: string; quiet?: boolean }
       }),
     undefined,
-    () => SMOKE_QUIET_MS
+    () => SMOKE_QUIET_MS,
+    scrollback
   )
   return {
     mgr,
@@ -336,6 +339,44 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     }
     if (mgr.transcript('smoke-never-existed') !== '') return 'an unknown pane returned a transcript'
     return null
+  })
+
+  /**
+   * The one case the replay buffer never covered: it lives inside a
+   * PtyManager, and a real quit takes the whole process with it. A second
+   * manager over the same directory is as close as one run gets to relaunching
+   * the app, and it is the whole of what the feature promises.
+   */
+  await record('a pane tail survives the manager that produced it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hd-smoke-scrollback-'))
+    const id = 'smoke-scrollback'
+    try {
+      const store = new ScrollbackStore(dir)
+      const before = recordingManager(store)
+      const started = before.mgr.ensure(echoSpec(id, 'HD_SCROLLBACK_OK'), 80, 24)
+      if (started.error) return `spawn failed: ${started.error}`
+      if (!(await until(() => before.mgr.status(id)?.status === 'exited', 20_000))) {
+        return 'process never exited'
+      }
+      before.mgr.disposeAll() // the quit
+
+      const after = recordingManager(store)
+      const restored = after.mgr.ensure(idleSpec(id), 80, 24)
+      try {
+        if (!restored.previousSession) return 'the replay came back unmarked'
+        if (!restored.replay.includes('HD_SCROLLBACK_OK')) {
+          return `the tail did not come back (got ${JSON.stringify(restored.replay.slice(0, 120))})`
+        }
+        // What is on screen is history; the process under it is the new one.
+        if (restored.status !== 'running') return `a restored pane reported ${restored.status}`
+      } finally {
+        after.mgr.dispose(id)
+      }
+      return store.read(id) === '' ? null : 'closing the pane left its log on disk'
+    } finally {
+      // A failed assertion must not leave a temp directory behind either.
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   /**

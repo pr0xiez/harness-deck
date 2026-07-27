@@ -28,6 +28,7 @@ import type {
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
+import { ScrollbackStore } from './scrollback'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
@@ -53,6 +54,17 @@ let quietMs = DEFAULT_QUIET_MS
 function rememberAttention(state: PersistedState | null): void {
   const value = state?.settings?.attention?.quietMs
   if (typeof value === 'number' && value > 0) quietMs = value
+}
+
+/**
+ * Panes that went away while the app was not running left their tails behind.
+ * A state file we could not read is not evidence that every pane is gone, so
+ * that case prunes nothing rather than everything.
+ */
+function pruneScrollback(store: ScrollbackStore): void {
+  const state = loadState()
+  if (!state) return
+  store.prune(state.workspaces.flatMap((w) => w.panes).map((p) => p.id))
 }
 
 /**
@@ -575,7 +587,11 @@ if (!app.requestSingleInstanceLock()) {
       const icon = devIcon()
       if (icon) app.dock?.setIcon(icon)
     }
-    ptys = new PtyManager(send, undefined, () => quietMs)
+    // Built here rather than at module scope: `userData` is not final until the
+    // --user-data-dir switch and the smoke override above have been applied.
+    const scrollback = new ScrollbackStore(app.getPath('userData'))
+    pruneScrollback(scrollback)
+    ptys = new PtyManager(send, undefined, () => quietMs, scrollback)
     registerIpc()
     mainWindow = createWindow()
 

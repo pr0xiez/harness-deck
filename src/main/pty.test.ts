@@ -1,7 +1,11 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { IPty } from '@lydell/node-pty'
 import type { PaneSpec } from '@shared/types'
 import { PtyManager, stripAnsi, type Spawn } from './pty'
+import { ScrollbackStore, SCROLLBACK_LIMIT } from './scrollback'
 
 /** Matches FLUSH_MS in pty.ts — output is coalesced into one message per tick. */
 const FLUSH_MS = 8
@@ -9,6 +13,8 @@ const FLUSH_MS = 8
 const REPLAY_LIMIT = 512 * 1024
 /** Matches DEFAULT_QUIET_MS in pty.ts. */
 const QUIET_MS = 2500
+/** Matches PERSIST_MS in pty.ts. */
+const PERSIST_MS = 30_000
 
 let pidSeq = 1000
 
@@ -67,7 +73,11 @@ interface Harness {
   quietFor(id: string): boolean[]
 }
 
-function harness(spawnImpl?: () => never, quietMs = QUIET_MS): Harness {
+function harness(
+  spawnImpl?: () => never,
+  quietMs = QUIET_MS,
+  scrollback: ScrollbackStore | null = null
+): Harness {
   const sent: Harness['sent'] = []
   const spawned: FakePty[] = []
   const spawn: Spawn = () => {
@@ -79,7 +89,8 @@ function harness(spawnImpl?: () => never, quietMs = QUIET_MS): Harness {
   const mgr = new PtyManager(
     (channel, payload) => sent.push({ channel, payload: payload as Record<string, unknown> }),
     spawn,
-    () => quietMs
+    () => quietMs,
+    scrollback
   )
   return {
     mgr,
@@ -353,6 +364,276 @@ describe('transcript', () => {
     mgr.dispose('a')
 
     expect(mgr.transcript('a')).toBe('')
+  })
+})
+
+/**
+ * Quitting the app used to be indistinguishable from deleting every pane's
+ * output. These are the edges of no longer doing that: a tail that keeps its
+ * own size down, a restored one that never claims to be a live process, and a
+ * write that must not land for a pane that has since been closed.
+ */
+describe('scrollback', () => {
+  let dir: string
+  let store: ScrollbackStore
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hd-scrollback-'))
+    store = new ScrollbackStore(dir)
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const logFile = (id: string): string => join(dir, 'scrollback', `${id}.log`)
+  const saving = (spawnImpl?: () => never): Harness => harness(spawnImpl, QUIET_MS, store)
+
+  it('writes a pane tail to disk while the pane is producing output', () => {
+    const { mgr, spawned } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('work in progress')
+
+    vi.advanceTimersByTime(PERSIST_MS - 1)
+    expect(existsSync(logFile('a'))).toBe(false)
+
+    vi.advanceTimersByTime(1)
+    expect(readFileSync(logFile('a'), 'utf8')).toBe('work in progress')
+  })
+
+  it('writes again as the pane goes on producing output', () => {
+    const { mgr, spawned } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('first ')
+    vi.advanceTimersByTime(PERSIST_MS)
+    spawned[0].emit('second')
+    vi.advanceTimersByTime(PERSIST_MS)
+
+    expect(readFileSync(logFile('a'), 'utf8')).toBe('first second')
+  })
+
+  it('leaves nothing on disk for a pane that never said anything', () => {
+    const { mgr } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    vi.advanceTimersByTime(PERSIST_MS * 5)
+
+    expect(existsSync(logFile('a'))).toBe(false)
+  })
+
+  it('keeps what it writes bounded, however long the pane has run', () => {
+    const { mgr, spawned } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    const chunk = 'x'.repeat(64 * 1024)
+    for (let i = 0; i < 6; i++) spawned[0].emit(chunk)
+    spawned[0].emit('LATEST')
+    vi.advanceTimersByTime(PERSIST_MS)
+
+    const written = readFileSync(logFile('a'), 'utf8')
+    expect(written.length).toBeLessThanOrEqual(SCROLLBACK_LIMIT)
+    // Smaller than what a reloaded window replays — orientation, not forensics.
+    expect(written.length).toBeLessThan(mgr.transcript('a').length)
+    expect(written.endsWith('LATEST')).toBe(true)
+  })
+
+  it('writes every live pane on the way out', () => {
+    const { mgr, spawned } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    mgr.ensure(spec('b'), 100, 40)
+    spawned[0].emit('from a')
+    spawned[1].emit('from b')
+
+    mgr.disposeAll()
+
+    expect(readFileSync(logFile('a'), 'utf8')).toBe('from a')
+    expect(readFileSync(logFile('b'), 'utf8')).toBe('from b')
+  })
+
+  it('seeds a pane the app has seen before, and says the replay is history', () => {
+    const first = saving()
+    first.mgr.ensure(spec('a'), 100, 40)
+    first.spawned[0].emit('what it was doing')
+    first.mgr.disposeAll()
+
+    const { mgr, spawned } = saving()
+    const result = mgr.ensure(spec('a'), 100, 40)
+
+    expect(result.replay).toContain('what it was doing')
+    expect(result.previousSession).toBe(true)
+    // The status belongs to the process that just started, not to the one that
+    // wrote the file — a tail on disk never makes a pane look alive.
+    expect(result).toMatchObject({ created: true, status: 'running', exitCode: null })
+    expect(result.pid).toBe(spawned[0].pid)
+    expect(spawned).toHaveLength(1)
+  })
+
+  it('reports a restored pane that will not start as exited, not running', () => {
+    store.write('a', 'what it was doing')
+    const { mgr } = saving(() => {
+      throw new Error('ENOENT: no such file')
+    })
+    const result = mgr.ensure(spec('a'), 100, 40)
+
+    expect(result).toMatchObject({ status: 'exited', exitCode: -1, previousSession: true })
+    expect(result.replay).toContain('what it was doing')
+    expect(mgr.status('a')).toEqual({ status: 'exited', exitCode: -1 })
+    expect(mgr.runningIds()).toEqual([])
+  })
+
+  it('starts the new session on a line of its own', () => {
+    store.write('a', 'a tail cut mid-line')
+    const { mgr } = saving()
+
+    expect(mgr.ensure(spec('a'), 100, 40).replay).toBe('a tail cut mid-line\r\n')
+  })
+
+  it('still rules off the restored tail for a window that reloaded', () => {
+    store.write('a', 'what it was doing')
+    const { mgr, spawned } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('and what it is doing now')
+
+    const again = mgr.ensure(spec('a'), 100, 40)
+
+    expect(again).toMatchObject({ created: false, previousSession: true })
+    expect(again.replay).toContain('what it was doing')
+  })
+
+  it('stops calling it a previous session once this run has scrolled past it', () => {
+    store.write('a', 'what it was doing')
+    const { mgr, spawned } = saving()
+    expect(mgr.ensure(spec('a'), 100, 40).previousSession).toBe(true)
+
+    const chunk = 'x'.repeat(64 * 1024)
+    for (let i = 0; i < 9; i++) spawned[0].emit(chunk)
+
+    const again = mgr.ensure(spec('a'), 100, 40)
+    expect(again.previousSession).toBe(false)
+    expect(again.replay).not.toContain('what it was doing')
+  })
+
+  it('deletes the log of a pane that was closed', () => {
+    const { mgr, spawned } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('output from the first run')
+    vi.advanceTimersByTime(PERSIST_MS)
+    expect(existsSync(logFile('a'))).toBe(true)
+
+    mgr.dispose('a')
+
+    expect(existsSync(logFile('a'))).toBe(false)
+  })
+
+  it('does not bring the old run back when a pane is restarted', () => {
+    const { mgr, spawned } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('output from the first run')
+    vi.advanceTimersByTime(PERSIST_MS)
+
+    mgr.dispose('a')
+    const restarted = mgr.ensure(spec('a'), 100, 40)
+
+    expect(restarted.replay).toBe('')
+    expect(restarted.previousSession).toBe(false)
+  })
+
+  /** Same disposal race as the quiet timer: a stale timer must not write. */
+  it('does not write for a pane that was disposed before the timer landed', () => {
+    const { mgr, spawned } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('half a thought')
+
+    mgr.dispose('a')
+    vi.advanceTimersByTime(PERSIST_MS * 2)
+
+    expect(existsSync(logFile('a'))).toBe(false)
+  })
+
+  it('does not let a replaced session write over the pane that took its id', () => {
+    const { mgr, spawned } = saving()
+    mgr.ensure(spec('a'), 100, 40)
+    const old = spawned[0]
+    old.emit('output from the first run')
+
+    mgr.dispose('a')
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[1].emit('fresh')
+    old.emit('stale output from the process being replaced')
+    vi.advanceTimersByTime(PERSIST_MS)
+
+    expect(readFileSync(logFile('a'), 'utf8')).toBe('fresh')
+  })
+
+  it('keeps everything in memory when there is nowhere to write', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('nowhere to go')
+    vi.advanceTimersByTime(PERSIST_MS * 2)
+
+    expect(mgr.transcript('a')).toBe('nowhere to go')
+    expect(mgr.ensure(spec('a'), 100, 40).previousSession).toBe(false)
+  })
+})
+
+describe('the scrollback store', () => {
+  let dir: string
+  let store: ScrollbackStore
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hd-scrollback-'))
+    store = new ScrollbackStore(dir)
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('has nothing to say about a pane it has never seen', () => {
+    expect(store.read('ghost')).toBe('')
+  })
+
+  it('writes no more than the tail it promises', () => {
+    store.write('a', `${'x'.repeat(SCROLLBACK_LIMIT * 2)}LATEST`)
+
+    const text = store.read('a')
+    expect(text.length).toBe(SCROLLBACK_LIMIT)
+    expect(text.endsWith('LATEST')).toBe(true)
+  })
+
+  it('forgets a pane rather than leaving a stale log when its output is empty', () => {
+    store.write('a', 'something')
+    store.write('a', '')
+
+    expect(store.read('a')).toBe('')
+  })
+
+  it('drops the logs of panes the state file no longer has', () => {
+    store.write('kept', 'still open')
+    store.write('gone', 'closed while the app was not running')
+
+    store.prune(['kept'])
+
+    expect(store.read('kept')).toBe('still open')
+    expect(store.read('gone')).toBe('')
+  })
+
+  it('leaves files that are not its own alone', () => {
+    mkdirSync(join(dir, 'scrollback'), { recursive: true })
+    writeFileSync(join(dir, 'scrollback', 'notes.txt'), 'not mine', 'utf8')
+
+    store.prune([])
+
+    expect(existsSync(join(dir, 'scrollback', 'notes.txt'))).toBe(true)
+  })
+
+  it('prunes nothing before anything has been written', () => {
+    expect(() => store.prune(['a'])).not.toThrow()
+  })
+
+  it('keeps a hand-edited pane id inside its own directory', () => {
+    store.write('../../escaped', 'nowhere but here')
+
+    expect(existsSync(join(dir, 'scrollback', '.._.._escaped.log'))).toBe(true)
+    expect(store.read('../../escaped')).toBe('nowhere but here')
   })
 })
 

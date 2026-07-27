@@ -4,6 +4,7 @@ import * as nodePty from '@lydell/node-pty'
 import type { IPty } from '@lydell/node-pty'
 import type { EnsureResult, PaneSpec, PaneStatus } from '@shared/types'
 import { shellCommandLine } from './profiles'
+import type { ScrollbackStore } from './scrollback'
 import { shellEnv } from './shell-env'
 
 /** How much output we keep per pane so a reloaded window can be repainted. */
@@ -14,6 +15,12 @@ const FLUSH_MS = 8
 export const DEFAULT_QUIET_MS = 2500
 /** Floor for the setting: a quiet window near zero would fire on every burst. */
 const MIN_QUIET_MS = 50
+/**
+ * How much output a pane may produce before its tail is written to disk again.
+ * Quitting flushes every pane, so this is only the ceiling on what a crash or a
+ * kill -9 costs you.
+ */
+const PERSIST_MS = 30_000
 
 interface Session {
   id: string
@@ -31,6 +38,9 @@ interface Session {
   /** The process is alive but has said nothing for a while: it wants you. */
   quiet: boolean
   quietTimer: NodeJS.Timeout | null
+  /** The previous run's tail, while it is still the head of `chunks`. */
+  restored: string | null
+  persistTimer: NodeJS.Timeout | null
 }
 
 type Sender = (channel: string, payload: unknown) => void
@@ -44,11 +54,16 @@ export class PtyManager {
   /**
    * `quietMs` is read per timer rather than captured, because the user owns it:
    * it lives in the renderer's settings and can change while panes are running.
+   *
+   * `scrollback` is optional because only the app knows where user data lives —
+   * a manager without one keeps everything in memory, which is what every pane
+   * did before panes outlived the process.
    */
   constructor(
     private send: Sender,
     private spawn: Spawn = nodePty.spawn,
-    private quietMs: () => number = () => DEFAULT_QUIET_MS
+    private quietMs: () => number = () => DEFAULT_QUIET_MS,
+    private scrollback: ScrollbackStore | null = null
   ) {}
 
   /**
@@ -72,7 +87,8 @@ export class PtyManager {
         status: existing.status,
         pid: existing.proc?.pid,
         exitCode: existing.exitCode,
-        replay: existing.chunks.join('')
+        replay: existing.chunks.join(''),
+        previousSession: existing.restored !== null
       }
     }
 
@@ -89,9 +105,12 @@ export class PtyManager {
       flushTimer: null,
       lastDataAt: 0,
       quiet: false,
-      quietTimer: null
+      quietTimer: null,
+      restored: null,
+      persistTimer: null
     }
     this.sessions.set(spec.id, session)
+    this.seed(session)
 
     const { command, args } = resolveCommand(spec)
     const cwd = resolveCwd(spec.cwd)
@@ -130,7 +149,14 @@ export class PtyManager {
         this.send('pty:exit', { id: session.id, exitCode, signal })
       })
 
-      return { created: true, status: 'running', pid: proc.pid, exitCode: null, replay: session.chunks.join('') }
+      return {
+        created: true,
+        status: 'running',
+        pid: proc.pid,
+        exitCode: null,
+        replay: session.chunks.join(''),
+        previousSession: session.restored !== null
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       session.status = 'exited'
@@ -141,6 +167,7 @@ export class PtyManager {
         status: 'exited',
         exitCode: -1,
         replay: session.chunks.join(''),
+        previousSession: session.restored !== null,
         error: message
       }
     }
@@ -173,17 +200,39 @@ export class PtyManager {
     }
   }
 
-  /** Kills the process and forgets its scrollback. */
+  /** Kills the process and forgets its scrollback, on disk as well as in memory. */
   dispose(id: string): void {
     const session = this.sessions.get(id)
     if (!session) return
+    // The pane is being closed or restarted. Either way the next thing to hold
+    // this id is not owed the last one's output, and nobody is coming back for
+    // a log whose pane no longer exists.
+    this.scrollback?.remove(id)
+    this.teardown(session)
+  }
+
+  /**
+   * Shutting down rather than closing up: every pane here is in the state file
+   * and will be asked for again next launch, so its tail goes to disk on the
+   * way out. That is the one thing this deliberately does not share with
+   * `dispose`, which is called when a pane is *gone*.
+   */
+  disposeAll(): void {
+    for (const session of [...this.sessions.values()]) {
+      this.persist(session)
+      this.teardown(session)
+    }
+  }
+
+  private teardown(session: Session): void {
     if (session.flushTimer) clearTimeout(session.flushTimer)
     session.flushTimer = null
     this.clearQuiet(session)
+    this.clearPersist(session)
     // Unregister before killing. The process dies from our SIGHUP a few
     // milliseconds later, and a restart has already claimed the id by then —
     // whatever it reports on the way out is no longer this pane's news.
-    this.sessions.delete(id)
+    this.sessions.delete(session.id)
     const proc = session.proc
     session.proc = null
     try {
@@ -191,10 +240,6 @@ export class PtyManager {
     } catch {
       /* already gone */
     }
-  }
-
-  disposeAll(): void {
-    for (const id of [...this.sessions.keys()]) this.dispose(id)
   }
 
   status(id: string): { status: PaneStatus; exitCode: number | null } | null {
@@ -222,6 +267,23 @@ export class PtyManager {
     return this.sessions.get(session.id) === session
   }
 
+  /**
+   * Puts the last thing this pane said back on screen. It is history and only
+   * that: `status`, `pid` and `exitCode` all belong to the process spawned
+   * below it, so a pane whose agent died overnight comes back showing what it
+   * did and reporting itself exited, not running.
+   */
+  private seed(session: Session): void {
+    const previous = this.scrollback?.read(session.id)
+    if (!previous) return
+    // A tail is cut wherever the limit fell, so it rarely ends on a line
+    // boundary — and the new session should not start halfway through the old
+    // one's last line.
+    const restored = previous.endsWith('\n') ? previous : `${previous}\r\n`
+    session.restored = restored
+    this.record(session, restored)
+  }
+
   private queue(session: Session, data: string): void {
     if (!this.isCurrent(session)) return
     session.lastDataAt = Date.now()
@@ -230,6 +292,7 @@ export class PtyManager {
       this.send('pty:quiet', { id: session.id, quiet: false })
     }
     this.armQuiet(session)
+    this.armPersist(session)
     session.pending.push(data)
     this.record(session, data)
     if (session.flushTimer) return
@@ -260,6 +323,34 @@ export class PtyManager {
     session.quiet = false
   }
 
+  /**
+   * Output is what makes a tail worth keeping, so the clock only runs while a
+   * pane is producing some: one write per PERSIST_MS of activity, and none at
+   * all for a pane sitting at a prompt. Unreferenced because a pane's
+   * scrollback is never a reason to hold the process open for half a minute.
+   */
+  private armPersist(session: Session): void {
+    if (session.persistTimer || !this.scrollback) return
+    session.persistTimer = setTimeout(() => {
+      session.persistTimer = null
+      // A disposed pane's log has already been deleted; writing here would put
+      // a closed pane's output back on disk with nobody left to clear it.
+      if (!this.isCurrent(session)) return
+      this.persist(session)
+    }, PERSIST_MS)
+    session.persistTimer.unref?.()
+  }
+
+  private clearPersist(session: Session): void {
+    if (session.persistTimer) clearTimeout(session.persistTimer)
+    session.persistTimer = null
+  }
+
+  private persist(session: Session): void {
+    if (!session.chunkLen) return
+    this.scrollback?.write(session.id, session.chunks.join(''))
+  }
+
   private flush(session: Session): void {
     if (session.flushTimer) {
       clearTimeout(session.flushTimer)
@@ -282,7 +373,11 @@ export class PtyManager {
     session.chunks.push(data)
     session.chunkLen += data.length
     while (session.chunkLen > REPLAY_LIMIT && session.chunks.length > 1) {
-      session.chunkLen -= session.chunks.shift()!.length
+      const dropped = session.chunks.shift()!
+      session.chunkLen -= dropped.length
+      // Once this run has produced enough to push the old one out of the
+      // buffer there is no previous session left on screen to rule off.
+      if (dropped === session.restored) session.restored = null
     }
   }
 }

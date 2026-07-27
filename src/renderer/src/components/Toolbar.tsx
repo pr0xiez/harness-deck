@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { isLive, useDeck, type DeckWorkspace } from '../store'
 import { Icon } from './Icon'
 import { MicButton } from './MicButton'
@@ -17,6 +17,8 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
   const ui = useDeck((s) => s.ui)
   const setUi = useDeck((s) => s.setUi)
   const home = useDeck((s) => s.info?.homeDir ?? '')
+  const repo = useDeck((s) => s.repos[workspace.cwd] ?? null)
+  const refreshRepo = useDeck((s) => s.refreshRepo)
   const menuOpen = ui.profileMenu
   const setMenuOpen = (open: boolean): void => setUi({ profileMenu: open })
   const [editingName, setEditingName] = useState(false)
@@ -25,6 +27,25 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
     home && workspace.cwd.startsWith(home) ? `~${workspace.cwd.slice(home.length)}` : workspace.cwd
   // The chip says "live", and a pane that has gone quiet still has a process.
   const running = workspace.panes.filter(isLive).length
+
+  // Not a timer. A branch and a dirty count only change when something
+  // happened, and the two moments that mean something happened are the window
+  // coming back to you and an agent falling silent — which, for an agent, is
+  // usually the moment it stopped writing files.
+  useEffect(() => {
+    const read = (): void => void refreshRepo(workspace.cwd)
+    read()
+    const offFocus = api.window.onFocusChange((focused) => {
+      if (focused) read()
+    })
+    const offQuiet = api.pty.onQuiet(({ quiet }) => {
+      if (quiet) read()
+    })
+    return () => {
+      offFocus()
+      offQuiet()
+    }
+  }, [workspace.cwd, refreshRepo])
 
   return (
     <div className="toolbar" style={{ ['--ws-accent' as string]: workspace.accent }}>
@@ -62,6 +83,20 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
           <Icon name="folder" size={12} />
           <span>{displayCwd || 'choose folder…'}</span>
         </button>
+
+        {/* Nothing at all when the folder is not a repo — no empty chip to explain. */}
+        {repo ? (
+          <span
+            className="repo-chip"
+            title={`${repo.root}\nOn ${repo.branch}${
+              repo.dirty ? ` · ${repo.dirty} uncommitted` : ' · nothing uncommitted'
+            }${repo.worktreeOf ? `\nA worktree of ${repo.worktreeOf}` : ''}`}
+          >
+            <Icon name="branch" size={12} />
+            <span className="repo-branch">{repo.branch}</span>
+            {repo.dirty ? <span className="dirty">{repo.dirty}</span> : null}
+          </span>
+        ) : null}
 
         <span className="pane-count">
           {workspace.panes.length} pane{workspace.panes.length === 1 ? '' : 's'}

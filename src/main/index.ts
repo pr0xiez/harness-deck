@@ -25,6 +25,7 @@ import type {
   VoiceProvider,
   WorktreeRequest
 } from '@shared/types'
+import { addWorktree, diffStat, info as repoInfo, removeWorktree } from './git'
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -447,17 +448,10 @@ function registerIpc(): void {
     return detectProfiles()
   })
 
-  // Stubs until HD-2 lands src/main/git.ts.
-  ipcMain.handle('git:info', (_e, _dir: string) => null)
-  ipcMain.handle('git:addWorktree', (_e, _req: WorktreeRequest) => ({
-    ok: false,
-    error: 'not implemented'
-  }))
-  ipcMain.handle('git:removeWorktree', (_e, _path: string) => ({
-    ok: false,
-    error: 'not implemented'
-  }))
-  ipcMain.handle('git:diffStat', (_e, _dir: string) => '')
+  ipcMain.handle('git:info', (_e, dir: string) => repoInfo(dir))
+  ipcMain.handle('git:addWorktree', (_e, req: WorktreeRequest) => addWorktree(req))
+  ipcMain.handle('git:removeWorktree', (_e, path: string) => removeWorktree(path))
+  ipcMain.handle('git:diffStat', (_e, dir: string) => diffStat(dir))
 
   ipcMain.handle('update:state', () => currentState())
   ipcMain.handle('update:check', () => checkNow())

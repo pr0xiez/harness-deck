@@ -27,6 +27,7 @@ export type IconName =
   | 'stop'
   | 'copy'
   | 'pencil'
+  | 'branch'
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   search: (
@@ -125,6 +126,14 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     <>
       <path d="M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" />
       <path d="M9.6 4.2 11.8 6.4" />
+    </>
+  ),
+  branch: (
+    <>
+      <circle cx="4.5" cy="3.8" r="1.8" />
+      <circle cx="4.5" cy="12.2" r="1.8" />
+      <circle cx="11.5" cy="5.6" r="1.8" />
+      <path d="M4.5 5.6v4.8M9.7 6.6c-.9 2-2.6 2.6-5.2 2.8" />
     </>
   )
 }

@@ -22,6 +22,9 @@ export interface Profile {
   detail?: string
   /** Run the command line through an interactive login shell. */
   viaShell?: boolean
+  /** Saved launchers only: the folder and environment the user pinned to it. */
+  cwd?: string
+  env?: Record<string, string>
 }
 
 /** Everything needed to (re)spawn a pane's process. */

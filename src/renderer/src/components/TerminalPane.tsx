@@ -64,6 +64,7 @@ export function TerminalPane({
   const closePane = useDeck((s) => s.closePane)
   const requestClosePane = useDeck((s) => s.requestClosePane)
   const toggleZoom = useDeck((s) => s.toggleZoom)
+  const setUi = useDeck((s) => s.setUi)
   const zoomed = useDeck((s) => s.workspaces.find((w) => w.id === workspaceId)?.zoomedPaneId === pane.id)
 
   const title = pane.name || pane.processTitle || profile?.name || pane.command || 'terminal'
@@ -330,6 +331,13 @@ export function TerminalPane({
             onClick={() => toggleZoom(workspaceId, paneId)}
           >
             <Icon name={zoomed ? 'minimize' : 'maximize'} />
+          </button>
+          <button
+            className="icon-btn"
+            title="Edit pane — command, folder, environment"
+            onClick={() => setUi({ paneDialogFor: paneId })}
+          >
+            <Icon name="pencil" />
           </button>
           <button
             className="icon-btn"

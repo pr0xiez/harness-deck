@@ -24,17 +24,20 @@ export function loadState(): PersistedState | null {
 }
 
 /** Writes via a temp file + rename so a crash mid-write can't corrupt state. */
-export function saveState(state: PersistedState): void {
-  const file = statePath()
+export function writeJsonAtomic(file: string, value: unknown): void {
   try {
     mkdirSync(dirname(file), { recursive: true })
     if (existsSync(file)) copyFileSync(file, `${file}.bak`)
     const tmp = `${file}.tmp`
-    writeFileSync(tmp, JSON.stringify({ ...state, version: STATE_VERSION }, null, 2), 'utf8')
+    writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8')
     renameSync(tmp, file)
   } catch (err) {
-    console.error('[store] failed to save state:', err)
+    console.error(`[store] failed to write ${file}:`, err)
   }
+}
+
+export function saveState(state: PersistedState): void {
+  writeJsonAtomic(statePath(), { ...state, version: STATE_VERSION })
 }
 
 export function stateLocation(): string {

@@ -129,7 +129,8 @@ export function CommandPalette(): React.JSX.Element {
           label: `${profile.name}${profile.available ? '' : ' (not installed)'}`,
           hint: profile.kind === 'agent' ? 'agent' : profile.kind,
           run: () => {
-            if (profile.kind === 'custom') state.setUi({ profileMenu: true })
+            // The bare `custom` entry has no command line yet — it needs the dialog.
+            if (profile.id === 'custom') state.setUi({ profileMenu: true })
             else state.addPane(workspace.id, profile)
           }
         })
@@ -176,6 +177,13 @@ export function CommandPalette(): React.JSX.Element {
         }
 
         list.push(
+          {
+            id: 'pane:edit',
+            group: 'Active pane',
+            label: 'Edit pane…',
+            hint: 'command, folder, environment',
+            run: () => state.setUi({ paneDialogFor: activePane.id })
+          },
           {
             id: 'pane:restart',
             group: 'Active pane',

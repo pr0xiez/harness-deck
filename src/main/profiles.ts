@@ -3,6 +3,7 @@ import { accessSync, constants, existsSync } from 'node:fs'
 import { basename, delimiter, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Profile } from '@shared/types'
+import { loadCustomProfiles } from './profiles-store'
 import { defaultShell, shellEnv } from './shell-env'
 
 interface AgentDef {
@@ -284,6 +285,30 @@ export async function detectProfiles(): Promise<Profile[]> {
         })
       }
     }
+  }
+
+  // Saved launchers ride in the same list as the detected ones, so the profile
+  // menu, the palette and the quick picks pick them up without knowing they
+  // came from disk. A command line's first word decides availability, the same
+  // question `findExecutable` answers for everything else here.
+  for (const saved of loadCustomProfiles()) {
+    const first = saved.command.trim().split(/\s+/)[0] ?? ''
+    const found = findExecutable(first, env)
+    const cmdline = [saved.command, ...saved.args].join(' ').trim()
+    profiles.push({
+      id: saved.id,
+      name: saved.name,
+      command: saved.command,
+      args: [...saved.args],
+      kind: 'custom',
+      icon: saved.icon,
+      accent: saved.accent,
+      available: Boolean(found),
+      detail: found ? cmdline : `${first} is not on PATH — ${cmdline}`,
+      ...(saved.viaShell ? { viaShell: true } : {}),
+      ...(saved.cwd ? { cwd: saved.cwd } : {}),
+      ...(saved.env ? { env: saved.env } : {})
+    })
   }
 
   profiles.push({

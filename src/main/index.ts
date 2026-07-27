@@ -25,6 +25,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { detectProfiles } from './profiles'
+import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
@@ -415,10 +416,17 @@ function registerIpc(): void {
   ipcMain.handle('state:location', () => stateLocation())
 
   ipcMain.handle('profiles:list', () => detectProfiles())
-  // Stubs until HD-4 lands the store behind them: saving changes nothing, so a
-  // caller written against the real thing still gets a usable list back.
-  ipcMain.handle('profiles:saveCustom', (_e, _profile: SavedProfile) => detectProfiles())
-  ipcMain.handle('profiles:removeCustom', (_e, _id: string) => detectProfiles())
+  // Both hand back the whole merged list: the renderer keeps one array of
+  // profiles, so a save that returned only the saved ones would leave it to
+  // re-merge what detectProfiles() has already done.
+  ipcMain.handle('profiles:saveCustom', (_e, profile: SavedProfile) => {
+    saveCustomProfile(profile)
+    return detectProfiles()
+  })
+  ipcMain.handle('profiles:removeCustom', (_e, id: string) => {
+    removeCustomProfile(id)
+    return detectProfiles()
+  })
 
   // Stubs until HD-2 lands src/main/git.ts.
   ipcMain.handle('git:info', (_e, _dir: string) => null)

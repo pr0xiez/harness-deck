@@ -26,6 +26,7 @@ export type IconName =
   | 'mic'
   | 'stop'
   | 'copy'
+  | 'pencil'
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   search: (
@@ -118,6 +119,12 @@ const PATHS: Record<IconName, React.JSX.Element> = {
     <>
       <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
       <path d="M10.5 3.5h-8v8" />
+    </>
+  ),
+  pencil: (
+    <>
+      <path d="M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" />
+      <path d="M9.6 4.2 11.8 6.4" />
     </>
   )
 }

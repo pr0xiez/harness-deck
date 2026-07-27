@@ -59,6 +59,10 @@ jobs:
 
       - run: npm run typecheck
 
+      # Pure node, no display needed — these run the PtyManager against a stub
+      # pty to pin down the session lifecycle (restart races in particular).
+      - run: npm test
+
       # npm resolves node-pty's per-platform prebuilds against the host, so an
       # Apple Silicon runner never fetches the Intel one and the x64 dmg would
       # ship with no pty at all. Pull it in explicitly. Drop this step (and x64
@@ -75,6 +79,28 @@ jobs:
         run: npm i --no-save --force --os=darwin --cpu=x64 @lydell/node-pty-darwin-x64@1.2.0-beta.12
 
       - run: npm run build
+
+      # Boots the app for real and asserts it works: the renderer mounts, the
+      # chrome renders, a pane spawns a process and gets its output back, and a
+      # restarted pane survives the old process dying. Packaging succeeding says
+      # nothing about any of that — a missing node-pty prebuild packages
+      # perfectly and fails on the first pane.
+      #
+      # It needs a window server, so on a self-hosted Mac the runner has to be a
+      # LaunchAgent in a logged-in session rather than a daemon. If that is not
+      # possible there, restrict this step with `if: runner.os == 'Windows'` —
+      # the unit tests above still run everywhere.
+      - name: Smoke test
+        run: npx electron . --smoke --smoke-json=smoke-${{ matrix.label }}.json
+
+      - name: Upload the smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.label }}
+          path: smoke-${{ matrix.label }}.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       # Never electron-builder's own publisher, on either path: both platform
       # jobs would target one release at the same moment, and it has no way to

@@ -26,10 +26,16 @@ interface Session {
 
 type Sender = (channel: string, payload: unknown) => void
 
+/** Injectable so tests can drive a session's lifecycle without a real process. */
+export type Spawn = typeof nodePty.spawn
+
 export class PtyManager {
   private sessions = new Map<string, Session>()
 
-  constructor(private send: Sender) {}
+  constructor(
+    private send: Sender,
+    private spawn: Spawn = nodePty.spawn
+  ) {}
 
   /**
    * Attaches to a pane's process, spawning it if needed. Safe to call again
@@ -73,7 +79,7 @@ export class PtyManager {
     }
 
     try {
-      const proc = nodePty.spawn(command, args, {
+      const proc = this.spawn(command, args, {
         name: 'xterm-256color',
         cols: session.cols,
         rows: session.rows,

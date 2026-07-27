@@ -68,6 +68,8 @@ Other scripts:
 npm run build     # bundle main, preload and renderer into out/
 npm start         # run the bundled app
 npm run typecheck # tsc over both projects
+npm test          # unit tests (vitest)
+npm run smoke     # build, then boot the app and assert it works
 npm run package   # build installers into release/ (electron-builder)
 npm run release   # bump the version, package, and notify a running copy
 ```
@@ -210,6 +212,8 @@ src/
     store.ts       atomic JSON persistence
     updater.ts     watches the release channel, runs the installer
     voice.ts       transcription requests + API key storage
+    smoke.ts       --smoke: boot the app and assert it works
+    pty.test.ts    session lifecycle, against a stub pty
   preload/       contextBridge API (the renderer never touches Node)
   renderer/      React UI
     store.ts       zustand state + debounced persistence
@@ -223,6 +227,42 @@ scripts/
 
 Processes live in the main process and are addressed by pane id, so a window
 reload — or React remounting a pane — never kills a running agent.
+
+## Testing
+
+Two layers, both run in CI on every push and pull request.
+
+```bash
+npm test          # unit tests, plain node, ~100ms
+npm run smoke     # build, boot the app for real, assert, exit 0/1
+```
+
+**Unit tests** (`src/main/*.test.ts`, vitest) cover the pane session lifecycle.
+`PtyManager` takes its `spawn` as a constructor argument, so the tests drive a
+stub pty and can fire `onData` and `onExit` at exactly the moment that matters —
+which is the only way to pin down a restart race deterministically. They run in
+plain node, so nothing under test may import `electron`.
+
+**The smoke test** (`--smoke`) is the one that says whether the app actually
+runs. It boots the real thing and checks that the renderer mounts past the
+harness-detection screen, the window is visible, the chrome renders, a pane
+spawns a process and gets its output back, a restarted pane survives the old
+process dying, and a missing binary is reported rather than thrown. It prints a
+JSON report and sets the exit code; `--smoke-json=<file>` also writes it out.
+
+A smoke run gets its own user-data directory under the temp folder, so it can
+neither read nor damage a real session's layout, and its single-instance lock is
+separate — it can run while the app is open.
+
+That last one matters more than it looks: a build with no working `node-pty`
+packages perfectly, installs perfectly, and fails on the first pane. Typecheck
+and a successful `electron-builder` run cannot see it. The smoke test can,
+because it starts a real process through a real pty.
+
+The smoke test needs a window server. On the self-hosted Mac that means the
+runner has to be a LaunchAgent in a logged-in session rather than a daemon; if
+that isn't possible, restrict the step to Windows in `build.yml` — the unit
+tests still run on both.
 
 ## Releasing and updating
 
@@ -327,9 +367,9 @@ the updater reads the local manifest, but wiring the updater to releases means
 restoring `--publish always` on the tag path too.
 
 Pull requests run the same build on both platforms and keep nothing — a PR proves
-the installers can be built, then discards them. There are no tests in this repo —
-`npm run typecheck` and a successful package are the whole gate, and neither
-says anything about whether the app actually runs.
+the installers can be built, then discards them. The gate before packaging is
+`npm run typecheck`, `npm test` and the smoke test described under
+[Testing](#testing); the smoke report is kept as an artifact for a week.
 
 This is a distribution channel, not a second update channel — the in-app updater
 above reads the local `update.json` and knows nothing about GitHub releases.
@@ -345,6 +385,9 @@ secrets and drop that line to sign for real.
 ```bash
 # what the app can actually find, as JSON
 npx electron . --dump-profiles
+
+# boot the app, assert it works, print a JSON report, exit 0 or 1
+npx electron . --smoke
 
 # render the window to a PNG (optionally after pressing chords, in order)
 npx electron . --capture=shot.png --capture-delay=8000 \

@@ -221,6 +221,22 @@ export interface SavedProfile {
   viaShell?: boolean
 }
 
+/** Text on its way to a file the user picks — a pane transcript today. See HD-8. */
+export interface SaveTextRequest {
+  /** Pre-filled in the dialog; the user is free to rename it. */
+  defaultName: string
+  text: string
+}
+
+export interface SaveTextResult {
+  ok: boolean
+  /** Where it landed, when it landed. */
+  path?: string
+  /** The user dismissed the dialog — not a failure, and nothing to report. */
+  canceled?: boolean
+  error?: string
+}
+
 /** What a waiting release tells the user about itself. */
 export interface UpdateInfo {
   version: string

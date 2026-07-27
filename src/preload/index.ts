@@ -12,6 +12,8 @@ import type {
   PtyQuietEvent,
   RepoInfo,
   SavedProfile,
+  SaveTextRequest,
+  SaveTextResult,
   TranscribeRequest,
   TranscribeResult,
   UpdateState,
@@ -83,8 +85,13 @@ const api = {
     onExit: (handler: (event: PtyExitEvent) => void): (() => void) => subscribe('pty:exit', handler),
     onQuiet: (handler: (event: PtyQuietEvent) => void): (() => void) =>
       subscribe('pty:quiet', handler),
-    /** The pane's replay buffer as one string — the last ~512 KB it produced. */
-    transcript: (id: string): Promise<string> => ipcRenderer.invoke('pty:transcript', id)
+    /**
+     * The pane's replay buffer as one string — the last ~512 KB it produced.
+     * `strip` takes the escape sequences out, for somewhere that is not a
+     * terminal; leave it off to get a stream that replays.
+     */
+    transcript: (id: string, strip = false): Promise<string> =>
+      ipcRenderer.invoke('pty:transcript', id, strip)
   },
 
   pickDirectory: (current?: string): Promise<string | null> =>
@@ -95,6 +102,9 @@ const api = {
     detail?: string
     confirmLabel?: string
   }): Promise<boolean> => ipcRenderer.invoke('dialog:confirm', options),
+  /** Save-as dialog and the write behind it, so the renderer never holds a handle. */
+  saveText: (req: SaveTextRequest): Promise<SaveTextResult> =>
+    ipcRenderer.invoke('dialog:saveText', req),
 
   clipboard: {
     read: (): Promise<string> => ipcRenderer.invoke('clipboard:read'),

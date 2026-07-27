@@ -202,6 +202,16 @@ export class PtyManager {
     return session ? { status: session.status, exitCode: session.exitCode } : null
   }
 
+  /**
+   * Everything the pane has produced that we still hold — the same buffer a
+   * reloaded window replays, so it is capped at REPLAY_LIMIT. A pane that never
+   * started has nothing to say rather than being an error: the caller is a menu
+   * command, and refusing to run on an idle pane would be the surprise.
+   */
+  transcript(id: string): string {
+    return this.sessions.get(id)?.chunks.join('') ?? ''
+  }
+
   /** Ids of every live process, used to warn before quitting. */
   runningIds(): string[] {
     return [...this.sessions.values()].filter((s) => s.status === 'running').map((s) => s.id)
@@ -309,6 +319,35 @@ function buildEnv(spec: PaneSpec, cwd: string): NodeJS.ProcessEnv {
     if (!/(^|:)HD_CWD\//.test(env.WSLENV || '')) env.WSLENV = `${existing}HD_CWD/p`
   }
   return env
+}
+
+/**
+ * Turns a transcript into something worth pasting into an issue. A terminal
+ * stream is mostly instructions — colour, cursor moves, title sets — and only
+ * incidentally text; a bug report wants the text. The raw stream stays
+ * available through `transcript()` for anyone replaying it into a terminal.
+ *
+ * Hand-rolled rather than pulled in: the grammar is four shapes wide and this
+ * app ships no runtime dependency it can avoid.
+ */
+export function stripAnsi(text: string): string {
+  return (
+    text
+      // OSC, DCS, SOS, PM, APC — an introducer and a string that runs to BEL or
+      // ST. `$` closes the last one because a 512 KB window can be cut mid-escape.
+      .replace(/\x1b[\]PX^_][\s\S]*?(?:\x07|\x1b\\|$)/g, '')
+      // CSI: parameter bytes, then intermediates, then a final byte in @-~.
+      .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, '')
+      // What is left: an escape with intermediates (charset selects) or without
+      // (keypad modes, RI, a stranded ST).
+      .replace(/\x1b(?:[ -\/]+[0-~]|[0-~])/g, '')
+      // A pty ends lines with CRLF and redraws one with a bare CR. Both become
+      // newlines: gluing a redrawn line onto the line it replaced reads as
+      // garbage, and losing the frames entirely hides that a redraw happened.
+      .replace(/\r\n?/g, '\n')
+      // What is left of the C0 set — bells, backspaces, the odd stray NUL.
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+  )
 }
 
 const dim = (text: string): string => `\x1b[2m${text}\x1b[0m`

@@ -18,12 +18,14 @@ import type {
   PaneSpec,
   PersistedState,
   SavedProfile,
+  SaveTextRequest,
+  SaveTextResult,
   TranscribeRequest,
   VoiceProvider,
   WorktreeRequest
 } from '@shared/types'
 import { detectProfiles } from './profiles'
-import { DEFAULT_QUIET_MS, PtyManager } from './pty'
+import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
@@ -161,6 +163,15 @@ function setBadge(count: number): void {
     return
   }
   app.setBadgeCount(value)
+}
+
+/** Where a save dialog opens. Downloads is not guaranteed to resolve on Linux. */
+function saveDir(): string {
+  try {
+    return app.getPath('downloads')
+  } catch {
+    return homedir()
+  }
 }
 
 function send(channel: string, payload: unknown): void {
@@ -436,8 +447,10 @@ function registerIpc(): void {
   ipcMain.on('pty:dispose', (_e, id: string) => ptys!.dispose(id))
   ipcMain.handle('pty:status', (_e, id: string) => ptys!.status(id))
   ipcMain.handle('pty:running', () => ptys!.runningIds())
-  // Stub until HD-8 lands the accessor on PtyManager.
-  ipcMain.handle('pty:transcript', (_e, _id: string) => '')
+  ipcMain.handle('pty:transcript', (_e, id: string, strip?: boolean) => {
+    const text = ptys!.transcript(id)
+    return strip ? stripAnsi(text) : text
+  })
 
   ipcMain.handle('dialog:pickDirectory', async (_e, current?: string) => {
     if (!mainWindow) return null
@@ -462,6 +475,26 @@ function registerIpc(): void {
       noLink: true
     })
     return response === 0
+  })
+
+  ipcMain.handle('dialog:saveText', async (_e, req: SaveTextRequest): Promise<SaveTextResult> => {
+    if (!mainWindow) return { ok: false, error: 'No window to hang the dialog off.' }
+    try {
+      const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+        title: 'Save transcript',
+        defaultPath: join(saveDir(), req.defaultName),
+        filters: [
+          { name: 'Text', extensions: ['txt'] },
+          { name: 'All files', extensions: ['*'] }
+        ]
+      })
+      if (canceled || !filePath) return { ok: false, canceled: true }
+      // An empty string is a legitimate transcript — a pane that never ran.
+      writeFileSync(filePath, req.text ?? '', 'utf8')
+      return { ok: true, path: filePath }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 
   ipcMain.handle('voice:keyState', (_e, provider: VoiceProvider) => keyState(provider))

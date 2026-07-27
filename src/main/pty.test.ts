@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import type { IPty } from '@lydell/node-pty'
 import type { PaneSpec } from '@shared/types'
-import { PtyManager, type Spawn } from './pty'
+import { PtyManager, stripAnsi, type Spawn } from './pty'
 
 /** Matches FLUSH_MS in pty.ts — output is coalesced into one message per tick. */
 const FLUSH_MS = 8
@@ -315,6 +315,82 @@ describe('quiet', () => {
     vi.advanceTimersByTime(QUIET_MS)
 
     expect(quietFor('a')).toEqual([true, true])
+  })
+})
+
+describe('transcript', () => {
+  it('hands back everything the pane has produced, unflushed output included', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('first ')
+    spawned[0].emit('second')
+
+    expect(mgr.transcript('a')).toBe('first second')
+  })
+
+  it('keeps the tail once the pane has scrolled past the replay limit', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    const chunk = 'x'.repeat(64 * 1024)
+    for (let i = 0; i < 20; i++) spawned[0].emit(chunk)
+    spawned[0].emit('LATEST')
+
+    const text = mgr.transcript('a')
+    expect(text.length).toBeLessThanOrEqual(REPLAY_LIMIT)
+    expect(text.endsWith('LATEST')).toBe(true)
+  })
+
+  it('is empty for a pane that never started, rather than an error', () => {
+    const { mgr } = harness()
+
+    expect(mgr.transcript('ghost')).toBe('')
+  })
+
+  it('is empty again after the pane is disposed', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('output from the first run')
+    mgr.dispose('a')
+
+    expect(mgr.transcript('a')).toBe('')
+  })
+})
+
+describe('stripAnsi', () => {
+  it('leaves text that was never a terminal stream alone', () => {
+    expect(stripAnsi('plain\nlines\there')).toBe('plain\nlines\there')
+  })
+
+  it('takes out colour without touching what it coloured', () => {
+    expect(stripAnsi('\x1b[31mred\x1b[0m and \x1b[1;32mbold green\x1b[0m')).toBe(
+      'red and bold green'
+    )
+  })
+
+  it('takes out cursor moves and screen clears', () => {
+    expect(stripAnsi('\x1b[2J\x1b[H\x1b[10;5Hhere\x1b[K')).toBe('here')
+  })
+
+  it('takes out an OSC title and stops at its terminator', () => {
+    expect(stripAnsi('\x1b]0;claude — /repo\x07prompt> ')).toBe('prompt> ')
+    expect(stripAnsi('\x1b]0;title\x1b\\after')).toBe('after')
+  })
+
+  it('drops an escape the 512 KB window cut in half', () => {
+    expect(stripAnsi('done\x1b]0;a title with no terminator')).toBe('done')
+  })
+
+  it('turns a pty line ending into a newline, and a redraw into its own line', () => {
+    expect(stripAnsi('one\r\ntwo\r\n')).toBe('one\ntwo\n')
+    expect(stripAnsi('50%\r100%')).toBe('50%\n100%')
+  })
+
+  it('drops the bell rather than leaving a control byte in a pasted transcript', () => {
+    expect(stripAnsi('ding\x07 done')).toBe('ding done')
+  })
+
+  it('survives a stream that is nothing but escapes', () => {
+    expect(stripAnsi('\x1b[?2004h\x1b[?25l\x1b(B\x1b[m')).toBe('')
   })
 })
 

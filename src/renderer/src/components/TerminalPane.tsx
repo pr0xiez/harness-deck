@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { Profile } from '@shared/types'
 import { useDeck, type PaneView } from '../store'
+import { decideRestart, RESTART_CAP, type RestartDecision } from '../restart'
 import { registerTerminal, unregisterTerminal, type TerminalHandle } from '../terminals'
 import { terminalTheme } from '../theme'
 import { PaneSearch } from './PaneSearch'
@@ -31,6 +32,13 @@ interface Props {
   index: number
   paneCount: number
 }
+
+/**
+ * What the lock promises, in the one sentence the user gets to read. Anything
+ * that reads the pane — scrolling, selecting, copying, the transcript — is
+ * untouched; the lock is about bytes reaching the process.
+ */
+const LOCK_HINT = 'Read-only: typing, paste, broadcast and dictation are refused'
 
 /** Reserved for the app: xterm must not swallow these. */
 function isAppShortcut(event: KeyboardEvent): boolean {
@@ -61,8 +69,14 @@ export function TerminalPane({
   const hostRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<TerminalHandle | null>(null)
   const spawnedRef = useRef(false)
+  // What the reset rule measures against. The mount rather than the spawn: the
+  // two happen together for a pane that is starting, and a pane the window is
+  // only now re-attaching to has been up longer than this says — which costs it
+  // nothing but a slower return of its restart budget.
+  const runStartedAt = useRef(Date.now())
   const [searchOpen, setSearchOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [crashPlan, setCrashPlan] = useState<RestartDecision | null>(null)
   const settings = useDeck((s) => s.settings)
   const updatePane = useDeck((s) => s.updatePane)
   const setPaneStatus = useDeck((s) => s.setPaneStatus)
@@ -76,6 +90,12 @@ export function TerminalPane({
 
   const title = pane.name || pane.processTitle || profile?.name || pane.command || 'terminal'
   const paneId = pane.id
+  const autoRestart = Boolean(pane.autoRestart)
+  const locked = Boolean(pane.readOnly)
+  // The terminal's handlers outlive the render that built them, so the lock is
+  // read through a ref rather than the closure they captured.
+  const lockedRef = useRef(locked)
+  lockedRef.current = locked
 
   // One terminal per pane per epoch — a restart bumps the epoch and rebuilds it.
   useEffect(() => {
@@ -86,9 +106,11 @@ export function TerminalPane({
       allowProposedApi: true,
       fontSize: settings.fontSize,
       fontFamily: settings.fontFamily,
-      cursorBlink: settings.cursorBlink,
+      // A still cursor is the lock saying so from inside the terminal.
+      cursorBlink: settings.cursorBlink && !lockedRef.current,
       cursorStyle: settings.cursorStyle,
       scrollback: settings.scrollback,
+      disableStdin: lockedRef.current,
       theme: { ...terminalTheme, cursor: accent },
       macOptionIsMeta: true,
       minimumContrastRatio: 1.1,
@@ -149,7 +171,13 @@ export function TerminalPane({
     registerTerminal(handle)
 
     const subs = [
-      term.onData((data) => api.pty.write(paneId, data)),
+      // The chokepoint: everything xterm turns into input arrives here, paste
+      // and drops included, and none of it is a key event the handler below
+      // would ever see.
+      term.onData((data) => {
+        if (lockedRef.current) return
+        api.pty.write(paneId, data)
+      }),
       term.onTitleChange((next) => updatePane(paneId, { processTitle: next.trim() || undefined })),
       term.onBell(() => {
         const state = useDeck.getState()
@@ -168,7 +196,10 @@ export function TerminalPane({
       })
     ]
 
-    term.attachCustomKeyEventHandler((event) => !isAppShortcut(event))
+    // A locked pane hands every key straight past xterm: nothing is sent, and
+    // nothing is acted on locally either. The window's own handler still sees
+    // them, so Ctrl+Shift+C, the palette and the shortcuts keep working.
+    term.attachCustomKeyEventHandler((event) => !lockedRef.current && !isAppShortcut(event))
 
     const observer = new ResizeObserver(() => handle.refit())
     observer.observe(host)
@@ -231,6 +262,33 @@ export function TerminalPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneId, pane.epoch, pane.autostart])
 
+  // Auto-restart, for the panes that asked for it. The timer belongs to this
+  // effect, so an epoch bump — a manual restart, an edit, the pane closing —
+  // takes it down with the component that armed it. Same rule dispose() follows
+  // in pty.ts: whatever the replaced session had pending is no longer news.
+  useEffect(() => {
+    if (!autoRestart || pane.status !== 'exited') {
+      setCrashPlan(null)
+      return
+    }
+    const plan = decideRestart({
+      exitCode: pane.exitCode ?? null,
+      ranMs: Date.now() - runStartedAt.current,
+      attempts: pane.crashRestarts ?? 0
+    })
+    // The bar reads this rather than deciding for itself, so what it says is
+    // what is about to happen.
+    setCrashPlan(plan)
+    if (plan.action !== 'restart') return
+    const timer = window.setTimeout(() => {
+      // restartPane clears the count, because by hand is how a crash loop is
+      // meant to be broken — so the attempt this one spent goes back after it.
+      restartPane(paneId)
+      updatePane(paneId, { crashRestarts: plan.attempt })
+    }, plan.delayMs)
+    return () => window.clearTimeout(timer)
+  }, [paneId, autoRestart, pane.status, pane.exitCode, pane.crashRestarts, restartPane, updatePane])
+
   // Live settings updates without rebuilding the terminal.
   useEffect(() => {
     const handle = handleRef.current
@@ -238,12 +296,23 @@ export function TerminalPane({
     const { term } = handle
     term.options.fontSize = settings.fontSize
     term.options.fontFamily = settings.fontFamily
-    term.options.cursorBlink = settings.cursorBlink
+    term.options.cursorBlink = settings.cursorBlink && !locked
     term.options.cursorStyle = settings.cursorStyle
     term.options.scrollback = settings.scrollback
+    // Belt to the data handler's braces: this stops xterm reading the keyboard
+    // at all, which is also what makes an IME or a drop refuse to compose.
+    term.options.disableStdin = locked
     term.options.theme = { ...terminalTheme, cursor: accent }
     handle.refit()
-  }, [settings.fontSize, settings.fontFamily, settings.cursorBlink, settings.cursorStyle, settings.scrollback, accent])
+  }, [
+    settings.fontSize,
+    settings.fontFamily,
+    settings.cursorBlink,
+    settings.cursorStyle,
+    settings.scrollback,
+    accent,
+    locked
+  ])
 
   // Re-measure when the pane becomes visible again (hidden panes have no size).
   useEffect(() => {
@@ -303,7 +372,9 @@ export function TerminalPane({
 
   return (
     <section
-      className={`pane ${active ? 'is-active' : ''} ${pane.status} ${visible ? '' : 'is-hidden'}`}
+      className={`pane ${active ? 'is-active' : ''} ${pane.status} ${
+        locked ? 'is-locked' : ''
+      } ${visible ? '' : 'is-hidden'}`}
       style={{ ['--pane-accent' as string]: profile?.accent || accent }}
       onMouseDown={focusPane}
       data-pane-id={paneId}
@@ -317,6 +388,14 @@ export function TerminalPane({
         </span>
         <span className={`pane-status ${pane.status}`} title={statusLabel} />
         {showActivity ? <span className="pane-dot" title="new output" /> : null}
+        {/* Says so without being hovered: the point of the lock is knowing
+            which pane not to type into before you have typed into it. */}
+        {locked ? (
+          <span className="pane-lock-chip" title={LOCK_HINT}>
+            <Icon name="lock" size={9} />
+            read-only
+          </span>
+        ) : null}
         <span className="pane-index">{index + 1}</span>
         <div className="pane-actions">
           <button
@@ -339,6 +418,14 @@ export function TerminalPane({
             onClick={() => toggleZoom(workspaceId, paneId)}
           >
             <Icon name={zoomed ? 'minimize' : 'maximize'} />
+          </button>
+          <button
+            className={`icon-btn pane-lock-btn ${locked ? 'on' : ''}`}
+            aria-pressed={locked}
+            title={locked ? 'Let this pane take input again' : LOCK_HINT}
+            onClick={() => updatePane(paneId, { readOnly: !locked })}
+          >
+            <Icon name="lock" />
           </button>
           <button
             className="icon-btn"
@@ -396,7 +483,23 @@ export function TerminalPane({
           <div className="pane-exit-bar">
             <span>
               Process exited{pane.exitCode != null ? ` (code ${pane.exitCode})` : ''}
+              {crashPlan?.action === 'restart'
+                ? ` — restarting, attempt ${crashPlan.attempt} of ${RESTART_CAP}`
+                : crashPlan?.action === 'halt'
+                  ? ` — auto-restart gave up after ${RESTART_CAP} attempts`
+                  : ''}
             </span>
+            <label
+              className="mini-check"
+              title="Start this pane again when its process dies with a non-zero code. A clean exit is you, and is left alone."
+            >
+              <input
+                type="checkbox"
+                checked={autoRestart}
+                onChange={(event) => updatePane(paneId, { autoRestart: event.target.checked })}
+              />
+              auto-restart
+            </label>
             <button className="btn tiny" onClick={() => restartPane(paneId)}>
               Restart
             </button>

@@ -227,6 +227,9 @@ export function App(): React.JSX.Element {
           case 'v': {
             take()
             if (!paneId) return
+            // This one never reaches xterm, so the pane's own refusal cannot
+            // see it — the lock has to be checked here as well.
+            if (workspace?.panes.find((p) => p.id === paneId)?.readOnly) return
             void api.clipboard.read().then((text) => {
               if (text) api.pty.write(paneId, text)
             })

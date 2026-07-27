@@ -99,15 +99,20 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
   const isTarget = (pane: PaneView): boolean => chosen[pane.id] ?? isAgent(pane)
 
   const live = workspace.panes.filter(isLive)
-  const targets = live.filter(isTarget)
+  // A locked pane keeps its chip, so you can see it is being skipped rather
+  // than wonder why the count is one short — but nothing here can select it.
+  // One prompt going to every agent at once is exactly the accident the lock
+  // exists for.
+  const open = live.filter((pane) => !pane.readOnly)
+  const targets = open.filter(isTarget)
 
-  const allOn = live.length > 0 && live.every(isTarget)
-  const agentsOn = live.length > 0 && live.every((pane) => isTarget(pane) === isAgent(pane))
+  const allOn = open.length > 0 && open.every(isTarget)
+  const agentsOn = open.length > 0 && open.every((pane) => isTarget(pane) === isAgent(pane))
 
   /** The one-click cases: everything alive, or just the agents. */
   const quickPick = (mode: 'all' | 'agents'): void => {
     const next = { ...chosen }
-    for (const pane of live) next[pane.id] = mode === 'all' || isAgent(pane)
+    for (const pane of open) next[pane.id] = mode === 'all' || isAgent(pane)
     choose(next)
   }
 
@@ -169,14 +174,21 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
           {live.length ? (
             live.map((pane) => {
               const profile = profiles.find((p) => p.id === pane.profileId)
-              const on = isTarget(pane)
+              const on = !pane.readOnly && isTarget(pane)
               return (
                 <button
                   key={pane.id}
                   className={`target-chip ${on ? 'on' : ''}`}
                   aria-pressed={on}
+                  disabled={pane.readOnly}
                   style={{ ['--badge' as string]: profile?.accent }}
-                  title={on ? 'Included — click to skip this pane' : 'Skipped — click to include it'}
+                  title={
+                    pane.readOnly
+                      ? 'Read-only — unlock the pane to broadcast to it'
+                      : on
+                        ? 'Included — click to skip this pane'
+                        : 'Skipped — click to include it'
+                  }
                   onClick={() => choose({ ...chosen, [pane.id]: !on })}
                 >
                   {profile?.icon ?? '»'} {pane.name || pane.processTitle || profile?.name}

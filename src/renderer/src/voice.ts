@@ -554,6 +554,9 @@ function deliver(target: VoiceTarget, raw: string): void {
       .find((p) => p.id === target.paneId)
     if (!pane) return copyInstead(text, 'That pane is gone')
     if (!isLive(pane)) return copyInstead(text, 'That pane is not running')
+    // Dictating into a build you locked is the same accident as typing into it,
+    // and the words are worth keeping either way.
+    if (pane.readOnly) return copyInstead(text, 'That pane is read-only')
     api.pty.write(target.paneId, text)
     if (voice.submit) window.setTimeout(() => api.pty.write(target.paneId, '\r'), 80)
     getTerminal(target.paneId)?.term.focus()

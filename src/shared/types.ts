@@ -51,6 +51,10 @@ export interface Pane extends PaneSpec {
   activity?: boolean
   /** The process rang the terminal bell. */
   bell?: boolean
+  /** Bring the process back when it dies with a non-zero code. See HD-11. */
+  autoRestart?: boolean
+  /** Refuse everything that would put bytes into this pane's process. See HD-13. */
+  readOnly?: boolean
   /** Set when the pane's cwd is a worktree this app created for it. */
   worktree?: string
 }

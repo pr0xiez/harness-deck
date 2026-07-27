@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useDeck } from '../store'
+import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
 import { Icon } from './Icon'
 
@@ -221,6 +222,24 @@ export function CommandPalette(): React.JSX.Element {
             label: 'Restart process',
             hint: 'Ctrl+Shift+R',
             run: () => state.restartPane(activePane.id)
+          },
+          {
+            id: 'pane:read-only',
+            group: 'Active pane',
+            label: activePane.readOnly
+              ? 'Let this pane take input again'
+              : 'Lock this pane read-only',
+            hint: activePane.readOnly ? 'locked' : 'refuses typing, paste, broadcast, dictation',
+            run: () => state.updatePane(activePane.id, { readOnly: !activePane.readOnly })
+          },
+          {
+            id: 'pane:auto-restart',
+            group: 'Active pane',
+            label: activePane.autoRestart
+              ? 'Stop restarting this pane when it crashes'
+              : 'Restart this pane when it crashes',
+            hint: activePane.autoRestart ? 'on' : `${RESTART_CAP} attempts, then it stops`,
+            run: () => state.updatePane(activePane.id, { autoRestart: !activePane.autoRestart })
           },
           {
             id: 'pane:kill',

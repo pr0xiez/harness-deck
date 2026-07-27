@@ -1,0 +1,113 @@
+name: Build installers
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same ref supersedes an in-flight build.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    # Each installer has to be built on its own platform, so the only choice is
+    # where each half runs. macOS uses a self-hosted Mac — free, and the one
+    # machine that could ever sign and notarise. Windows uses a GitHub-hosted
+    # runner because there is no Windows box registered here; that one is billed
+    # (private repo, and Windows minutes count double).
+    runs-on: ${{ matrix.runner }}
+    # Publishing the installers writes to releases, and this repository leaves
+    # the default GITHUB_TOKEN read-only.
+    permissions:
+      contents: write
+    strategy:
+      # One platform failing shouldn't throw away the other's installers.
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows
+            runner: windows-latest
+          # Self-hosted runners are labelled with their OS automatically, so
+          # this pair routes the job to the Mac. It must be registered as a
+          # runner on this repository.
+          - label: macos
+            runner: [self-hosted, macOS]
+
+    steps:
+      # v5 and up run on Node 24 and need a self-hosted runner on 2.327.1 or
+      # newer — check the Mac's version before bumping these again.
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # A release is named from package.json, not from the tag, so a mismatch
+      # would publish under the wrong version. Written in node to stay shell
+      # agnostic — the Windows runner defaults to PowerShell.
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node -e "const t=process.env.GITHUB_REF_NAME.replace(/^v/,''); const p=require('./package.json').version; if (t!==p) { console.error('tag '+t+' does not match package.json '+p); process.exit(1) }"
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      # npm resolves node-pty's per-platform prebuilds against the host, so an
+      # Apple Silicon runner never fetches the Intel one and the x64 dmg would
+      # ship with no pty at all. Pull it in explicitly. Drop this step (and x64
+      # from electron-builder.yml) if Intel Macs stop being worth supporting.
+      #
+      # --os/--cpu only steer which optional dependencies get resolved; a
+      # package asked for by name is still checked against the real host, so
+      # this is EBADPLATFORM without --force, which is what downgrades that
+      # error to a warning. Both flavours end up in node_modules and asarUnpack
+      # ships both, which is why the arm64 dmg is a few MB heavier than it needs
+      # to be — node-pty picks the right one at runtime.
+      - name: Add the Intel pty prebuild
+        if: runner.os == 'macOS'
+        run: npm i --no-save --force --os=darwin --cpu=x64 @lydell/node-pty-darwin-x64@1.2.0-beta.12
+
+      - run: npm run build
+
+      # Never electron-builder's own publisher, on either path: both platform
+      # jobs would target one release at the same moment, and it has no way to
+      # cope with that. scripts/publish-release.mjs does the same job in a form
+      # that tolerates the race. The cost is that electron-builder no longer
+      # emits its latest*.yml update metadata, which buys nothing today — the
+      # in-app updater reads a local update.json written by scripts/release.mjs
+      # and never looks at GitHub. Wiring the updater to releases means turning
+      # this back to `always` on the tag path as well as changing updater.ts.
+      - name: Package
+        run: npx electron-builder --publish never
+        env:
+          # No Developer ID on the runner: build unsigned rather than pick up
+          # whatever identity happens to be in its keychain. To sign for real,
+          # delete this and add CSC_LINK + CSC_KEY_PASSWORD secrets.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # A `v*` tag cuts a draft release named for the version. Every other build
+      # of main refreshes `latest-main`, a prerelease that always holds the
+      # newest installers — merge, wait, download. Workflow artifacts were the
+      # obvious alternative and are worse for this: they expire after a
+      # fortnight, they arrive wrapped in a second zip, and on a private
+      # repository they consume a storage quota that release assets don't.
+      - name: Publish
+        if: github.event_name != 'pull_request'
+        run: node scripts/publish-release.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Publishing is what would otherwise catch a build that silently produced
+      # nothing, and a pull request doesn't publish, so check for the installer
+      # directly instead.
+      - name: Check the installer exists
+        if: github.event_name == 'pull_request'
+        run: |
+          node -e "const fs=require('fs'); const ext=process.platform==='darwin'?'.dmg':'.exe'; const f=fs.existsSync('release')?fs.readdirSync('release').filter(n=>n.endsWith(ext)):[]; if(!f.length){console.error('no '+ext+' found in release/');process.exit(1)} console.log('built '+f.join(', '))"

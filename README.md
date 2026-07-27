@@ -52,6 +52,7 @@ app offers it in a toast; one click restarts into the new version. See
 ## Requirements
 
 - Node.js 20+ and npm (for development)
+- Windows, macOS or Linux
 - At least one agent CLI on your `PATH` — or WSL with one installed
 
 ## Getting started
@@ -88,6 +89,29 @@ Run the app on Windows and it will find agents in both places. WSL panes are
 launched as `wsl.exe -e bash -lic '…'` and the pane's folder is handed over as
 a translated Unix path (`D:\Code\app` becomes `/mnt/d/Code/app`) using
 `WSLENV`, so the agent starts in the right directory.
+
+### macOS
+
+The window keeps its traffic lights and gains a small menu bar — macOS routes
+`Cmd+Q`, `Cmd+W` and the text-field clipboard through it, so an app without one
+can't quit or paste. Closing the window leaves the agents running and the app
+in the dock; reopening re-attaches every pane. Homebrew's `bin` directories are
+added to `PATH` on top of the login-shell environment, since a Finder-launched
+app never inherits them and that is where most agent CLIs live.
+
+Packaging must happen **on a Mac**: `@lydell/node-pty`'s prebuilt binaries are
+per-platform optional dependencies, so an `npm install` run on Windows or Linux
+never fetches the Darwin one and the packaged app would have no pty.
+
+```bash
+npm run package   # dmg + zip for arm64 and x64 into release/
+```
+
+Unsigned builds are fine locally — set `CSC_IDENTITY_AUTO_DISCOVERY=false` — but
+Gatekeeper quarantines a DMG that has been downloaded, so a build meant for
+anyone else needs an Apple Developer ID and notarisation. The hardened-runtime
+entitlements it needs are already in `build/entitlements.mac.plist`. Drop a
+1024px `build/icon.icns` in to replace the stock Electron icon.
 
 ## Dictation
 
@@ -148,7 +172,8 @@ use.
 ## Keyboard
 
 Terminals get every plain key combination, so the app keeps to `Ctrl+Shift`
-and `Alt`. On macOS use `Cmd` in place of `Ctrl`.
+and `Alt`. On macOS use `Cmd` in place of `Ctrl` — plus `Cmd+C` / `Cmd+V` on a
+pane, and `Cmd+Alt+I` for developer tools.
 
 | Keys | Action |
 | --- | --- |
@@ -237,6 +262,83 @@ The build has to run with the Windows toolchain (see the environment notes in
 the parent `CLAUDE.md`); on WSL the script locates the Windows npm itself, or
 set `WIN_NPM`. `HD_UPDATE_MANIFEST` points the app at a different manifest, and
 `HD_USER_DATA` does the same for the script.
+
+### Building both platforms in CI
+
+`npm run release` covers the local Windows loop. `.github/workflows/build.yml`
+is the other half: it builds installers for **both** platforms. Each platform's
+installer can only be built on that platform — `node-pty` ships a prebuilt
+binary per platform, and npm only ever fetches the host's, so a cross-built app
+has no working pty, and NSIS needs Wine off Windows. There is no way around the
+matrix.
+
+Where each half runs differs:
+
+- **macOS** — a **self-hosted** Mac, which is free and the only machine that
+  could ever sign and notarise. Register it as a runner on the repository;
+  GitHub labels every self-hosted runner with its OS automatically, and the
+  matrix matches `[self-hosted, macOS]` to route the job there. If the Mac is
+  offline the job queues rather than fails.
+- **Windows** — the GitHub-hosted `windows-latest` image. This one is billed:
+  the repo is private and Windows minutes count double against the included
+  allowance. Point it at a `[self-hosted, Windows]` pair instead if a Windows
+  box ever gets registered.
+
+Because the Mac is Apple Silicon, npm never fetches the Intel `node-pty`
+prebuild that the x64 dmg needs, so the workflow installs it by hand. That needs
+`--force` as well as `--os`/`--cpu`: the platform flags only steer optional
+dependency resolution, and a package named explicitly is still checked against
+the real host.
+
+#### Where the installers end up
+
+Every build of `main` refreshes
+**[`latest-main`](https://github.com/pr0xiez/harness-deck/releases/tag/latest-main)**, a prerelease
+holding the newest installer for each platform. Merge, wait for the build,
+download from there — nothing to tag and nothing to bump. It is a rolling
+channel, so two builds can share a version and differ; the notes name the commit
+each one came from.
+
+Pushing a **`v*` tag** cuts a proper release instead, as a **draft**, so it stays
+invisible until published by hand. The tag has to match the version in
+`package.json`, which the workflow checks before building, because the release is
+named from `package.json` and not the tag. Nothing bumps that version
+automatically — `npm run release` does it locally, and doesn't commit or tag
+either, so cutting a release is:
+
+```bash
+npm run release patch                       # bumps package.json, builds locally
+git commit -am "release 0.1.1" && git push
+git tag v0.1.1 && git push origin v0.1.1    # this is what publishes
+```
+
+Both jobs publish into the same release at the same moment, which
+electron-builder's own publisher can't cope with, so `scripts/publish-release.mjs`
+does it instead — every write tolerates the other job getting there first. It
+talks to the REST API rather than shelling out to `gh`, because the self-hosted
+Mac isn't guaranteed to have the CLI. That the two platforms never fight over an
+asset is down to the `win`/`mac` in the installer names: both build an x64 zip,
+and under the old `${arch}`-only naming one would have silently replaced the
+other.
+
+Consequence worth knowing: with publishing taken away from electron-builder it no
+longer emits its `latest*.yml` update metadata. That costs nothing today, since
+the updater reads the local manifest, but wiring the updater to releases means
+restoring `--publish always` on the tag path too.
+
+Pull requests run the same build on both platforms and keep nothing — a PR proves
+the installers can be built, then discards them. There are no tests in this repo —
+`npm run typecheck` and a successful package are the whole gate, and neither
+says anything about whether the app actually runs.
+
+This is a distribution channel, not a second update channel — the in-app updater
+above reads the local `update.json` and knows nothing about GitHub releases.
+Wiring the toast to published releases would mean teaching `updater.ts` to fetch
+the `latest*.yml` that electron-builder uploads alongside the installers.
+
+The mac runner builds unsigned (`CSC_IDENTITY_AUTO_DISCOVERY: false`) so it
+can't pick up a stray keychain identity. Add `CSC_LINK` and `CSC_KEY_PASSWORD`
+secrets and drop that line to sign for real.
 
 ## Debugging aids
 

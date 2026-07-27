@@ -3,6 +3,13 @@ productName: Harness Deck
 directories:
   output: release
   buildResources: build
+# Only used when electron-builder runs with `--publish always` (the tag job in
+# .github/workflows/build.yml). Unrelated to the in-app updater, which reads a
+# local manifest — see scripts/release.mjs.
+publish:
+  provider: github
+  owner: pr0xiez
+  repo: harness-deck
 files:
   - out/**
   - package.json
@@ -13,18 +20,36 @@ win:
   target:
     - nsis
     - zip
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  # The platform belongs in the name because both halves of the build land in
+  # one GitHub release, and `${arch}` alone had Windows and macOS both producing
+  # a `-x64.zip` — whichever uploaded second would have quietly replaced the
+  # other. scripts/release.mjs looks for the nsis one by this name.
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
 mac:
   target:
-    - dmg
-    - zip
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
   category: public.app-category.developer-tools
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  darkModeSupport: true
   extendInfo:
     NSMicrophoneUsageDescription: Dictate prompts into your agents.
+  # Harness Deck spawns whatever binaries the user points it at, so it can never
+  # be sandboxed — the Mac App Store is out, and this ships signed + notarised
+  # or not at all. The entitlements cover V8's JIT, loading node-pty's unsigned
+  # prebuilt .node, and the microphone dictation records from.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  gatekeeperAssess: false
+dmg:
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
 linux:
   target:
     - AppImage

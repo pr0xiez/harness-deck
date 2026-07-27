@@ -1603,6 +1603,19 @@ code {
   white-space: nowrap;
 }
 
+/* A deselected chip stays legible — the pane is still there, just not listening. */
+.target-chip:not(.on) {
+  background: transparent;
+  border-color: var(--line);
+  border-style: dashed;
+  color: var(--fg-2);
+}
+
+.target-chip:not(.on):hover {
+  color: var(--fg-1);
+  border-color: var(--line-2);
+}
+
 .broadcast-empty {
   font-size: 11px;
   color: var(--fg-2);
@@ -1645,6 +1658,58 @@ code {
 .broadcast-input .btn {
   height: auto;
   align-self: stretch;
+}
+
+.segmented.mini button {
+  width: auto;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.snippet-anchor {
+  position: relative;
+  display: flex;
+}
+
+.snippet-btn {
+  gap: 3px;
+  padding: 0 8px;
+}
+
+.snippet-menu {
+  min-width: 262px;
+  max-width: 380px;
+}
+
+.snippet-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.menu-item.snippet {
+  font: 11.5px/1.45 var(--mono);
+  /* Two lines of a long prompt is enough to tell two of them apart. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.menu-item:disabled {
+  opacity: 0.45;
+}
+
+.menu-item:disabled:hover {
+  background: none;
+}
+
+.menu-note {
+  margin: 0;
+  padding: 4px 8px 8px;
+  font-size: 11.5px;
+  color: var(--fg-2);
 }
 
 /* ---------- update toast ---------- */

@@ -86,9 +86,10 @@ export class PtyManager {
 
       proc.onData((data) => this.queue(session, data))
       proc.onExit(({ exitCode, signal }) => {
+        session.proc = null
+        if (!this.isCurrent(session)) return
         session.status = 'exited'
         session.exitCode = exitCode
-        session.proc = null
         this.flush(session)
         this.appendLocal(
           session,
@@ -145,8 +146,18 @@ export class PtyManager {
     const session = this.sessions.get(id)
     if (!session) return
     if (session.flushTimer) clearTimeout(session.flushTimer)
-    this.kill(id)
+    session.flushTimer = null
+    // Unregister before killing. The process dies from our SIGHUP a few
+    // milliseconds later, and a restart has already claimed the id by then —
+    // whatever it reports on the way out is no longer this pane's news.
     this.sessions.delete(id)
+    const proc = session.proc
+    session.proc = null
+    try {
+      proc?.kill()
+    } catch {
+      /* already gone */
+    }
   }
 
   disposeAll(): void {
@@ -163,7 +174,13 @@ export class PtyManager {
     return [...this.sessions.values()].filter((s) => s.status === 'running').map((s) => s.id)
   }
 
+  /** A disposed session keeps running its callbacks — it just no longer speaks for the pane. */
+  private isCurrent(session: Session): boolean {
+    return this.sessions.get(session.id) === session
+  }
+
   private queue(session: Session, data: string): void {
+    if (!this.isCurrent(session)) return
     session.pending.push(data)
     this.record(session, data)
     if (session.flushTimer) return
@@ -175,7 +192,7 @@ export class PtyManager {
       clearTimeout(session.flushTimer)
       session.flushTimer = null
     }
-    if (!session.pending.length) return
+    if (!session.pending.length || !this.isCurrent(session)) return
     const data = session.pending.join('')
     session.pending = []
     this.send('pty:data', { id: session.id, data })
@@ -183,6 +200,7 @@ export class PtyManager {
 
   /** Writes a message that came from us (not the child) into the pane. */
   private appendLocal(session: Session, text: string): void {
+    if (!this.isCurrent(session)) return
     this.record(session, text)
     this.send('pty:data', { id: session.id, data: text })
   }

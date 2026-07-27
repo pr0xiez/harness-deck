@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useDeck, type DeckWorkspace } from '../store'
 import { ACCENTS } from '../theme'
 import { Dropdown } from './ui'
@@ -31,6 +31,7 @@ interface RowProps {
 function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
+  const menuButton = useRef<HTMLButtonElement>(null)
   const setActiveWorkspace = useDeck((s) => s.setActiveWorkspace)
   const updateWorkspace = useDeck((s) => s.updateWorkspace)
   const removeWorkspace = useDeck((s) => s.removeWorkspace)
@@ -86,8 +87,9 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
       </span>
 
       {!collapsed ? (
-        <span className="ws-menu-anchor">
+        <span className={`ws-menu-anchor ${menuOpen ? 'is-open' : ''}`}>
           <button
+            ref={menuButton}
             className="icon-btn tiny"
             title="Workspace actions"
             onClick={(event) => {
@@ -98,7 +100,7 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
             <Icon name="chevronDown" size={12} />
           </button>
           {menuOpen ? (
-            <Dropdown onClose={() => setMenuOpen(false)} align="right">
+            <Dropdown onClose={() => setMenuOpen(false)} align="right" anchor={menuButton}>
               <button className="menu-item" onClick={() => { setMenuOpen(false); setRenaming(true) }}>
                 Rename
               </button>

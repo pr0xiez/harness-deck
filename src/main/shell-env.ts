@@ -100,11 +100,21 @@ function withUserBins(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...env, PATH: [...missing, ...current].join(delimiter) }
 }
 
+/** One attempt at the login-shell probe: its stdout, or null if it misbehaved. */
+export type ProbeShell = (cmd: string, args: string[], timeout: number) => Promise<string | null>
+
 /**
  * Runs the user's login shell to capture its environment. Falls back to the
  * process environment if the shell misbehaves or takes too long.
+ *
+ * `probe` is injectable for the same reason `PtyManager` takes its `Spawn`: the
+ * unit tests answer questions about what this does with a shell's *output* —
+ * markers that never arrived, a PATH the shell never printed, three attempts
+ * that all failed — and spawning a real login shell to ask them would be slow,
+ * and would answer differently on every machine. Omitting it is the app's own
+ * case, and still runs the real shell.
  */
-export async function resolveShellEnv(): Promise<NodeJS.ProcessEnv> {
+export async function resolveShellEnv(probe: ProbeShell = run): Promise<NodeJS.ProcessEnv> {
   if (cached) return cached
   if (process.platform === 'win32') {
     // No login shell to probe, but PATH still needs the usual repairs.
@@ -126,7 +136,7 @@ export async function resolveShellEnv(): Promise<NodeJS.ProcessEnv> {
   const timeout = process.platform === 'darwin' ? 8000 : 4000
 
   for (const args of attempts) {
-    const out = await run(shell, args, timeout)
+    const out = await probe(shell, args, timeout)
     if (!out) continue
     const parsed = parseEnv(out)
     if (parsed?.PATH) {
@@ -172,8 +182,14 @@ function parseEnv(output: string): NodeJS.ProcessEnv | null {
     if (eq > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
       env[key] = line.slice(eq + 1)
       lastKey = key
+    } else if (eq > 0 && /^BASH_FUNC_.*(%%|\(\))$/.test(key)) {
+      // An exported shell function, which bash prints under a name no variable
+      // could have. Its body lines follow and belong to nothing, so stop
+      // appending — a `.bashrc` with `export -f` in it would otherwise leave
+      // the function embedded in whatever came before, PATH included.
+      lastKey = null
     } else if (lastKey && line) {
-      // multi-line values (e.g. exported functions)
+      // A genuine multi-line value, carried on from the line above.
       env[lastKey] += `\n${line}`
     }
   }

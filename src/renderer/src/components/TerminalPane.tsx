@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { Profile } from '@shared/types'
 import { useDeck, type PaneView } from '../store'
+import { isReservedShortcut } from '../shortcuts'
 import { decideRestart, RESTART_CAP, type RestartDecision } from '../restart'
 import { registerTerminal, unregisterTerminal, type TerminalHandle } from '../terminals'
 import { terminalTheme } from '../theme'
@@ -39,22 +40,6 @@ interface Props {
  * untouched; the lock is about bytes reaching the process.
  */
 const LOCK_HINT = 'Read-only: typing, paste, broadcast and dictation are refused'
-
-/** Reserved for the app: xterm must not swallow these. */
-function isAppShortcut(event: KeyboardEvent): boolean {
-  const ctrl = event.ctrlKey || event.metaKey
-  // Option rewrites digits on macOS ("¡" for Option+1), so the digit tests go
-  // by the physical key — same reasoning as the handler in App.tsx.
-  const digit = /^(?:Digit|Numpad)[1-9]$/.test(event.code)
-  if (ctrl && event.shiftKey) return true
-  if (ctrl && ['+', '=', '-', '_', '0'].includes(event.key)) return true
-  if (ctrl && event.key === 'Tab') return true
-  if (event.altKey && digit) return true
-  if (ctrl && digit) return true
-  // The app services plain Cmd+C so it can lift xterm's own selection.
-  if (event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'c') return true
-  return false
-}
 
 export function TerminalPane({
   pane,
@@ -199,7 +184,7 @@ export function TerminalPane({
     // A locked pane hands every key straight past xterm: nothing is sent, and
     // nothing is acted on locally either. The window's own handler still sees
     // them, so Ctrl+Shift+C, the palette and the shortcuts keep working.
-    term.attachCustomKeyEventHandler((event) => !lockedRef.current && !isAppShortcut(event))
+    term.attachCustomKeyEventHandler((event) => !lockedRef.current && !isReservedShortcut(event))
 
     const observer = new ResizeObserver(() => handle.refit())
     observer.observe(host)

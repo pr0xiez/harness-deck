@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { useDeck } from './store'
+import { useDeck, type DeckWorkspace } from './store'
+import { digitOf, matchShortcut, type ShortcutId } from './shortcuts'
 import { getTerminal, refitAll } from './terminals'
 import { TitleBar } from './components/TitleBar'
 import { Sidebar } from './components/Sidebar'
@@ -111,38 +112,26 @@ export function App(): React.JSX.Element {
     }
   }, [])
 
-  // Global shortcuts. Terminals forward anything matching these (see TerminalPane).
+  // Global shortcuts. The table in shortcuts.ts decides what matches — and is
+  // also what TerminalPane forwards past xterm — so what each combo *does* is
+  // all that lives here, bound by id.
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      const state = useDeck.getState()
-      const workspace = state.workspaces.find((w) => w.id === state.activeWorkspaceId)
-      const paneId = workspace?.activePaneId ?? null
-      const ctrl = event.ctrlKey || event.metaKey
-      const key = event.key.toLowerCase()
-      const target = event.target as HTMLElement | null
-      // xterm keeps a hidden textarea for input, so "focus is in a terminal"
-      // must not count as typing in a form field.
-      const inTerminal = Boolean(target?.closest('.xterm'))
-      const typing =
-        !inTerminal && Boolean(target?.closest('input, textarea, select, [contenteditable="true"]'))
-      const take = (): void => {
-        event.preventDefault()
-        event.stopPropagation()
-      }
+    interface ShortcutScope {
+      event: KeyboardEvent
+      state: ReturnType<typeof useDeck.getState>
+      workspace: DeckWorkspace | undefined
+      paneId: string | null
+      inTerminal: boolean
+      take: () => void
+    }
 
-      // Shift rewrites punctuation ("," becomes "<"), and on macOS Option
-      // rewrites digits (Option+1 is "¡"), so match both on the physical key
-      // and keep matching letters on the character.
-      const code = event.code
-      const digit = /^(?:Digit|Numpad)([1-9])$/.exec(code)?.[1] ?? null
-      const isMac = state.info?.platform === 'darwin'
-
-      // macOS: the Edit menu owns Cmd+V, which xterm receives as a real paste
-      // event. Cmd+C has to be ours — a pane's selection belongs to xterm and
-      // never lands in the DOM where webContents.copy() would find it.
-      if (isMac && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && key === 'c') {
+    const actions: Record<ShortcutId, (scope: ShortcutScope) => void> = {
+      // Cmd+C has to lift a selection wherever it lives: xterm's buffer, a
+      // form field, or the document — none of which reach webContents.copy().
+      'copy-selection-mac': ({ event, paneId, inTerminal, take }) => {
         take()
-        const field = inTerminal ? null : (target as HTMLInputElement | HTMLTextAreaElement | null)
+        const target = event.target as HTMLInputElement | HTMLTextAreaElement | null
+        const field = inTerminal ? null : target
         const selected =
           field && typeof field.selectionStart === 'number' && field.selectionStart !== field.selectionEnd
             ? field.value.slice(field.selectionStart, field.selectionEnd ?? undefined)
@@ -151,166 +140,161 @@ export function App(): React.JSX.Element {
           ? (paneId ? getTerminal(paneId)?.term.getSelection() ?? '' : '')
           : selected || window.getSelection()?.toString() || ''
         if (text) api.clipboard.write(text)
-        return
-      }
-
-      if (ctrl && event.shiftKey) {
-        if (code === 'Comma' || key === ',' || key === '<') {
+      },
+      'open-settings': ({ state, take }) => {
+        take()
+        state.setUi({ settings: true })
+      },
+      'open-help': ({ state, take }) => {
+        take()
+        state.setUi({ help: true })
+      },
+      'toggle-palette': ({ state, take }) => {
+        take()
+        state.setUi({ palette: !state.ui.palette })
+      },
+      'toggle-broadcast': ({ state, take }) => {
+        take()
+        state.setUi({ broadcast: !state.ui.broadcast })
+      },
+      'toggle-dictation': ({ take }) => {
+        take()
+        useVoice.getState().toggle()
+      },
+      'new-workspace': ({ state, take }) => {
+        take()
+        state.addWorkspace()
+      },
+      'find-all': ({ state, workspace, take }) => {
+        take()
+        if (workspace) state.setUi({ findAll: !state.ui.findAll })
+      },
+      'new-pane': ({ state, workspace, take }) => {
+        take()
+        if (workspace) state.setUi({ profileMenu: true })
+      },
+      'close-pane': ({ state, workspace, paneId, take }) => {
+        take()
+        if (workspace && paneId) void state.requestClosePane(workspace.id, paneId)
+      },
+      'restart-pane': ({ state, paneId, take }) => {
+        take()
+        if (paneId) state.restartPane(paneId)
+      },
+      'zoom-pane': ({ state, workspace, paneId, take }) => {
+        take()
+        if (workspace && paneId) state.toggleZoom(workspace.id, paneId)
+      },
+      'find-pane': ({ paneId, take }) => {
+        take()
+        if (paneId) window.dispatchEvent(new CustomEvent('deck:find', { detail: { paneId } }))
+      },
+      'clear-pane': ({ paneId, take }) => {
+        take()
+        if (paneId) getTerminal(paneId)?.term.clear()
+      },
+      'focus-waiting': ({ state, take }) => {
+        take()
+        // Nothing waiting is a no-op, not an error — the same key is how
+        // you check whether anything is waiting at all.
+        const next = state.focusNextWaiting()
+        if (next) getTerminal(next)?.term.focus()
+      },
+      'copy-selection': ({ paneId, take }) => {
+        take()
+        const selection = paneId ? getTerminal(paneId)?.term.getSelection() : ''
+        if (selection) api.clipboard.write(selection)
+      },
+      'paste': ({ workspace, paneId, take }) => {
+        take()
+        if (!paneId) return
+        // This one never reaches xterm, so the pane's own refusal cannot
+        // see it — the lock has to be checked here as well.
+        if (workspace?.panes.find((p) => p.id === paneId)?.readOnly) return
+        void api.clipboard.read().then((text) => {
+          if (text) api.pty.write(paneId, text)
+        })
+      },
+      'move-pane-left': ({ state, workspace, paneId, take }) => {
+        take()
+        if (workspace && paneId) state.movePane(workspace.id, paneId, -1)
+      },
+      'move-pane-right': ({ state, workspace, paneId, take }) => {
+        take()
+        if (workspace && paneId) state.movePane(workspace.id, paneId, 1)
+      },
+      'prev-pane': ({ state, take }) => {
+        take()
+        state.cyclePane(-1)
+      },
+      'next-pane': ({ state, take }) => {
+        take()
+        state.cyclePane(1)
+      },
+      'next-workspace': ({ state, take }) => {
+        take()
+        state.cycleWorkspace(1)
+      },
+      'prev-workspace': ({ state, take }) => {
+        take()
+        state.cycleWorkspace(-1)
+      },
+      // No workspace at that position means no take() either — the key falls
+      // through to whatever else wants it.
+      'workspace-by-digit': ({ event, state, take }) => {
+        const workspaceAt = state.workspaces[Number(digitOf(event)) - 1]
+        if (workspaceAt) {
           take()
-          return state.setUi({ settings: true })
+          state.setActiveWorkspace(workspaceAt.id)
         }
-        if (code === 'Slash' || key === '/' || key === '?') {
-          take()
-          return state.setUi({ help: true })
-        }
-        switch (key) {
-          case 'p':
-            take()
-            return state.setUi({ palette: !state.ui.palette })
-          case 'b':
-            take()
-            return state.setUi({ broadcast: !state.ui.broadcast })
-          // Above the `typing` guard so dictation also works from a text box.
-          case 'm':
-            take()
-            return useVoice.getState().toggle()
-          case 'n':
-            take()
-            state.addWorkspace()
-            return
-          default:
-            break
-        }
-      }
-
-      if (typing) return
-
-      if (ctrl && event.shiftKey) {
-        // Alt widens the same find from one pane to the whole workspace. Matched
-        // on the physical key, because Option rewrites letters on macOS the way
-        // it rewrites digits.
-        if (event.altKey && code === 'KeyF') {
-          take()
-          if (workspace) state.setUi({ findAll: !state.ui.findAll })
-          return
-        }
-        switch (key) {
-          case 't':
-            take()
-            if (workspace) state.setUi({ profileMenu: true })
-            return
-          case 'w':
-            take()
-            if (workspace && paneId) void state.requestClosePane(workspace.id, paneId)
-            return
-          case 'r':
-            take()
-            if (paneId) state.restartPane(paneId)
-            return
-          case 'z':
-            take()
-            if (workspace && paneId) state.toggleZoom(workspace.id, paneId)
-            return
-          case 'f':
-            take()
-            if (paneId) window.dispatchEvent(new CustomEvent('deck:find', { detail: { paneId } }))
-            return
-          case 'k':
-            take()
-            if (paneId) getTerminal(paneId)?.term.clear()
-            return
-          case 'j': {
-            take()
-            // Nothing waiting is a no-op, not an error — the same key is how
-            // you check whether anything is waiting at all.
-            const next = state.focusNextWaiting()
-            if (next) getTerminal(next)?.term.focus()
-            return
-          }
-          case 'c': {
-            take()
-            const selection = paneId ? getTerminal(paneId)?.term.getSelection() : ''
-            if (selection) api.clipboard.write(selection)
-            return
-          }
-          case 'v': {
-            take()
-            if (!paneId) return
-            // This one never reaches xterm, so the pane's own refusal cannot
-            // see it — the lock has to be checked here as well.
-            if (workspace?.panes.find((p) => p.id === paneId)?.readOnly) return
-            void api.clipboard.read().then((text) => {
-              if (text) api.pty.write(paneId, text)
-            })
-            return
-          }
-          case 'arrowleft':
-            take()
-            if (workspace && paneId) state.movePane(workspace.id, paneId, -1)
-            return
-          case 'arrowright':
-            take()
-            if (workspace && paneId) state.movePane(workspace.id, paneId, 1)
-            return
-          case 'tab':
-            take()
-            state.cyclePane(-1)
-            return
-          default:
-            break
-        }
-      }
-
-      if (ctrl && !event.shiftKey) {
-        if (key === 'tab') {
-          take()
-          state.cyclePane(1)
-          return
-        }
-        if (key === 'pagedown') {
-          take()
-          state.cycleWorkspace(1)
-          return
-        }
-        if (key === 'pageup') {
-          take()
-          state.cycleWorkspace(-1)
-          return
-        }
-        if (digit) {
-          const workspaceAt = state.workspaces[Number(digit) - 1]
-          if (workspaceAt) {
-            take()
-            state.setActiveWorkspace(workspaceAt.id)
-          }
-          return
-        }
-        if (['=', '+'].includes(event.key) || code === 'Equal' || code === 'NumpadAdd') {
-          take()
-          return state.updateSettings({
-            fontSize: Math.min(FONT_MAX, state.settings.fontSize + 1)
-          })
-        }
-        if (['-', '_'].includes(event.key) || code === 'Minus' || code === 'NumpadSubtract') {
-          take()
-          return state.updateSettings({
-            fontSize: Math.max(FONT_MIN, state.settings.fontSize - 1)
-          })
-        }
-        if (event.key === '0') {
-          take()
-          return state.updateSettings({ fontSize: 13 })
-        }
-      }
-
-      if (event.altKey && digit && workspace) {
-        const pane = workspace.panes[Number(digit) - 1]
+      },
+      'font-bigger': ({ state, take }) => {
+        take()
+        state.updateSettings({ fontSize: Math.min(FONT_MAX, state.settings.fontSize + 1) })
+      },
+      'font-smaller': ({ state, take }) => {
+        take()
+        state.updateSettings({ fontSize: Math.max(FONT_MIN, state.settings.fontSize - 1) })
+      },
+      'font-reset': ({ state, take }) => {
+        take()
+        state.updateSettings({ fontSize: 13 })
+      },
+      'focus-pane-by-digit': ({ event, state, workspace, take }) => {
+        if (!workspace) return
+        const pane = workspace.panes[Number(digitOf(event)) - 1]
         if (pane) {
           take()
           state.setActivePane(workspace.id, pane.id)
           getTerminal(pane.id)?.term.focus()
         }
       }
+    }
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const state = useDeck.getState()
+      const workspace = state.workspaces.find((w) => w.id === state.activeWorkspaceId)
+      const target = event.target as HTMLElement | null
+      // xterm keeps a hidden textarea for input, so "focus is in a terminal"
+      // must not count as typing in a form field.
+      const inTerminal = Boolean(target?.closest('.xterm'))
+      const typing =
+        !inTerminal && Boolean(target?.closest('input, textarea, select, [contenteditable="true"]'))
+
+      const shortcut = matchShortcut(event, state.info?.platform === 'darwin')
+      if (!shortcut) return
+      if (typing && !shortcut.whileTyping) return
+      actions[shortcut.id]({
+        event,
+        state,
+        workspace,
+        paneId: workspace?.activePaneId ?? null,
+        inTerminal,
+        take: () => {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      })
     }
 
     window.addEventListener('keydown', onKeyDown, true)

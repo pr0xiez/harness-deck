@@ -374,12 +374,22 @@ code {
   box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 35%, transparent);
 }
 
-.dot.activity {
+/* Slower than the waiting pulse on purpose: this one is on for as long as a
+   harness runs, so it has to be visible from the corner of your eye without
+   competing with the amber "come here" signals. */
+.dot.running {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--warn);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 60%, transparent);
+  background: var(--ok);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 60%, transparent);
+  animation: running-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes running-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .ws-menu-anchor {
@@ -949,7 +959,8 @@ code {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pane-status.waiting {
+  .pane-status.waiting,
+  .dot.running {
     animation: none;
   }
 }

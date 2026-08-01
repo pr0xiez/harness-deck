@@ -43,7 +43,6 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
   const waiting = workspace.panes.filter((p) => p.status === 'waiting').length
   const running = workspace.panes.filter((p) => p.status === 'running').length
   const exited = workspace.panes.filter((p) => p.status === 'exited').length
-  const activity = workspace.panes.some((p) => p.activity)
 
   return (
     <div
@@ -83,7 +82,9 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
       {/* A waiting count outranks the rest: the whole point is to see it on a
           workspace you are not looking at. */}
       <span className="ws-badges">
-        {activity && !waiting ? <span className="dot activity" title="new output" /> : null}
+        {running ? (
+          <span className="dot running" title={`${running} pane${running === 1 ? '' : 's'} running`} />
+        ) : null}
         {waiting ? (
           <span
             className="count waiting"

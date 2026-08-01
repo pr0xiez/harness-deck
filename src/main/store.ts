@@ -5,12 +5,28 @@ import type { PersistedState } from '@shared/types'
 
 export const STATE_VERSION = 1
 
-function statePath(): string {
-  return join(app.getPath('userData'), 'workspaces.json')
+/**
+ * Where the app keeps its state, absent a caller that says otherwise.
+ *
+ * Read per call rather than captured, for the same reason index.ts builds its
+ * ScrollbackStore after the app is ready: `userData` is not final at module
+ * scope, and a smoke run moves it out of the way of a real profile.
+ */
+const userData = (): string => app.getPath('userData')
+
+function statePath(baseDir: string): string {
+  return join(baseDir, 'workspaces.json')
 }
 
-export function loadState(): PersistedState | null {
-  const file = statePath()
+/**
+ * `baseDir` is injectable so the unit tests can drive a real directory through
+ * this: they run in plain Node, where `app` exists only as a string (see
+ * vitest.config.ts). Omitting it is the app's own case, and still asks
+ * electron — this is the crash-recovery path, so where it reads and writes in
+ * production is exactly what it was before the seam existed.
+ */
+export function loadState(baseDir: string = userData()): PersistedState | null {
+  const file = statePath(baseDir)
   for (const candidate of [file, `${file}.bak`]) {
     if (!existsSync(candidate)) continue
     try {
@@ -36,10 +52,10 @@ export function writeJsonAtomic(file: string, value: unknown): void {
   }
 }
 
-export function saveState(state: PersistedState): void {
-  writeJsonAtomic(statePath(), { ...state, version: STATE_VERSION })
+export function saveState(state: PersistedState, baseDir: string = userData()): void {
+  writeJsonAtomic(statePath(baseDir), { ...state, version: STATE_VERSION })
 }
 
-export function stateLocation(): string {
-  return statePath()
+export function stateLocation(baseDir: string = userData()): string {
+  return statePath(baseDir)
 }

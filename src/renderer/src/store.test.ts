@@ -1,0 +1,800 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { PaneStatus, PersistedState } from '@shared/types'
+import { harness } from './test/harness'
+import {
+  activeWorkspace,
+  DEFAULT_SETTINGS,
+  isLive,
+  serialize,
+  useDeck,
+  type DeckWorkspace,
+  type PaneView
+} from './store'
+
+/**
+ * The store reads `window.harness` while it is being imported, so the import at
+ * the top of this file is itself part of what is under test: without the stub
+ * the setup file installs, none of these tests would get as far as running.
+ */
+
+const pane = (id: string, status: PaneStatus, over: Partial<PaneView> = {}): PaneView => ({
+  id,
+  profileId: 'claude',
+  command: 'claude',
+  args: [],
+  cwd: '/repos/deck',
+  status,
+  epoch: 0,
+  ...over
+})
+
+const workspace = (
+  id: string,
+  panes: PaneView[] = [],
+  over: Partial<DeckWorkspace> = {}
+): DeckWorkspace => ({
+  id,
+  name: id,
+  cwd: `/repos/${id}`,
+  accent: '#7aa2f7',
+  panes,
+  activePaneId: panes[0]?.id ?? null,
+  layout: 'grid',
+  columns: 2,
+  zoomedPaneId: null,
+  ...over
+})
+
+/** Matches BROADCAST_HISTORY in store.ts. */
+const BROADCAST_HISTORY = 50
+/** Matches the debounce in `startPersistence`. */
+const SAVE_MS = 400
+
+const deck = (): ReturnType<typeof useDeck.getState> => useDeck.getState()
+const ids = (): string[] => deck().workspaces.map((w) => w.id)
+const paneIds = (workspaceId: string): string[] =>
+  deck()
+    .workspaces.find((w) => w.id === workspaceId)!
+    .panes.map((p) => p.id)
+const front = (): DeckWorkspace | undefined => activeWorkspace(deck())
+
+beforeEach(() => {
+  // The store is a module singleton, so one test's deck would otherwise still
+  // be on screen for the next.
+  useDeck.setState({
+    workspaces: [],
+    activeWorkspaceId: null,
+    repos: {},
+    mounted: [],
+    templates: [],
+    hydrated: false,
+    settings: DEFAULT_SETTINGS
+  })
+})
+
+describe('isLive', () => {
+  it('counts a pane that has fallen quiet at a prompt, not only one still talking', () => {
+    expect(isLive(pane('a', 'running'))).toBe(true)
+    expect(isLive(pane('a', 'waiting'))).toBe(true)
+  })
+
+  it('does not count a pane with no process on the end of it', () => {
+    expect(isLive(pane('a', 'idle'))).toBe(false)
+    expect(isLive(pane('a', 'exited'))).toBe(false)
+  })
+})
+
+describe('activeWorkspace', () => {
+  it('picks the one the deck is pointed at, not the first on the list', () => {
+    useDeck.setState({
+      workspaces: [workspace('one'), workspace('two'), workspace('three')],
+      activeWorkspaceId: 'two'
+    })
+
+    expect(activeWorkspace(useDeck.getState())?.id).toBe('two')
+  })
+
+  it('has no answer for a deck that is pointed at nothing', () => {
+    useDeck.setState({ workspaces: [workspace('one')], activeWorkspaceId: null })
+
+    expect(activeWorkspace(useDeck.getState())).toBeUndefined()
+  })
+
+  /** The gap between closing a workspace and the id being repointed. */
+  it('has no answer for an id no workspace carries any more', () => {
+    useDeck.setState({ workspaces: [workspace('one')], activeWorkspaceId: 'closed' })
+
+    expect(activeWorkspace(useDeck.getState())).toBeUndefined()
+  })
+})
+
+/** The bridge is stubbed, so this is where the stub earns its keep. */
+describe('refreshRepo', () => {
+  it('files what git said under the folder that was asked about', async () => {
+    const repo = { root: '/repos/deck', branch: 'main', dirty: 2 }
+    harness.git.info.mockResolvedValue(repo)
+
+    await useDeck.getState().refreshRepo('/repos/deck/src')
+
+    expect(harness.git.info).toHaveBeenCalledWith('/repos/deck/src')
+    expect(useDeck.getState().repos).toEqual({ '/repos/deck/src': repo })
+  })
+
+  it('does not ask git about a pane that has no folder', async () => {
+    await useDeck.getState().refreshRepo('')
+
+    expect(harness.git.info).not.toHaveBeenCalled()
+    expect(useDeck.getState().repos).toEqual({})
+  })
+})
+
+/**
+ * Everything the app remembers about itself goes through here, so a field this
+ * function drops is a field the user loses on quit — silently, and only visible
+ * the next time they open the app.
+ */
+describe('serialize', () => {
+  const saved = (): PersistedState => serialize(useDeck.getState())
+  const firstPane = (): PersistedState['workspaces'][number]['panes'][number] =>
+    saved().workspaces[0].panes[0]
+
+  it('writes a pane down as idle, whatever its process was doing at the time', () => {
+    useDeck.setState({
+      workspaces: [workspace('one', [pane('a', 'exited', { exitCode: 137, epoch: 3 })])]
+    })
+
+    expect(firstPane()).toMatchObject({ status: 'idle', exitCode: null, epoch: 0 })
+  })
+
+  /**
+   * A restored deck claiming an exit code, an unread badge or a process title
+   * from a process that died with the last session is worse than saying
+   * nothing: it is a pane that looks alive and answers to nothing.
+   */
+  it('does not carry over what the last session happened to leave on screen', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [
+          pane('a', 'running', {
+            activity: true,
+            bell: true,
+            processTitle: 'claude — /repos/deck',
+            autostart: true,
+            crashRestarts: 2
+          })
+        ])
+      ]
+    })
+
+    expect(firstPane()).not.toHaveProperty('activity')
+    expect(firstPane()).not.toHaveProperty('bell')
+    expect(firstPane()).not.toHaveProperty('processTitle')
+    expect(firstPane()).not.toHaveProperty('autostart')
+    expect(firstPane()).not.toHaveProperty('crashRestarts')
+  })
+
+  /**
+   * The one piece of per-pane state that has to survive even though the pane
+   * itself does not: the worktree is a folder this app made, and only the pane
+   * that owns it will ever offer to remove it. Forget it on quit and the
+   * checkout is orphaned on disk with nothing left that knows it is ours.
+   */
+  it('keeps the worktree a pane owns even while stripping the rest of its state', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [
+          pane('a', 'running', { worktree: '/repos/.harness-deck/deck/hd/agent-a' })
+        ])
+      ]
+    })
+
+    expect(firstPane().worktree).toBe('/repos/.harness-deck/deck/hd/agent-a')
+    expect(firstPane().status).toBe('idle')
+  })
+
+  it('carries everything a pane needs to start again where it left off', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [
+          {
+            id: 'a',
+            profileId: 'custom:reviewer',
+            command: 'claude',
+            args: ['--resume', 'last'],
+            cwd: '/repos/deck/src',
+            viaShell: true,
+            name: 'Reviewer',
+            env: { HD_ROLE: 'review' },
+            worktree: '/repos/.harness-deck/deck/hd/reviewer',
+            autoRestart: true,
+            readOnly: true,
+            status: 'waiting',
+            exitCode: 0,
+            epoch: 7
+          }
+        ])
+      ]
+    })
+
+    // Spelled out in full rather than field by field, so a field quietly added
+    // to the pane and forgotten here fails on the way past.
+    expect(firstPane()).toEqual({
+      id: 'a',
+      profileId: 'custom:reviewer',
+      command: 'claude',
+      args: ['--resume', 'last'],
+      cwd: '/repos/deck/src',
+      viaShell: true,
+      name: 'Reviewer',
+      env: { HD_ROLE: 'review' },
+      worktree: '/repos/.harness-deck/deck/hd/reviewer',
+      autoRestart: true,
+      readOnly: true,
+      status: 'idle',
+      exitCode: null,
+      epoch: 0
+    })
+  })
+
+  /** Zoom is where you were looking, not how the workspace is arranged. */
+  it('reopens a workspace unzoomed, however much of it one pane was filling', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'idle'), pane('b', 'idle')], { zoomedPaneId: 'b' })
+      ]
+    })
+
+    expect(saved().workspaces[0].zoomedPaneId).toBeNull()
+  })
+
+  it('saves the deck around the panes — the layout, the front workspace and the settings', () => {
+    const template = {
+      id: 'tpl_1',
+      name: 'Review',
+      accent: '#7aa2f7',
+      layout: 'grid' as const,
+      columns: 2,
+      panes: [],
+      createdAt: '2026-01-01T00:00:00.000Z'
+    }
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'idle')], {
+          name: 'Deck',
+          cwd: '/repos/deck',
+          accent: '#bb9af7',
+          layout: 'tabs',
+          columns: 3,
+          activePaneId: 'a'
+        }),
+        workspace('two')
+      ],
+      activeWorkspaceId: 'two',
+      templates: [template],
+      settings: { ...DEFAULT_SETTINGS, fontSize: 16 }
+    })
+
+    const state = saved()
+
+    expect(state.version).toBe(1)
+    expect(state.activeWorkspaceId).toBe('two')
+    expect(state.templates).toEqual([template])
+    expect(state.settings.fontSize).toBe(16)
+    expect(state.workspaces[0]).toMatchObject({
+      id: 'one',
+      name: 'Deck',
+      cwd: '/repos/deck',
+      accent: '#bb9af7',
+      layout: 'tabs',
+      columns: 3,
+      activePaneId: 'a'
+    })
+  })
+})
+
+/**
+ * `saveTimer` and `lastSnapshot` live at module scope, so a timer armed — or a
+ * snapshot remembered — by one test would decide the outcome of the next: a
+ * test whose deck happened to serialize to the same JSON as its predecessor's
+ * would see no write and blame the code. Re-importing the module behind
+ * `vi.resetModules()` is the reset. Each test gets its own store, its own timer
+ * handle and its own empty `lastSnapshot`, and the subscription it starts is on
+ * a store nothing outside the test will ever touch again.
+ */
+describe('startPersistence', () => {
+  let store: typeof import('./store')
+  let stop: () => void
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    vi.resetModules()
+    store = await import('./store')
+    stop = store.startPersistence()
+  })
+
+  afterEach(() => {
+    stop()
+    vi.useRealTimers()
+  })
+
+  const written = (n = 0): PersistedState => harness.saveState.mock.calls[n][0] as PersistedState
+
+  /**
+   * The deck is empty until `hydrate()` has read the file. Saving in that
+   * window would write the empty deck over the workspaces still being loaded —
+   * the one bug in here that costs the user everything at once.
+   */
+  it('writes nothing before the deck has been read back off disk', () => {
+    store.useDeck.setState({ workspaces: [workspace('one', [pane('a', 'idle')])] })
+    vi.advanceTimersByTime(SAVE_MS * 5)
+
+    expect(harness.saveState).not.toHaveBeenCalled()
+  })
+
+  it('waits for the deck to settle before writing at all', () => {
+    store.useDeck.setState({ hydrated: true, workspaces: [workspace('one')] })
+
+    vi.advanceTimersByTime(SAVE_MS - 1)
+    expect(harness.saveState).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+    expect(harness.saveState).toHaveBeenCalledTimes(1)
+  })
+
+  /** Renaming a workspace is a keystroke per character; the file is not. */
+  it('collapses a run of changes into one write, however long the run goes on', () => {
+    store.useDeck.setState({ hydrated: true })
+    for (let n = 0; n < 5; n++) {
+      store.useDeck.getState().addWorkspace(`Workspace ${n}`)
+      vi.advanceTimersByTime(SAVE_MS - 1)
+    }
+
+    expect(harness.saveState).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(SAVE_MS)
+    expect(harness.saveState).toHaveBeenCalledTimes(1)
+    expect(written().workspaces).toHaveLength(5)
+  })
+
+  it('writes the deck as it ended up, not as it was when the timer was armed', () => {
+    store.useDeck.setState({ hydrated: true, workspaces: [workspace('one')] })
+    vi.advanceTimersByTime(SAVE_MS - 1)
+    store.useDeck.getState().updateWorkspace('one', { name: 'renamed' })
+    vi.advanceTimersByTime(SAVE_MS)
+
+    expect(harness.saveState).toHaveBeenCalledTimes(1)
+    expect(written().workspaces[0].name).toBe('renamed')
+  })
+
+  /**
+   * A pane goes running → waiting → running every time an agent answers, and
+   * none of it survives a restart. Without the snapshot check the busiest thing
+   * in the app would be rewriting a file whose contents never changed.
+   */
+  it('does not rewrite the file when nothing that survives a restart moved', () => {
+    store.useDeck.setState({
+      hydrated: true,
+      workspaces: [workspace('one', [pane('a', 'idle')])]
+    })
+    vi.advanceTimersByTime(SAVE_MS)
+    expect(harness.saveState).toHaveBeenCalledTimes(1)
+
+    store.useDeck.getState().setPaneStatus('a', 'running')
+    store.useDeck.getState().setUi({ palette: true })
+    vi.advanceTimersByTime(SAVE_MS)
+
+    expect(harness.saveState).toHaveBeenCalledTimes(1)
+  })
+
+  it('writes again as soon as something that does survive moves', () => {
+    store.useDeck.setState({
+      hydrated: true,
+      workspaces: [workspace('one', [pane('a', 'idle')])]
+    })
+    vi.advanceTimersByTime(SAVE_MS)
+
+    store.useDeck.getState().updateWorkspace('one', { name: 'renamed' })
+    vi.advanceTimersByTime(SAVE_MS)
+
+    expect(harness.saveState).toHaveBeenCalledTimes(2)
+    expect(written(1).workspaces[0].name).toBe('renamed')
+  })
+
+  it('stops writing once the caller lets the subscription go', () => {
+    store.useDeck.setState({ hydrated: true, workspaces: [workspace('one')] })
+    vi.advanceTimersByTime(SAVE_MS)
+    expect(harness.saveState).toHaveBeenCalledTimes(1)
+
+    stop()
+    store.useDeck.getState().addWorkspace('two')
+    vi.advanceTimersByTime(SAVE_MS * 5)
+
+    expect(harness.saveState).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('moveWorkspace', () => {
+  beforeEach(() => {
+    useDeck.setState({ workspaces: [workspace('one'), workspace('two'), workspace('three')] })
+  })
+
+  it('swaps a workspace with the neighbour it is moved towards', () => {
+    deck().moveWorkspace('three', -1)
+
+    expect(ids()).toEqual(['one', 'three', 'two'])
+  })
+
+  it('leaves the first where it is rather than wrapping it round to the end', () => {
+    deck().moveWorkspace('one', -1)
+
+    expect(ids()).toEqual(['one', 'two', 'three'])
+  })
+
+  it('leaves the last where it is rather than wrapping it round to the front', () => {
+    deck().moveWorkspace('three', 1)
+
+    expect(ids()).toEqual(['one', 'two', 'three'])
+  })
+
+  /** Without the index guard, `splice(-1, 1)` would move the *last* workspace. */
+  it('does nothing for an id no workspace carries', () => {
+    deck().moveWorkspace('closed', 1)
+
+    expect(ids()).toEqual(['one', 'two', 'three'])
+  })
+})
+
+describe('cycleWorkspace', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [workspace('one'), workspace('two'), workspace('three')],
+      activeWorkspaceId: 'three',
+      mounted: ['three']
+    })
+  })
+
+  it('wraps past the last workspace round to the first', () => {
+    deck().cycleWorkspace(1)
+
+    expect(deck().activeWorkspaceId).toBe('one')
+  })
+
+  it('wraps backwards past the first round to the last', () => {
+    useDeck.setState({ activeWorkspaceId: 'one' })
+    deck().cycleWorkspace(-1)
+
+    expect(deck().activeWorkspaceId).toBe('three')
+  })
+
+  /** Terminals keep running once mounted, so cycling has to mount as it goes. */
+  it('mounts a workspace the user has not been to yet', () => {
+    deck().cycleWorkspace(1)
+
+    expect(deck().mounted).toEqual(['three', 'one'])
+  })
+
+  it('has nowhere to go when the deck holds a single workspace', () => {
+    useDeck.setState({ workspaces: [workspace('one')], activeWorkspaceId: 'one', mounted: ['one'] })
+    deck().cycleWorkspace(1)
+
+    expect(deck().activeWorkspaceId).toBe('one')
+    expect(deck().mounted).toEqual(['one'])
+  })
+})
+
+describe('movePane', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'idle'), pane('b', 'idle'), pane('c', 'idle')]),
+        workspace('two', [pane('d', 'idle')])
+      ]
+    })
+  })
+
+  it('swaps a pane with the neighbour it is moved towards', () => {
+    deck().movePane('one', 'a', 1)
+
+    expect(paneIds('one')).toEqual(['b', 'a', 'c'])
+  })
+
+  it('leaves the first pane where it is rather than wrapping it round to the end', () => {
+    deck().movePane('one', 'a', -1)
+
+    expect(paneIds('one')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('leaves the last pane where it is rather than wrapping it round to the front', () => {
+    deck().movePane('one', 'c', 1)
+
+    expect(paneIds('one')).toEqual(['a', 'b', 'c'])
+  })
+
+  /** Without the index guard, `splice(-1, 1)` would move the *last* pane. */
+  it('does nothing for a pane the named workspace does not hold', () => {
+    deck().movePane('one', 'd', 1)
+
+    expect(paneIds('one')).toEqual(['a', 'b', 'c'])
+    expect(paneIds('two')).toEqual(['d'])
+  })
+})
+
+describe('cyclePane', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'idle'), pane('b', 'idle'), pane('c', 'idle')], {
+          activePaneId: 'c'
+        })
+      ],
+      activeWorkspaceId: 'one'
+    })
+  })
+
+  it('wraps past the last pane round to the first', () => {
+    deck().cyclePane(1)
+
+    expect(front()?.activePaneId).toBe('a')
+  })
+
+  it('wraps backwards past the first pane round to the last', () => {
+    deck().updateWorkspace('one', { activePaneId: 'a' })
+    deck().cyclePane(-1)
+
+    expect(front()?.activePaneId).toBe('c')
+  })
+
+  /** Otherwise the badge stays lit on the pane the user is looking straight at. */
+  it('clears the unread markers on the pane it lands on', () => {
+    deck().updatePane('a', { activity: true, bell: true })
+    deck().cyclePane(1)
+
+    expect(front()?.panes[0]).toMatchObject({ id: 'a', activity: false, bell: false })
+  })
+
+  it('has nowhere to go in a workspace holding a single pane', () => {
+    useDeck.setState({ workspaces: [workspace('one', [pane('a', 'idle')])] })
+    deck().cyclePane(1)
+
+    expect(front()?.activePaneId).toBe('a')
+  })
+})
+
+describe('closePane', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'idle'), pane('b', 'idle'), pane('c', 'idle')], {
+          activePaneId: 'b'
+        }),
+        workspace('two', [pane('d', 'idle')])
+      ],
+      activeWorkspaceId: 'one'
+    })
+  })
+
+  /** A workspace left pointing at a pane that is gone renders nothing at all. */
+  it('falls back to the last pane left when the focused one is the one closed', () => {
+    deck().closePane('one', 'b')
+
+    expect(paneIds('one')).toEqual(['a', 'c'])
+    expect(front()?.activePaneId).toBe('c')
+    expect(harness.pty.dispose).toHaveBeenCalledWith('b')
+  })
+
+  it('leaves the focus where it is when some other pane is closed', () => {
+    deck().closePane('one', 'c')
+
+    expect(front()?.activePaneId).toBe('b')
+  })
+
+  it('has no pane left to point at once the last one is closed', () => {
+    useDeck.setState({ workspaces: [workspace('one', [pane('a', 'idle')])] })
+    deck().closePane('one', 'a')
+
+    expect(front()?.panes).toEqual([])
+    expect(front()?.activePaneId).toBeNull()
+  })
+
+  /** A workspace zoomed on a pane that no longer exists shows an empty screen. */
+  it('un-zooms when the pane filling the workspace is the one closed', () => {
+    deck().updateWorkspace('one', { zoomedPaneId: 'b' })
+    deck().closePane('one', 'b')
+
+    expect(front()?.zoomedPaneId).toBeNull()
+  })
+
+  it('keeps the zoom when a pane behind it is closed', () => {
+    deck().updateWorkspace('one', { zoomedPaneId: 'b' })
+    deck().closePane('one', 'c')
+
+    expect(front()?.zoomedPaneId).toBe('b')
+  })
+})
+
+describe('removeWorkspace', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'running')]),
+        workspace('two'),
+        workspace('three')
+      ],
+      activeWorkspaceId: 'one',
+      mounted: ['one']
+    })
+  })
+
+  it('points the deck at what is left, and mounts it, when the front one goes', () => {
+    deck().removeWorkspace('one')
+
+    expect(ids()).toEqual(['two', 'three'])
+    expect(deck().activeWorkspaceId).toBe('two')
+    expect(deck().mounted).toEqual(['two'])
+    expect(harness.pty.dispose).toHaveBeenCalledWith('a')
+  })
+
+  it('leaves the deck where it is when a workspace behind it goes', () => {
+    deck().removeWorkspace('three')
+
+    expect(deck().activeWorkspaceId).toBe('one')
+    expect(deck().mounted).toEqual(['one'])
+  })
+
+  it('is pointed at nothing once the last workspace goes', () => {
+    useDeck.setState({ workspaces: [workspace('one')], activeWorkspaceId: 'one' })
+    deck().removeWorkspace('one')
+
+    expect(deck().activeWorkspaceId).toBeNull()
+    expect(deck().mounted).toEqual([])
+  })
+})
+
+/**
+ * The point of the shortcut is to work through everything that is waiting, so
+ * the ordering is the feature: landing on the same pane twice would leave the
+ * other agents sitting at their prompts unnoticed.
+ */
+describe('focusNextWaiting', () => {
+  it('starts after the focused pane, so pressing it again walks the queue', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'waiting'), pane('b', 'waiting'), pane('c', 'waiting')], {
+          activePaneId: 'a'
+        })
+      ],
+      activeWorkspaceId: 'one'
+    })
+
+    expect(deck().focusNextWaiting()).toBe('b')
+    expect(deck().focusNextWaiting()).toBe('c')
+    expect(deck().focusNextWaiting()).toBe('a')
+  })
+
+  it('wraps round to a waiting pane sitting before the focused one', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'waiting'), pane('b', 'idle'), pane('c', 'idle')], {
+          activePaneId: 'c'
+        })
+      ],
+      activeWorkspaceId: 'one'
+    })
+
+    expect(deck().focusNextWaiting()).toBe('a')
+  })
+
+  it('passes over panes that are still producing output', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'idle'), pane('b', 'running'), pane('c', 'waiting')], {
+          activePaneId: 'a'
+        })
+      ],
+      activeWorkspaceId: 'one'
+    })
+
+    expect(deck().focusNextWaiting()).toBe('c')
+  })
+
+  it('crosses into another workspace, bringing it to the front and mounting it', () => {
+    useDeck.setState({
+      workspaces: [workspace('one', [pane('a', 'idle')]), workspace('two', [pane('b', 'waiting')])],
+      activeWorkspaceId: 'one',
+      mounted: ['one']
+    })
+
+    expect(deck().focusNextWaiting()).toBe('b')
+    expect(deck().activeWorkspaceId).toBe('two')
+    expect(deck().mounted).toEqual(['one', 'two'])
+    expect(front()?.activePaneId).toBe('b')
+  })
+
+  it('says so and leaves the deck alone when nothing is waiting', () => {
+    useDeck.setState({
+      workspaces: [workspace('one', [pane('a', 'running'), pane('b', 'exited')])],
+      activeWorkspaceId: 'one'
+    })
+
+    expect(deck().focusNextWaiting()).toBeNull()
+    expect(front()?.activePaneId).toBe('a')
+  })
+})
+
+describe('toggleZoom', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [workspace('one', [pane('a', 'idle'), pane('b', 'idle')])],
+      activeWorkspaceId: 'one'
+    })
+  })
+
+  it('gives the workspace back when asked to zoom the pane already filling it', () => {
+    deck().toggleZoom('one', 'a')
+    expect(front()?.zoomedPaneId).toBe('a')
+
+    deck().toggleZoom('one', 'a')
+    expect(front()?.zoomedPaneId).toBeNull()
+  })
+
+  it('moves the zoom straight to another pane rather than un-zooming first', () => {
+    deck().toggleZoom('one', 'a')
+    deck().toggleZoom('one', 'b')
+
+    expect(front()?.zoomedPaneId).toBe('b')
+  })
+
+  /** Keystrokes follow the focused pane, so zooming one and typing at another
+   * would send the input somewhere off screen. */
+  it('focuses the pane it zooms', () => {
+    deck().toggleZoom('one', 'b')
+
+    expect(front()?.activePaneId).toBe('b')
+  })
+})
+
+describe('rememberBroadcast', () => {
+  const history = (): string[] => deck().settings.broadcastHistory
+
+  it('moves a prompt that is sent again back to the top instead of listing it twice', () => {
+    deck().rememberBroadcast('run the tests')
+    deck().rememberBroadcast('commit it')
+    deck().rememberBroadcast('run the tests')
+
+    expect(history()).toEqual(['run the tests', 'commit it'])
+  })
+
+  it('forgets the oldest prompt once the history is full', () => {
+    for (let n = 0; n < BROADCAST_HISTORY + 10; n++) deck().rememberBroadcast(`prompt ${n}`)
+
+    expect(history()).toHaveLength(BROADCAST_HISTORY)
+    expect(history()[0]).toBe(`prompt ${BROADCAST_HISTORY + 9}`)
+    expect(history()).not.toContain('prompt 0')
+  })
+
+  /** Otherwise ↑ hands back a prompt that differs only in the space at the end. */
+  it('files the trimmed prompt, not whatever the box had in it', () => {
+    deck().rememberBroadcast('  ship it  ')
+    deck().rememberBroadcast('ship it')
+
+    expect(history()).toEqual(['ship it'])
+  })
+
+  it('does not file an empty prompt', () => {
+    deck().rememberBroadcast('   \n ')
+
+    expect(history()).toEqual([])
+  })
+})
+
+describe('setColumns', () => {
+  it('clamps the column count to a grid that can actually be drawn', () => {
+    useDeck.setState({ workspaces: [workspace('one')] })
+
+    deck().setColumns('one', 9)
+    expect(deck().workspaces[0].columns).toBe(4)
+
+    deck().setColumns('one', 0)
+    expect(deck().workspaces[0].columns).toBe(1)
+  })
+})

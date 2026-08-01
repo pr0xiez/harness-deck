@@ -722,7 +722,7 @@ export const activeWorkspace = (state: DeckState): DeckWorkspace | undefined =>
 export const useActiveWorkspace = (): DeckWorkspace | undefined => useDeck(activeWorkspace)
 
 /** Strips transient fields and hands the result to the main process. */
-function serialize(state: DeckState): PersistedState {
+export function serialize(state: DeckState): PersistedState {
   return {
     version: 1,
     activeWorkspaceId: state.activeWorkspaceId,

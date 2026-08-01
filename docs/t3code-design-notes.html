@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Borrowing from T3 Code — Harness Deck design notes</title>
+<style>
+  :root {
+    --paper: #f4f5f7;
+    --panel: #fbfbfd;
+    --panel-2: #eef0f3;
+    --ink: #171c24;
+    --ink-2: #4b545f;
+    --ink-3: #7b838e;
+    --line: #dfe2e7;
+    --line-2: #ccd1d8;
+    --accent: #d97757;
+    --accent-text: #b1512f;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --bad: #cf222e;
+    --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0b0e13;
+      --panel: #10141b;
+      --panel-2: #151b24;
+      --ink: #e3e8f0;
+      --ink-2: #a6b0bf;
+      --ink-3: #6c7686;
+      --line: #1e2632;
+      --line-2: #2b3441;
+      --accent: #d97757;
+      --accent-text: #e08a6d;
+      --ok: #3fb950;
+      --warn: #d29922;
+      --bad: #f85149;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0b0e13; --panel: #10141b; --panel-2: #151b24;
+    --ink: #e3e8f0; --ink-2: #a6b0bf; --ink-3: #6c7686;
+    --line: #1e2632; --line-2: #2b3441;
+    --accent: #d97757; --accent-text: #e08a6d;
+    --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+  }
+  :root[data-theme="light"] {
+    --paper: #f4f5f7; --panel: #fbfbfd; --panel-2: #eef0f3;
+    --ink: #171c24; --ink-2: #4b545f; --ink-3: #7b838e;
+    --line: #dfe2e7; --line-2: #ccd1d8;
+    --accent: #d97757; --accent-text: #b1512f;
+    --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+  }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.65 var(--ui);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 56px 24px 96px; }
+
+  .eyebrow {
+    font: 600 11px/1 var(--mono);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-text);
+  }
+  h1 {
+    font: 650 30px/1.22 var(--mono);
+    letter-spacing: -0.02em;
+    margin: 14px 0 14px;
+    text-wrap: balance;
+  }
+  .stand { font-size: 16.5px; color: var(--ink-2); max-width: 62ch; margin: 0 0 30px; }
+  h2 {
+    font: 640 20px/1.3 var(--mono);
+    letter-spacing: -0.01em;
+    margin: 64px 0 14px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    text-wrap: balance;
+  }
+  h3 { font: 620 15.5px/1.35 var(--mono); margin: 30px 0 8px; }
+  p { margin: 0 0 14px; max-width: 70ch; }
+  a { color: var(--accent-text); text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent); text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  code { font: 500 0.86em var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+  strong { font-weight: 640; }
+  ul { padding-left: 1.2em; max-width: 70ch; }
+  li { margin: 0 0 8px; }
+  li::marker { color: var(--ink-3); }
+
+  .statrow {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    margin: 26px 0 8px;
+  }
+  .stat {
+    flex: 1 1 118px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .stat b { display: block; font: 640 19px/1.15 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .stat span { display: block; margin-top: 4px; font-size: 11.5px; color: var(--ink-3); line-height: 1.35; }
+  .stat.flag b { color: var(--accent-text); }
+  .statnote { font-size: 12px; color: var(--ink-3); margin-bottom: 0; }
+
+  .rulebox {
+    margin: 26px 0;
+    padding: 18px 20px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+  }
+  .rulebox .eyebrow { color: var(--accent-text); }
+  .rulebox p { margin: 8px 0 0; max-width: none; }
+
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 20px 0; }
+  @media (max-width: 660px) { .cards { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card h4 { margin: 0 0 6px; font: 620 13.5px/1.35 var(--mono); }
+  .card p { margin: 0; font-size: 13.5px; color: var(--ink-2); max-width: none; }
+  .card .ev { display: block; margin-top: 8px; font: 500 11px/1.4 var(--mono); color: var(--ink-3); }
+
+  .fhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-top: 56px; }
+  .fhead h2 { margin: 0; border: 0; padding: 0; }
+  .fnum {
+    font: 640 12px/1 var(--mono);
+    color: var(--accent-text);
+    letter-spacing: 0.1em;
+  }
+  .tag {
+    font: 600 10.5px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border: 1px solid var(--line-2);
+    color: var(--ink-2);
+    border-radius: 99px;
+    padding: 4px 9px;
+    white-space: nowrap;
+  }
+  .tag.size { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2)); }
+  .borrow { font-size: 13px; color: var(--ink-3); margin: 6px 0 16px; }
+  .borrow b { color: var(--ink-2); font-weight: 600; }
+
+  .mech { margin: 18px 0 6px; }
+  .mech li { font-size: 13.5px; color: var(--ink-2); }
+  .mech code { font-size: 12px; }
+
+  kbd {
+    font: 600 11px/1 var(--mono);
+    background: var(--panel-2);
+    border: 1px solid var(--line-2);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 2px 6px;
+    white-space: nowrap;
+  }
+
+  .scroll { overflow-x: auto; margin: 18px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font: 600 11px/1.3 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  td { color: var(--ink-2); }
+  td b { color: var(--ink); }
+
+  .srcs { font-size: 12.5px; color: var(--ink-3); columns: 2; column-gap: 32px; padding-left: 1.1em; }
+  @media (max-width: 660px) { .srcs { columns: 1; } }
+  .srcs li { margin-bottom: 5px; break-inside: avoid; }
+
+  /* ---------- mockups: always the app's own dark world ---------- */
+  figure.mock { margin: 26px -10px; }
+  @media (min-width: 980px) { figure.mock { margin: 28px -60px; } }
+  figure.mock figcaption {
+    font-size: 12.5px; color: var(--ink-3);
+    margin: 10px 12px 0; max-width: 74ch;
+  }
+  .win {
+    --m-bg: #0b0e13; --m-1: #0f131a; --m-2: #141a23; --m-3: #1b2230;
+    --m-line: #1e2632; --m-line2: #2b3441;
+    --m-fg: #e3e8f0; --m-fg1: #a6b0bf; --m-fg2: #6c7686;
+    --m-acc: #d97757; --m-ok: #3fb950; --m-warn: #d29922; --m-bad: #f85149;
+    background: var(--m-bg);
+    color: var(--m-fg);
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 18px 44px rgba(0,0,0,0.28);
+    font: 12.5px/1.5 var(--ui);
+  }
+  .winbar {
+    display: flex; align-items: center; gap: 7px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--m-line);
+    color: var(--m-fg2); font-size: 11px;
+  }
+  .winbar i { width: 10px; height: 10px; border-radius: 50%; background: var(--m-line2); }
+  .winbar .t { margin-left: 6px; font-family: var(--mono); }
+  .mbody { padding: 16px; }
+
+  .m-mono { font-family: var(--mono); font-size: 11.5px; }
+  .m-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .m-dot.ok { background: var(--m-ok); }
+  .m-dot.warn { background: var(--m-warn); }
+  .m-dot.off { background: var(--m-line2); }
+  .m-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font: 500 11px/1 var(--mono);
+    background: var(--m-2); border: 1px solid var(--m-line2);
+    color: var(--m-fg1);
+    border-radius: 99px; padding: 5px 10px; white-space: nowrap;
+  }
+  .m-chip.on { border-color: color-mix(in srgb, var(--m-acc) 60%, var(--m-line2)); color: var(--m-fg); background: color-mix(in srgb, var(--m-acc) 14%, var(--m-2)); }
+  .m-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    font: 600 11.5px/1 var(--ui);
+    border-radius: 7px; padding: 7px 12px;
+    background: var(--m-2); border: 1px solid var(--m-line2); color: var(--m-fg1);
+  }
+  .m-btn.primary { background: var(--m-acc); border-color: var(--m-acc); color: #14100d; }
+  .m-kbd { font: 600 10px/1 var(--mono); background: var(--m-2); border: 1px solid var(--m-line2); border-radius: 4px; padding: 2px 5px; color: var(--m-fg1); }
+  .m-swatch { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+  .m-tail { font-family: var(--mono); font-size: 11px; color: var(--m-fg2); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .m-tail .hot { color: var(--m-warn); }
+
+  .q-backdrop {
+    position: relative;
+    padding: 26px 18px 30px;
+    background:
+      linear-gradient(color-mix(in srgb, var(--m-bg) 62%, transparent), color-mix(in srgb, var(--m-bg) 62%, transparent)),
+      repeating-linear-gradient(90deg, var(--m-1) 0 49.7%, var(--m-line) 49.7% 50.3%, var(--m-1) 50.3% 100%),
+      repeating-linear-gradient(0deg, var(--m-1) 0 49.7%, var(--m-line) 49.7% 50.3%, var(--m-1) 50.3% 100%);
+  }
+  .q-panel {
+    max-width: 560px; margin: 0 auto;
+    background: var(--m-1);
+    border: 1px solid var(--m-line2);
+    border-radius: 12px;
+    box-shadow: 0 18px 44px rgba(0,0,0,0.5);
+    overflow: hidden;
+  }
+  .q-head { display: flex; align-items: baseline; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--m-line); }
+  .q-head b { font: 620 13px/1 var(--mono); }
+  .q-head span { font-size: 11px; color: var(--m-fg2); }
+  .q-row { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; padding: 11px 16px; border-bottom: 1px solid var(--m-line); align-items: center; }
+  .q-row.woke { background: color-mix(in srgb, var(--m-warn) 7%, transparent); }
+  .q-id { display: flex; align-items: center; gap: 8px; font: 600 12px/1 var(--ui); }
+  .q-id .glyph { font-family: var(--mono); color: var(--m-fg1); }
+  .q-age { font: 500 11px/1 var(--mono); color: var(--m-fg2); font-variant-numeric: tabular-nums; }
+  .q-tags { grid-column: 2 / 4; display: flex; gap: 6px; }
+  .q-woke-tag { font: 600 9.5px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--m-warn); border: 1px solid color-mix(in srgb, var(--m-warn) 55%, transparent); border-radius: 4px; padding: 3px 6px; }
+  .q-tail { grid-column: 1 / 4; display: grid; gap: 2px; padding-left: 15px; border-left: 2px solid var(--m-line2); }
+  .q-foot { display: flex; gap: 14px; padding: 10px 16px; font-size: 11px; color: var(--m-fg2); flex-wrap: wrap; }
+  .q-foot span { display: inline-flex; gap: 6px; align-items: center; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+  .m-panel { background: var(--m-1); border: 1px solid var(--m-line2); border-radius: 10px; overflow: hidden; }
+  .m-panel-h { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-bottom: 1px solid var(--m-line); font: 620 12px/1 var(--mono); }
+  .m-panel-h .sub { font-weight: 500; color: var(--m-fg2); font-size: 10.5px; margin-left: auto; }
+  .m-panel-b { padding: 13px; display: grid; gap: 10px; }
+  .m-field { display: grid; gap: 5px; }
+  .m-field label { font: 600 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--m-fg2); }
+  .m-input { font: 500 11.5px/1.3 var(--mono); background: var(--m-2); border: 1px solid var(--m-line2); border-radius: 7px; padding: 7px 9px; color: var(--m-fg); }
+  .m-check { display: flex; gap: 7px; align-items: center; font-size: 11.5px; color: var(--m-fg1); }
+  .m-check i { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--m-line2); flex: none; display: inline-block; }
+  .m-check.on i { background: var(--m-acc); border-color: var(--m-acc); }
+  .m-cmd { font-family: var(--mono); font-size: 10.8px; line-height: 1.7; background: var(--m-bg); border: 1px solid var(--m-line); border-radius: 8px; padding: 10px 12px; color: var(--m-fg1); overflow-x: auto; white-space: pre; }
+  .m-cmd b { color: var(--m-fg); font-weight: 500; }
+  .m-note { font-size: 10.5px; color: var(--m-fg2); }
+  .m-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .m-radio { display: flex; gap: 7px; align-items: center; font-size: 11.5px; color: var(--m-fg1); }
+  .m-radio i { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--m-line2); flex: none; display: inline-block; }
+  .m-radio.on i { border: 4px solid var(--m-acc); }
+
+  .m-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 13px; background: var(--m-1); border-bottom: 1px solid var(--m-line); flex-wrap: wrap; }
+  .m-term { background: var(--m-bg); padding: 13px 15px; display: grid; gap: 3px; }
+  .m-line { font-family: var(--mono); font-size: 11.3px; white-space: pre; color: var(--m-fg1); overflow: hidden; text-overflow: ellipsis; }
+  .m-line.dim { color: var(--m-fg2); }
+  .m-line.err { color: var(--m-bad); }
+  .m-line.sel { background: color-mix(in srgb, var(--m-acc) 22%, transparent); border-radius: 3px; }
+  .m-float {
+    position: absolute; right: 22px; top: 50px;
+    display: inline-flex; gap: 8px; align-items: center;
+    background: var(--m-3); border: 1px solid var(--m-line2);
+    border-radius: 99px; padding: 6px 11px;
+    font: 600 11px/1 var(--ui); color: var(--m-fg);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.45);
+  }
+
+  .phone-stage { display: flex; justify-content: center; padding: 26px 14px; background:
+      linear-gradient(color-mix(in srgb, var(--m-bg) 30%, transparent), color-mix(in srgb, var(--m-bg) 30%, transparent)), var(--m-1); }
+  .phone {
+    width: 320px; max-width: 100%;
+    background: var(--m-bg);
+    border: 1px solid var(--m-line2);
+    border-radius: 26px;
+    overflow: hidden;
+    box-shadow: 0 24px 54px rgba(0,0,0,0.55);
+  }
+  .phone-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--m-line); }
+  .phone-head b { font: 620 13px/1.2 var(--mono); display: block; }
+  .phone-head span { font-size: 10.5px; color: var(--m-fg2); }
+  .p-sec { padding: 10px 16px 4px; font: 600 9.5px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--m-fg2); }
+  .p-row { display: flex; align-items: center; gap: 9px; padding: 9px 16px; border-bottom: 1px solid var(--m-line); font-size: 12px; }
+  .p-row .q-age { margin-left: auto; }
+  .p-term { border-top: 1px solid var(--m-line); }
+  .p-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--m-line); align-items: center; }
+  .p-input .m-input { flex: 1; }
+
+  .dd { position: relative; }
+  .dd-menu {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 3;
+    min-width: 240px;
+    background: var(--m-3); border: 1px solid var(--m-line2); border-radius: 9px;
+    box-shadow: 0 14px 34px rgba(0,0,0,0.5);
+    padding: 5px; display: grid; gap: 1px;
+  }
+  .dd-item { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 6px; font: 500 11px/1.2 var(--mono); color: var(--m-fg1); }
+  .dd-item.on { background: color-mix(in srgb, var(--m-acc) 16%, transparent); color: var(--m-fg); }
+  .dd-item .st { margin-left: auto; color: var(--m-fg2); font-variant-numeric: tabular-nums; }
+  .dd-item .st .add { color: var(--m-ok); } .dd-item .st .del { color: var(--m-bad); }
+  .dd-sep { height: 1px; background: var(--m-line2); margin: 4px 2px; }
+  .dd-item.danger { color: var(--m-bad); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .m-dot.warn.pulse { animation: mpulse 1.6s ease-in-out infinite; }
+    @keyframes mpulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Harness Deck · design notes · 2026-08-01</p>
+  <h1>What T3 Code got right — and how to steal it without the threads</h1>
+  <p class="stand">
+    A teardown of <a href="https://github.com/pingdotgg/t3code">pingdotgg/t3code</a> (repo clone + web sweep),
+    distilled into six features re-landed on Harness Deck's axes: the pane, the workspace, the worktree.
+    No conversation threads, no output parsing — the deck stays a place where you watch real terminals.
+  </p>
+
+  <div class="statrow">
+    <div class="stat"><b>16,217&thinsp;★</b><span>in ~6 months (created 2026-02-08)</span></div>
+    <div class="stat"><b>27.4k</b><span>npm installs of <code>t3</code> last week</span></div>
+    <div class="stat"><b>5</b><span>agent CLIs: Claude, Codex, Cursor, Grok, OpenCode</span></div>
+    <div class="stat"><b>4</b><span>surfaces: web, desktop, iOS, Android</span></div>
+    <div class="stat"><b>1,018</b><span>open issues; contributions mostly closed</span></div>
+    <div class="stat flag"><b>0</b><span>desktop notifications, badges, or tray — attention is mobile-only</span></div>
+  </div>
+  <p class="statnote">Counts verified against the GitHub and npm APIs on 2026-08-01.</p>
+
+  <h2>The shape of the thing</h2>
+  <p>
+    One correction to the mental model first: T3 Code is not a chat wrapper. It runs <strong>real server-owned PTYs</strong>
+    rendered with Ghostty's VT engine on every surface, and the terminal is a first-class panel. What makes it
+    thread-based is deeper: the <strong>atomic unit of work is a conversation</strong>. A thread owns a branch, a worktree,
+    a permission mode, and a parsed, normalized event stream produced by per-provider adapters — a 3,951-line
+    Claude SDK adapter, a 47k-line generated Codex client, a full ACP implementation. That buys them first-class
+    approvals and plan mode; it costs them an adapter treadmill, a provider locked mid-thread, and field reports of
+    <a href="https://github.com/pingdotgg/t3code/issues/695">~3× wall-clock overhead vs the raw CLI</a>.
+  </p>
+  <p>
+    Harness Deck's identity is the opposite bet: the unit is a <strong>process in a real PTY</strong>, output is shown rather
+    than parsed, and the only universal signal is timing (the quiet timer) plus what the terminal already emits
+    (the bell, the OSC title). Every borrow below honors that bet.
+  </p>
+
+  <div class="rulebox">
+    <p class="eyebrow">The translation rule</p>
+    <p>
+      <strong>Steal the semantics, keep the terminal.</strong> Where T3 Code attaches a behavior to a thread, attach it to a
+      pane, a workspace, or a worktree. Where they parse provider events to know what happened, show the raw
+      tail and let the user's eyes parse it. Where they run a hidden RPC, run a visible command in a real pane.
+    </p>
+  </div>
+
+  <h2>What they actually got right</h2>
+  <div class="cards">
+    <div class="card">
+      <h4>One runtime boundary → every surface free</h4>
+      <p>The server owns every process, terminal, and git op; clients own nothing. Web, desktop, phone, and remote all came from one decision. <q>Remoteness is expressed at the connection layer, never by splitting the runtime.</q></p>
+      <span class="ev">docs/internals/remote.md · apps/server/src/ws.ts</span>
+    </div>
+    <div class="card">
+      <h4>The thread inbox</h4>
+      <p>Settle (done), snooze with Gmail-style presets, and a raised hand that outranks your snooze when an approval or failure lands — plus a <q>Woke</q> badge because sort order is deliberately static.</p>
+      <span class="ev">packages/client-runtime/src/state/threadSettled.ts</span>
+    </div>
+    <div class="card">
+      <h4>One-button ship</h4>
+      <p><q>When it's good, one button opens the PR on GitHub with a generated title, body and changelog. No terminal dance required.</q> Four forges, PR-template detection, per-file staging.</p>
+      <span class="ev">GitActionsControl.tsx · apps/server/src/sourceControl/</span>
+    </div>
+    <div class="card">
+      <h4>Checkpoints as hidden git refs</h4>
+      <p>Every turn is bracketed by a ref no one sees in <code>git status</code>; <q>revert to here</q> restores the tree (and, via provider resume cursors, the conversation).</p>
+      <span class="ev">apps/server/src/checkpointing/CheckpointStore.ts</span>
+    </div>
+    <div class="card">
+      <h4>Worktree hygiene, including setup</h4>
+      <p>Branch-per-thread worktrees with orphan cleanup — and <code>t3.json</code> scripts with <code>runOnWorktreeCreate</code>, so a fresh worktree installs its own deps before the agent starts.</p>
+      <span class="ev">packages/contracts/src/t3ProjectFile.ts</span>
+    </div>
+    <div class="card">
+      <h4>Selection is context</h4>
+      <p>Select terminal lines or diff line ranges → they become chips in the composer, batched into the next prompt. Point-and-say instead of copy-paste-describe.</p>
+      <span class="ev">apps/web/src/lib/terminalContext.ts · reviewCommentContext.ts</span>
+    </div>
+    <div class="card">
+      <h4>Auxiliary text on your own subscription</h4>
+      <p>Thread titles, commit messages, PR bodies are generated by the provider you already pay for — no side API key for the small stuff.</p>
+      <span class="ev">apps/server/src/textGeneration/</span>
+    </div>
+    <div class="card">
+      <h4>Reversibility as a written rule</h4>
+      <p><q>Reverse states. If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. A one-way door is a bug.</q> Worth adopting verbatim as a design principle.</p>
+      <span class="ev">AGENTS.md</span>
+    </div>
+  </div>
+
+  <!-- ============================================================ F1 -->
+  <div class="fhead">
+    <span class="fnum">F1</span>
+    <h2 style="border:0;padding:0;margin:0">The waiting queue</h2>
+    <span class="tag size">Size S–M</span>
+    <span class="tag">renderer + small main</span>
+  </div>
+  <p class="borrow"><b>Borrowed:</b> the thread inbox — settle / snooze / raised-hand wake · <b>Kept:</b> no parsing; the tail of the terminal is the preview.</p>
+  <p>
+    Attention routing answers <em>that</em> a pane wants you. It doesn't answer <em>which one first</em>, <em>why</em>, or
+    <em>can it wait</em> — with six panes, <kbd>Ctrl+Shift+J</kbd> is a blind jump. T3 Code's answer is precomputed flags
+    (<code>hasPendingApprovals</code>, <code>hasPendingUserInput</code>) — which requires parsing. The deck's answer:
+    show the <strong>last few lines of each waiting pane's buffer</strong>. For an agent at an approval gate, that tail
+    <em>is</em> the question it's asking. <code>pty:transcript</code> already exists; strip ANSI, keep three lines.
+  </p>
+  <p>
+    Add the inbox verbs, all on the pane, all reversible: <strong>acknowledge</strong> (seen it — drop it from the badge
+    until it next goes quiet), <strong>snooze</strong> (until next quiet, or for an hour), <strong>mute</strong> (this build pane never
+    counts). And the one genuinely free upgrade: the terminal <strong>bell</strong> is already tracked per pane, and Claude
+    Code rings it at permission prompts — <strong>a bell wakes a snoozed pane immediately</strong>. That's T3 Code's
+    raised-hand override, reconstructed from a 150-year-old terminal signal instead of an SDK.
+  </p>
+
+  <figure class="mock">
+    <div class="win">
+      <div class="winbar"><i></i><i></i><i></i><span class="t">Harness Deck — waiting queue (Ctrl+Shift+U)</span></div>
+      <div class="q-backdrop">
+        <div class="q-panel">
+          <div class="q-head"><b>Waiting for you</b><span>3 panes · oldest first · order never reshuffles</span></div>
+          <div class="q-row">
+            <span class="q-id"><span class="m-swatch" style="background:#7c8cf8"></span><span class="glyph">⊹</span>api — refactor auth</span>
+            <span></span>
+            <span class="q-age">4m</span>
+            <div class="q-tail">
+              <span class="m-tail">Allow Bash(git push origin hd/refactor-auth)?</span>
+              <span class="m-tail"><span class="hot">❯ 1. Yes   2. Yes, don't ask again   3. No</span></span>
+            </div>
+          </div>
+          <div class="q-row woke">
+            <span class="q-id"><span class="m-swatch" style="background:#3fb9a0"></span><span class="glyph">◆</span>worker — retry queue</span>
+            <span></span>
+            <span class="q-age">12m</span>
+            <div class="q-tags"><span class="q-woke-tag">woke — bell while snoozed</span></div>
+            <div class="q-tail">
+              <span class="m-tail">Apply patch to src/queue.ts? <span class="hot">[y/N]</span></span>
+            </div>
+          </div>
+          <div class="q-row" style="border-bottom:0">
+            <span class="q-id"><span class="m-swatch" style="background:#d97757"></span><span class="glyph">⊹</span>webapp — fix flaky test</span>
+            <span></span>
+            <span class="q-age">18m</span>
+            <div class="q-tail">
+              <span class="m-tail">✓ 214 passed, 0 failed · Done. Anything else?</span>
+            </div>
+          </div>
+          <div class="q-foot">
+            <span><span class="m-kbd">↵</span> jump</span>
+            <span><span class="m-kbd">A</span> acknowledge</span>
+            <span><span class="m-kbd">S</span> snooze</span>
+            <span><span class="m-kbd">M</span> mute pane</span>
+            <span><span class="m-kbd">Esc</span> close</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      The queue overlay, palette-styled, over a dimmed deck. Each row is a pane chip plus the raw tail of its
+      buffer — the approval prompt, the y/N, or the "done" line, shown not classified. The amber row was snoozed,
+      rang the bell, and woke.
+    </figcaption>
+  </figure>
+
+  <ul class="mech">
+    <li><b>State:</b> <code>Pane</code> gains <code>attentionMuted?: boolean</code> (persisted), <code>snoozedUntil?: number | 'next-quiet'</code> and <code>acked?: boolean</code> (transient); <code>waitingSince</code> kept in the renderer when status flips to <code>waiting</code>.</li>
+    <li><b>Tail:</b> <code>pty:transcript</code> (exists) → strip ANSI (the HD-8 stripper) → last 3 non-empty lines, fetched when the queue opens and when a visible row's pane re-quiets.</li>
+    <li><b>Surfaces:</b> new <code>WaitingQueue.tsx</code> overlay on <kbd>Ctrl+Shift+U</kbd> + palette; sidebar badge counts exclude muted/acked/snoozed; <kbd>Ctrl+Shift+J</kbd> now walks oldest-first and skips snoozed panes.</li>
+    <li><b>Bell override:</b> in the store's bell handler, a snoozed pane with a fresh bell clears its snooze and re-enters the queue flagged <code>woke</code>.</li>
+  </ul>
+
+  <!-- ============================================================ F2 -->
+  <div class="fhead">
+    <span class="fnum">F2</span>
+    <h2 style="border:0;padding:0;margin:0">Ship &amp; resolve</h2>
+    <span class="tag size">Size M</span>
+    <span class="tag">compare view + git.ts</span>
+  </div>
+  <p class="borrow"><b>Borrowed:</b> one-button commit → push → PR · <b>Kept:</b> the commands run in a visible pane, and git still lives in a terminal.</p>
+  <p>
+    T3 Code's marketing line — <q>no terminal dance required</q> — names a real cost: after Compare says pane B won,
+    landing B's branch is six commands typed by hand, times N worktrees. The deck's translation isn't a hidden
+    RPC; it's a <strong>Ship dialog that composes the exact command line and runs it in a one-off pane in that
+    worktree</strong>. You watch it happen; failures surface as scrollback, not toast mysteries. <code>gh</code>/<code>glab</code>
+    are detected with the same <code>findExecutable</code> machinery profiles already use, and the optional
+    commit-message flourish borrows their best trick on your terms: pipe the diff through
+    <code>claude&nbsp;-p</code> — the subscription you already have, no side key.
+  </p>
+  <p>
+    Then the part T3 Code structurally cannot have, because it has no side-by-side at all: <strong>Resolve</strong>. A
+    comparison of three worktrees wants a verdict — ship the winner, then remove the losers' worktrees and
+    branches in one confirmed sweep instead of three close-pane dialogs.
+  </p>
+
+  <figure class="mock">
+    <div class="win">
+      <div class="winbar"><i></i><i></i><i></i><span class="t">Compare — ship one column, resolve the rest</span></div>
+      <div class="mbody">
+        <div class="two">
+          <div class="m-panel">
+            <div class="m-panel-h">Ship <span style="font-family:var(--mono);color:var(--m-fg2)">⊹ api — refactor auth</span><span class="sub">hd/refactor-auth</span></div>
+            <div class="m-panel-b">
+              <div class="m-field"><label>Commit message</label><span class="m-input">refactor auth into middleware</span></div>
+              <div class="m-row">
+                <span class="m-check on"><i></i>commit all</span>
+                <span class="m-check on"><i></i>push</span>
+                <span class="m-check on"><i></i>open PR — gh found</span>
+                <span class="m-check"><i></i>propose message via claude -p</span>
+              </div>
+              <div class="m-cmd">git add -A
+git commit -m <b>"refactor auth into middleware"</b>
+git push -u origin <b>hd/refactor-auth</b>
+gh pr create --fill</div>
+              <div class="m-row">
+                <span class="m-btn primary">Run in a pane</span>
+                <span class="m-btn">Copy commands</span>
+                <span class="m-note">Runs visibly, in this worktree. Nothing happens off-screen.</span>
+              </div>
+            </div>
+          </div>
+          <div class="m-panel">
+            <div class="m-panel-h">Resolve comparison<span class="sub">3 worktrees</span></div>
+            <div class="m-panel-b">
+              <span class="m-radio on"><i></i>⊹ api — refactor auth&nbsp; <b style="color:var(--m-ok)">shipped · PR #214</b></span>
+              <span class="m-check on"><i></i>◆ codex attempt — remove worktree + branch</span>
+              <span class="m-check on"><i></i>⊙ gemini attempt — remove worktree + branch</span>
+              <div class="m-note">Losing branches are deleted only after their worktree removes cleanly. Uncommitted work warns first — same rule as closing a worktree pane.</div>
+              <div class="m-row"><span class="m-btn primary">Resolve</span><span class="m-btn">Keep everything</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      Left: the Ship dialog from a compare column or pane-header menu — an honest command preview, editable,
+      then executed in a visible transient pane. Right: Resolve, the fan-out finisher — pick the winner, sweep the losers.
+    </figcaption>
+  </figure>
+
+  <ul class="mech">
+    <li><b>Entry points:</b> a <code>Ship…</code> ghost button in each compare column header and in the worktree pane's header menu; <code>Resolve…</code> in the Compare header when ≥2 worktree panes exist.</li>
+    <li><b>Execution:</b> a transient pane spawned with the composed line via the existing <code>viaShell</code> path — no new git plumbing beyond <code>gh</code>/<code>glab</code> detection; Compare's read-only philosophy survives because Compare still only <em>reads</em>.</li>
+    <li><b>Cleanup:</b> Resolve batches the existing close-worktree-pane flow (confirm → <code>git worktree remove</code> → <code>git branch -d</code>), reusing its dirty-tree warning.</li>
+  </ul>
+
+  <!-- ============================================================ F3 -->
+  <div class="fhead">
+    <span class="fnum">F3</span>
+    <h2 style="border:0;padding:0;margin:0">Worktree setup hook + deck actions</h2>
+    <span class="tag size">Size S–M</span>
+    <span class="tag">store + toolbar</span>
+  </div>
+  <p class="borrow"><b>Borrowed:</b> <code>t3.json</code> scripts, <code>runOnWorktreeCreate</code>, script keybindings · <b>Kept:</b> output lands in a pane, not a log drawer.</p>
+  <p>
+    The sharpest practical idea in <code>t3.json</code>: a fresh worktree is a broken worktree until deps install.
+    Hand a task to three agents in three worktrees today and all three burn their first minutes discovering
+    there's no <code>node_modules</code>. Fix: a per-workspace <strong>setup command</strong> (<code>npm ci</code>,
+    <code>pnpm install</code>) that runs <em>in the pane, before the agent starts</em>, by wrapping the spawn as
+    <code>setup &amp;&amp; exec &lt;agent&gt;</code> through the existing <code>viaShell</code> path. You watch the install
+    scroll by, then the agent takes over — same pane, no hidden phase. Templates carry it, so a template that
+    fans out worktrees finally works end-to-end.
+  </p>
+  <p>
+    Its sibling: <strong>deck actions</strong> — a few named commands per workspace (<code>tests</code>, <code>typecheck</code>,
+    <code>dev</code>) rendered as toolbar chips and palette entries. An action opens a fresh shell pane in the workspace
+    folder (or a chosen worktree) and runs there. This is the praised "custom UI buttons" feature of theirs,
+    minus any custom UI runtime: an action is just a pane you didn't have to type into.
+  </p>
+
+  <figure class="mock">
+    <div class="win">
+      <div class="winbar"><i></i><i></i><i></i><span class="t">Toolbar with actions · workspace settings fragment</span></div>
+      <div class="m-toolbar">
+        <span class="m-swatch" style="background:#d97757"></span>
+        <b style="font-size:12px">api</b>
+        <span class="m-chip">📁 ~/code/api</span>
+        <span class="m-chip">⌥ main · <span style="color:var(--m-warn)">3</span></span>
+        <span style="width:10px"></span>
+        <span class="m-chip on">▸ tests</span>
+        <span class="m-chip">▸ typecheck</span>
+        <span class="m-chip">▸ dev</span>
+        <span class="m-chip" style="border-style:dashed">+ action</span>
+        <span style="margin-left:auto" class="m-btn">Broadcast</span>
+        <span class="m-btn primary">+ New pane</span>
+      </div>
+      <div class="mbody" style="display:grid;gap:10px">
+        <div class="m-field" style="max-width:520px">
+          <label>After creating a worktree, run</label>
+          <span class="m-input">npm ci</span>
+          <span class="m-note">Runs visibly in the new pane, then hands over to the agent — fresh worktrees have no node_modules. Saved with templates.</span>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      Action chips sit after the repo chip; clicking one opens a shell pane running that command. The setup
+      command lives in workspace settings and rides along in templates. <kbd>Alt+Shift+1…9</kbd> fires actions by position.
+    </figcaption>
+  </figure>
+
+  <ul class="mech">
+    <li><b>State:</b> <code>Workspace</code> gains <code>setupCommand?: string</code> and <code>actions?: {label, command}[]</code>; both copied into <code>WorkspaceTemplate</code>.</li>
+    <li><b>Spawn:</b> worktree panes with a setup command become <code>viaShell</code> panes running <code>&lt;setup&gt; &amp;&amp; exec &lt;agent argv&gt;</code> — restart re-runs setup, which is correct (idempotent installs are the norm).</li>
+    <li><b>Chips:</b> overflow past ~4 actions collapses into a dropdown; every action is also a palette command.</li>
+  </ul>
+
+  <!-- ============================================================ F4 -->
+  <div class="fhead">
+    <span class="fnum">F4</span>
+    <h2 style="border:0;padding:0;margin:0">Quiet checkpoints</h2>
+    <span class="tag size">Size M</span>
+    <span class="tag">git.ts + compare</span>
+  </div>
+  <p class="borrow"><b>Borrowed:</b> per-turn hidden-ref checkpoints · <b>Kept:</b> the "turn" is the quiet timer — the same provider-agnostic signal attention already trusts.</p>
+  <p>
+    T3 Code brackets every turn with a hidden git ref, which makes "what did the agent just do" and "undo that"
+    answerable. Their turn boundary comes from parsed provider events. The deck already <em>has</em> a turn
+    boundary it believes in: <strong>the moment a worktree pane falls quiet</strong> — the same event that refreshes the
+    repo chip, on the observation that an agent going quiet has usually just stopped writing files. On that event,
+    snapshot the tree into <code>refs/hd/&lt;pane&gt;/&lt;n&gt;</code> (temp index + <code>write-tree</code> +
+    <code>commit-tree</code> — the working tree and the user's index are never touched, and <code>git status</code> never
+    shows it). A week of bursts costs kilobytes and vanishes with the worktree.
+  </p>
+  <p>
+    Payoff in Compare: each column's baseline becomes a dropdown — <em>since branch point</em>, or any burst —
+    so you can read what changed <em>in the last burst alone</em> instead of re-reading the whole diff. And a guarded
+    <em>restore to burst N</em> gives every harness a code-level undo, whether or not the CLI has its own rewind.
+    Conversation state stays the CLI's own business (<code>claude --resume</code> exists); the deck only promises the tree.
+  </p>
+
+  <figure class="mock">
+    <div class="win" style="overflow:visible">
+      <div class="winbar"><i></i><i></i><i></i><span class="t">Compare column — choosing the diff baseline</span></div>
+      <div class="mbody" style="padding-bottom:120px">
+        <div class="m-row" style="gap:10px">
+          <span class="m-chip on">⊹ api — refactor auth</span>
+          <div class="dd">
+            <span class="m-chip">diff since: burst 6 ▾</span>
+            <div class="dd-menu">
+              <span class="dd-item">since branch point <span class="st">+214 <span class="add">−12</span></span></span>
+              <span class="dd-item on">burst 6 · 12:41 <span class="st"><span class="add">+38</span> <span class="del">−6</span></span></span>
+              <span class="dd-item">burst 5 · 12:33 <span class="st"><span class="add">+96</span> <span class="del">−4</span></span></span>
+              <span class="dd-item">burst 4 · 12:19 <span class="st"><span class="add">+80</span> <span class="del">−2</span></span></span>
+              <span class="dd-sep"></span>
+              <span class="dd-item danger">Restore worktree to burst 5…</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      Each quiet event bookmarks the tree. The compare column can then answer "what did the last burst change"
+      — the question you actually have after a broadcast — and restore is one guarded action, uniform across every harness.
+    </figcaption>
+  </figure>
+
+  <ul class="mech">
+    <li><b>Capture:</b> on <code>pty:quiet {quiet: true}</code> for worktree panes with changes: <code>GIT_INDEX_FILE=&lt;tmp&gt; git add -A</code> → <code>write-tree</code> → <code>commit-tree</code> → <code>update-ref refs/hd/&lt;paneId&gt;/&lt;n&gt;</code>. Skip if the tree hash didn't change; keep the last 20 refs.</li>
+    <li><b>Read:</b> <code>DiffRequest</code> gains <code>base?: string</code>; the column dropdown lists refs with cached stat totals.</li>
+    <li><b>Restore:</b> <code>git restore --source=&lt;ref&gt; --worktree -- .</code> behind the same warn-on-dirty confirm as worktree removal; refs deleted with the worktree.</li>
+  </ul>
+
+  <!-- ============================================================ F5 -->
+  <div class="fhead">
+    <span class="fnum">F5</span>
+    <h2 style="border:0;padding:0;margin:0">Selection → prompt</h2>
+    <span class="tag size">Size S</span>
+    <span class="tag">renderer only</span>
+  </div>
+  <p class="borrow"><b>Borrowed:</b> terminal-lines-as-context chips · <b>Kept:</b> it's just text into the broadcast box — no chip runtime, no context protocol.</p>
+  <p>
+    The most quietly excellent T3 Code interaction: select output, and it becomes prompt context. The deck's
+    version is one shortcut: select lines in any pane — a stack trace in the shell pane, a failing assertion in the
+    dev-server pane — hit <kbd>Ctrl+Shift+E</kbd>, and the broadcast bar opens with the selection appended as a
+    fenced block, agent panes pre-targeted. Type "fix this" and send. It replaces the
+    select-copy-open-broadcast-paste-describe shuffle with point-and-say, and it composes with everything
+    broadcast already has: targets, history, snippets, dictation.
+  </p>
+
+  <figure class="mock">
+    <div class="win" style="position:relative">
+      <div class="winbar"><i></i><i></i><i></i><span class="t">shell pane → broadcast</span></div>
+      <div class="m-term">
+        <span class="m-line dim">$ npm test</span>
+        <span class="m-line sel err">FAIL src/auth/session.test.ts</span>
+        <span class="m-line sel err">  ● refreshes an expired session token</span>
+        <span class="m-line sel">    Expected: 200 · Received: 401</span>
+        <span class="m-line dim">Tests: 1 failed, 213 passed</span>
+      </div>
+      <span class="m-float">Send to agents <span class="m-kbd">⌃⇧E</span></span>
+      <div class="m-toolbar" style="border-top:1px solid var(--m-line);border-bottom:0">
+        <span class="m-chip on">⊹ claude</span>
+        <span class="m-chip on">◆ codex</span>
+        <span class="m-chip">$ shell</span>
+        <span class="m-note" style="margin-left:auto">from: shell pane, 3 lines</span>
+      </div>
+      <div class="mbody" style="padding-top:0">
+        <div class="m-cmd">```
+FAIL src/auth/session.test.ts
+  ● refreshes an expired session token
+    Expected: 200 · Received: 401
+```
+<b>fix this — the session refresh path regressed</b></div>
+      </div>
+    </div>
+    <figcaption>
+      Selection travels as a fenced block into the broadcast box; the user adds the instruction. The same verb
+      belongs in the pane context menu, and later on compare-view diff lines.
+    </figcaption>
+  </figure>
+
+  <!-- ============================================================ F6 -->
+  <div class="fhead">
+    <span class="fnum">F6</span>
+    <h2 style="border:0;padding:0;margin:0">Deck Remote</h2>
+    <span class="tag size">Size L · phased</span>
+    <span class="tag">new main module</span>
+  </div>
+  <p class="borrow"><b>Borrowed:</b> one execution boundary, phone-first attention · <b>Kept:</b> the phone shows the same PTYs; nothing forks, nothing tunnels, no accounts.</p>
+  <p>
+    The feature Theo daily-drives (<q>it has changed how I code</q>) and the one their architecture earned:
+    because the server owns everything, any device is a client. The deck is closer to this than it looks —
+    <strong>processes already live in the main process, addressed by pane id, with replay buffers</strong>; the renderer
+    is already a thin client over a bridge. Deck Remote adds a second, deliberately smaller client: an opt-in
+    local HTTP server (loopback by default, LAN by choice) serving one self-contained page — <strong>the waiting
+    queue, pane list, and a live read-only terminal view</strong>, paired by QR with a bearer token.
+  </p>
+  <p>
+    What this is for is not coding from a beach. It's F1's queue in your pocket: three agents grinding, you make
+    coffee, the phone shows <em>worker — waiting 2m</em> with the approval prompt as its tail; phase 2 lets you type
+    <code>1↵</code> back. Where T3 Code built Cloudflare Workers, DPoP, and native apps, the deck ships a page and a
+    doc section titled "put it on your tailnet" — encryption and reachability are Tailscale's job, not new infra.
+    Notably, their remote story is what makes their <em>missing desktop notifications</em> survivable; the deck gets to
+    have both.
+  </p>
+
+  <figure class="mock">
+    <div class="win">
+      <div class="winbar"><i></i><i></i><i></i><span class="t">Deck Remote — phone browser, paired by QR</span></div>
+      <div class="phone-stage">
+        <div class="phone">
+          <div class="phone-head"><b>Harness Deck</b><span>alex-mbp · via tailnet · read-only</span></div>
+          <div class="p-sec">Waiting · 2</div>
+          <div class="p-row">
+            <span class="m-dot warn pulse"></span><span>⊹ api — refactor auth</span><span class="q-age">4m</span>
+          </div>
+          <div class="p-row">
+            <span class="m-dot warn"></span><span>◆ worker — retry queue</span><span class="q-age">12m</span>
+          </div>
+          <div class="p-sec">Running · 3</div>
+          <div class="p-row" style="border-bottom:0">
+            <span class="m-dot ok"></span><span>⊹ webapp — fix flaky test</span><span class="q-age">live</span>
+          </div>
+          <div class="p-term m-term">
+            <span class="m-line dim">⊹ api — refactor auth</span>
+            <span class="m-line">Allow Bash(git push origin hd/refactor-auth)?</span>
+            <span class="m-line"><span style="color:var(--m-warn)">❯ 1. Yes   2. Yes, don't ask again   3. No</span></span>
+          </div>
+          <div class="p-input">
+            <span class="m-input" style="color:var(--m-fg2)">unlock to type…</span>
+            <span class="m-btn">🔒</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      Phase R1 is glance-only: queue, statuses, live terminal tails over SSE. R2 adds typing behind an explicit
+      unlock. The page is served by the app itself — xterm.js again, one HTML file, no store, no build farm.
+    </figcaption>
+  </figure>
+
+  <ul class="mech">
+    <li><b>R1 — glance:</b> HTTP + SSE from the main process (zero new runtime deps); serves one bundled page; state = workspaces/panes/status/waiting + terminal replay & live bytes, read-only. QR in Settings encodes <code>http://&lt;addr&gt;:&lt;port&gt;/#&lt;token&gt;</code>; token rotates on disable.</li>
+    <li><b>R2 — hands:</b> input POSTs gated by a per-device "allow typing" toggle; queue verbs (ack/snooze) and the broadcast box join.</li>
+    <li><b>R3 — reach:</b> nothing to build — document Tailscale Serve; revisit a <code>ws</code> dependency only if SSE throughput ever hurts.</li>
+    <li><b>Honesty box:</b> plain HTTP on a LAN is readable by the LAN — say so in Settings; loopback-only default, LAN opt-in, read-only default, no tunnel service ever.</li>
+  </ul>
+
+  <h2>Quick wins</h2>
+  <ul>
+    <li><b>Unified/split toggle</b> in Compare's full-diff mode — their diff viewer's one clearly-nicer surface. (S)</li>
+    <li><b>Deck-wide search:</b> DeckSearch currently scopes to the active workspace; a flag to sweep all mounted workspaces — their palette searches everything, and it reads as magic. (S)</li>
+    <li><b>Launcher variants:</b> saved launchers already carry env — add a "duplicate as variant" affordance with hints for <code>CLAUDE_CONFIG_DIR</code> (work/personal accounts) and model-pinning vars. Their named provider instances, for free. (S)</li>
+    <li><b><code>hd .</code></b> — a tiny CLI shim that opens/focuses the workspace for the current folder; their <code>t3code .</code> bridge, and the cheapest onboarding moment there is. (S)</li>
+    <li><b>Editable keybindings</b> (<code>keybindings.json</code> + conflict listing in Help) — theirs ships when-clauses and a conflict UI; a flat remap file is 80% of the value. (M)</li>
+    <li><b>Adopt their principle verbatim</b> in next-features.md: <q>a one-way door is a bug</q> — F1's verbs all obey it. (free)</li>
+  </ul>
+
+  <h2>Leave on the table</h2>
+  <ul>
+    <li><b>The thread model itself</b> — unit-of-work = conversation requires parsing everything; the cost shows up as a 4k-line adapter per provider, provider locked mid-thread, and the <a href="https://github.com/pingdotgg/t3code/issues/695">3× overhead report</a>. The deck's whole bet is that the TUI is already the good UI.</li>
+    <li><b>Per-provider SDK adapters</b> — the treadmill the timing-only stance exists to avoid; every borrow above works on bytes, timing, and git.</li>
+    <li><b>The embedded browser/preview product</b> — genuinely impressive (port scanning, agent-driven clicks, recordings), and a whole second product to maintain. The user's browser is one <kbd>Cmd+Tab</kbd> away.</li>
+    <li><b>Managed tunnel infrastructure</b> — Workers, Postgres, DPoP, and still no E2E encryption. "Use your tailnet" is a doc section, not a service.</li>
+    <li><b>Native mobile apps</b> — two app stores of upkeep to render a terminal; Deck Remote's one page serves the same need at deck scale.</li>
+  </ul>
+
+  <h2>The scoreboard</h2>
+  <p>Where the two products actually stand, for positioning — their side sourced from the teardown and issue tracker.</p>
+  <div class="scroll">
+    <table>
+      <tr><th></th><th>Harness Deck</th><th>T3 Code</th></tr>
+      <tr><td>Runtime overhead</td><td><b>None to add</b> — the raw CLI in a raw PTY</td><td>Users report ~3× on real tasks (issue #695)</td></tr>
+      <tr><td>Desktop attention</td><td><b>Notify, badge, jump</b> — and F1's queue</td><td>None: no tray, badge, notification, or title change</td></tr>
+      <tr><td>Multi-agent</td><td><b>Broadcast, worktrees, Compare</b> — the thesis</td><td>Absent: one thread center-stage, no fan-out, no side-by-side</td></tr>
+      <tr><td>Steering mid-run</td><td><b>Type into the TUI</b> — its own queue handles it</td><td>Send becomes Stop; queue/steer is a top-voted open request</td></tr>
+      <tr><td>Voice, transcripts</td><td><b>Dictation; export</b></td><td>Neither</td></tr>
+      <tr><td>Remote &amp; mobile</td><td>F6, phased, BYO-network</td><td><b>Excellent</b>: QR pairing, tunnels, native apps, Live Activities</td></tr>
+      <tr><td>Checkpoints</td><td>F4: tree-level, provider-agnostic</td><td><b>Per-turn, code + conversation</b> — their best engineering</td></tr>
+      <tr><td>Shipping a branch</td><td>F2, visible commands</td><td><b>One button, four forges</b>, generated PR bodies</td></tr>
+      <tr><td>Gravity</td><td>Small and private</td><td>16.2k★, 27k installs/wk, ~daily nightlies</td></tr>
+    </table>
+  </div>
+
+  <h2>Build order</h2>
+  <p>
+    F-numbers are the recommended sequence, cheapest-leverage first: <strong>F1</strong> deepens the feature that already
+    distinguishes the deck and is mostly renderer work; <strong>F2 + F3</strong> complete the fan-out story end-to-end
+    (setup → broadcast → compare → ship → resolve); <strong>F4</strong> rides the quiet event that F1 just made more
+    trustworthy; <strong>F5</strong> is an afternoon; <strong>F6</strong> is the horizon feature and deserves its own wave once the
+    queue it would serve exists.
+  </p>
+
+  <h2>Sources</h2>
+  <ul class="srcs">
+    <li>Repo clone + teardown of github.com/pingdotgg/t3code (HEAD 2026-08-02): README, AGENTS.md, docs/internals/*, packages/contracts, apps/server — file paths cited inline in cards</li>
+    <li>github.com/pingdotgg/t3code/issues/695 — 3× overhead report</li>
+    <li>GitHub + npm APIs, queried 2026-08-01 — stars/forks/issues/downloads</li>
+    <li>t3.codes marketing + README — "no terminal dance", BYO-subscription pitch</li>
+    <li>x.com/theo — T3 Connect launch thread ("changed how I code")</li>
+    <li>betterstack.com guide; codeagentswarm &amp; t3codedocs comparisons (unofficial); HN items 47283489/47283655 (muted reception)</li>
+    <li>Harness Deck sources: README.md, docs/next-features.md, src/shared/types.ts, Sidebar/Toolbar/CompareView/BroadcastBar/DeckSearch components</li>
+  </ul>
+</div>

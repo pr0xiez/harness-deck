@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { VoiceSettings } from '@shared/types'
 import { voiceBaseUrl, voiceModel, voiceProvider } from '@shared/voice'
+import { createSpeechGate, type SpeechGate } from './speech'
 import { isLive, useDeck } from './store'
 import { getTerminal } from './terminals'
 
@@ -48,10 +49,6 @@ interface VoiceState {
   dismiss: () => void
 }
 
-/** Speech threshold floor, and the multiple of measured room noise to clear. */
-const SPEECH_LEVEL_MIN = 0.02
-const SPEECH_LEVEL_MAX = 0.12
-const NOISE_MULTIPLE = 3
 /**
  * A lower bar than SPEECH_LEVEL: anything under this never reaches the service.
  * Asked to transcribe silence, a chat model will cheerfully invent a whole
@@ -65,13 +62,6 @@ const AUDIBLE_NOISE_MULTIPLE = 5
  * be as loud as a quiet word, but neither sustains.
  */
 const MIN_VOICED_MS = 150
-/**
- * Room tone is taken as the quietest moment of the recording, not the loudest
- * part of its opening: people start talking before the meter has settled, and
- * treating a first word as "the room" miscalibrates everything after it. Only
- * the first readings, while the microphone spins up, are ignored.
- */
-const FLOOR_SETTLE_MS = 150
 /** Silence that ends a recording once you have started talking. */
 const SILENCE_MS = 1700
 /** Give up waiting for a first word — usually a muted or wrong input device. */
@@ -209,10 +199,8 @@ interface Recording {
   frame: number
   cancelled: boolean
   settled: boolean
-  /** Loudest and quietest levels seen, and how long speech held, for the gate. */
-  peak: number
-  noiseFloor: number
-  voicedMs: number
+  /** Tracks levels and speech time against this room's noise. */
+  gate: SpeechGate
 }
 
 let active: Recording | null = null
@@ -375,9 +363,7 @@ async function beginRecording(): Promise<void> {
     frame: 0,
     cancelled: false,
     settled: false,
-    peak: 0,
-    noiseFloor: 0,
-    voicedMs: 0
+    gate: createSpeechGate()
   }
   active = recording
 
@@ -402,22 +388,7 @@ async function beginRecording(): Promise<void> {
     if (Math.abs(level - useVoice.getState().level) > 0.015) useVoice.setState({ level })
 
     const now = Date.now()
-    // Mics differ by an order of magnitude, so speech is measured against this
-    // room's noise rather than a fixed number.
-    if (rms > 0 && now - startedAt > FLOOR_SETTLE_MS) {
-      recording.peak = Math.max(recording.peak, rms)
-      recording.noiseFloor = recording.noiseFloor
-        ? Math.min(recording.noiseFloor, rms)
-        : rms
-      const threshold = Math.min(
-        SPEECH_LEVEL_MAX,
-        Math.max(SPEECH_LEVEL_MIN, recording.noiseFloor * NOISE_MULTIPLE)
-      )
-      if (rms > threshold) {
-        heardAt = now
-        recording.voicedMs += now - lastTick
-      }
-    }
+    if (recording.gate.sample(rms, now - startedAt, now - lastTick)) heardAt = now
     lastTick = now
 
     const settings = useDeck.getState().settings.voice
@@ -487,7 +458,7 @@ async function transcribeAndDeliver(recording: Recording, recorded: Blob): Promi
   pending = recording
 
   // Never pay to transcribe silence, and never let a model guess at it.
-  if (!heardSomething(recording)) {
+  if (!heardSomething(recording.gate)) {
     pending = null
     note('Nothing came through the microphone — check which input device is selected.')
     return
@@ -650,17 +621,10 @@ async function runVoiceCheck(
     }
 
     const SAMPLE_MS = 50
-    let peak = 0
-    let floor = 0
-    let voicedMs = 0
+    const gate = createSpeechGate()
     const startedAt = Date.now()
     const sampler = window.setInterval(() => {
-      const rms = meter.read()
-      if (rms <= 0 || Date.now() - startedAt < FLOOR_SETTLE_MS) return
-      peak = Math.max(peak, rms)
-      floor = floor ? Math.min(floor, rms) : rms
-      const speech = Math.min(SPEECH_LEVEL_MAX, Math.max(SPEECH_LEVEL_MIN, floor * NOISE_MULTIPLE))
-      if (rms > speech) voicedMs += SAMPLE_MS
+      gate.sample(meter.read(), Date.now() - startedAt, SAMPLE_MS)
     }, SAMPLE_MS)
 
     const recorded = await new Promise<Blob>((done) => {
@@ -677,14 +641,12 @@ async function runVoiceCheck(
     report.recordedMs = ms
     report.bytes = blob.size
     report.recordedBytes = recorded.size
-    report.peakLevel = Number(peak.toFixed(4))
-    report.noiseFloor = Number(floor.toFixed(4))
-    report.voicedMs = voicedMs
+    report.peakLevel = Number(gate.peak.toFixed(4))
+    report.noiseFloor = Number(gate.noiseFloor.toFixed(4))
+    report.voicedMs = gate.voicedMs
     // Dictation stops here when nothing was heard; the check carries on so the
     // rest of the round trip still gets exercised.
-    report.silenceGate = heardSomething({ peak, noiseFloor: floor, voicedMs })
-      ? 'passed'
-      : 'would skip: nothing heard'
+    report.silenceGate = heardSomething(gate) ? 'passed' : 'would skip: nothing heard'
 
     const canTranscribe =
       /^https?:\/\//.test(voiceBaseUrl(voice)) &&

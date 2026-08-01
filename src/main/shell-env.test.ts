@@ -155,7 +155,10 @@ describe('resolveShellEnv', () => {
     onPlatform('linux')
     vi.stubEnv('SHELL', '/bin/zsh')
     // An empty home keeps `withUserBins` out of the PATH assertions below.
+    // Both spellings: os.homedir() reads HOME on POSIX hosts but USERPROFILE
+    // on Windows, regardless of the platform a test pretends to be.
     vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
   })
 
   it('takes the PATH the login shell reported over the one the app inherited', async () => {
@@ -261,19 +264,49 @@ describe('resolveShellEnv', () => {
   })
 
   /**
-   * Marked failing because it describes what should happen, and does not.
-   *
    * Since the Shellshock fix, bash exports a function as `BASH_FUNC_name%%`,
    * and the `%` characters put that name outside the key pattern parseEnv
-   * accepts — so both of its lines fall through to the continuation branch and
-   * are appended to whatever variable came before it. `export -f` in a .bashrc
-   * is all it takes, and when the variable before it is PATH every pane on the
-   * machine inherits a PATH with a shell function embedded in it.
+   * accepts — so without the guard both of its lines fall through to the
+   * continuation branch and are appended to whatever variable came before it.
+   * `export -f` in a .bashrc is all it takes, and when the variable before it
+   * is PATH every pane on the machine inherits a PATH with a shell function
+   * embedded in it.
    */
   it('keeps an exported bash function out of the variable before it', async () => {
     const { probe } = probing(reported('PATH=/usr/bin\nBASH_FUNC_greet%%=() {  echo hi\n}\nLANG=C'))
 
-    expect((await mod.resolveShellEnv(probe)).PATH).toBe('/usr/bin')
+    const env = await mod.resolveShellEnv(probe)
+
+    expect(env.PATH).toBe('/usr/bin')
+    // Parsing resumes after the closing brace rather than stopping there.
+    expect(env.LANG).toBe('C')
+  })
+
+  /**
+   * Bash indents the statements of an exported function, but heredoc and
+   * multi-line string contents print at column 0 — where a line like
+   * `PATH=/evil` looks exactly like a real assignment. The whole body has to
+   * be skipped, not just the header line.
+   */
+  it('does not mistake an assignment-shaped line inside a function body for a variable', async () => {
+    const { probe } = probing(
+      reported('PATH=/usr/bin\nBASH_FUNC_greet%%=() {  echo "one\nPATH=/evil"\n}\nLANG=C')
+    )
+
+    const env = await mod.resolveShellEnv(probe)
+
+    expect(env.PATH).toBe('/usr/bin')
+    expect(env.LANG).toBe('C')
+  })
+
+  /** Some patched bashes write the exported name as `BASH_FUNC_name()` instead. */
+  it('recognises the other spelling of an exported function name', async () => {
+    const { probe } = probing(reported('PATH=/usr/bin\nBASH_FUNC_greet()=() {  echo hi\n}\nLANG=C'))
+
+    const env = await mod.resolveShellEnv(probe)
+
+    expect(env.PATH).toBe('/usr/bin')
+    expect(env.LANG).toBe('C')
   })
 
   /** These describe the probe shell, and the panes are not the probe shell. */
@@ -328,7 +361,10 @@ describe('resolveShellEnv', () => {
 describe('shellEnv', () => {
   beforeEach(() => {
     onPlatform('linux')
+    // Both spellings, for the same reason as above: os.homedir() reads
+    // USERPROFILE when the host — not the pretended platform — is Windows.
     vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
   })
 
   /** Everything that spawns — git, voice, every pane — reads it through this. */

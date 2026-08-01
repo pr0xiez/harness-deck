@@ -176,7 +176,17 @@ function parseEnv(output: string): NodeJS.ProcessEnv | null {
   const body = output.slice(start + MARKER.length, end)
   const env: NodeJS.ProcessEnv = {}
   let lastKey: string | null = null
+  let inFunction = false
   for (const line of body.split('\n')) {
+    if (inFunction) {
+      // Still inside an exported function's value. Bash indents the statements,
+      // but heredoc and multi-line string contents print at column 0, where a
+      // line like `PATH=/evil` is indistinguishable from a real assignment — so
+      // nothing in here can be read, only skipped. Bash always closes the value
+      // with a lone `}`.
+      if (line === '}') inFunction = false
+      continue
+    }
     const eq = line.indexOf('=')
     const key = eq > 0 ? line.slice(0, eq) : ''
     if (eq > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
@@ -184,10 +194,11 @@ function parseEnv(output: string): NodeJS.ProcessEnv | null {
       lastKey = key
     } else if (eq > 0 && /^BASH_FUNC_.*(%%|\(\))$/.test(key)) {
       // An exported shell function, which bash prints under a name no variable
-      // could have. Its body lines follow and belong to nothing, so stop
-      // appending — a `.bashrc` with `export -f` in it would otherwise leave
+      // could have. Everything down to the closing brace is function body, not
+      // variables — a `.bashrc` with `export -f` in it would otherwise leave
       // the function embedded in whatever came before, PATH included.
       lastKey = null
+      inFunction = true
     } else if (lastKey && line) {
       // A genuine multi-line value, carried on from the line above.
       env[lastKey] += `\n${line}`

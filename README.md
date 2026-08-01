@@ -239,6 +239,10 @@ build/
 Processes live in the main process and are addressed by pane id, so a window
 reload — or React remounting a pane — never kills a running agent.
 
+A visual version of this map — process topology, the PTY pipeline, persistence,
+the voice path, and the full tech stack — is in
+[`docs/architecture.html`](docs/architecture.html); open it in a browser.
+
 ### The app icon
 
 `build/icon.svg` is the master. After editing it, run:

@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness Deck — Architecture</title>
+<style>
+  :root {
+    --bg: #F5F4F0;
+    --surface: #FFFFFF;
+    --surface2: #FAF9F6;
+    --ink: #26221A;
+    --muted: #6E675A;
+    --line: #DDD8CC;
+    --accent: #9C6B14;
+    --accent-soft: rgba(156, 107, 20, .10);
+    --renderer: #2F6E9E;
+    --renderer-soft: rgba(47, 110, 158, .09);
+    --bridge: #6D5BA8;
+    --bridge-soft: rgba(109, 91, 168, .09);
+    --mainp: #9C6B14;
+    --mainp-soft: rgba(156, 107, 20, .10);
+    --system: #5C7358;
+    --system-soft: rgba(92, 115, 88, .10);
+    --chip-bg: #F1EFE9;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14110B;
+      --surface: #1C1812;
+      --surface2: #211D15;
+      --ink: #EAE4D6;
+      --muted: #9C937F;
+      --line: #3A3426;
+      --accent: #DFA94E;
+      --accent-soft: rgba(223, 169, 78, .13);
+      --renderer: #79B0DC;
+      --renderer-soft: rgba(121, 176, 220, .12);
+      --bridge: #A99BE0;
+      --bridge-soft: rgba(169, 155, 224, .12);
+      --mainp: #DFA94E;
+      --mainp-soft: rgba(223, 169, 78, .13);
+      --system: #9DB694;
+      --system-soft: rgba(157, 182, 148, .12);
+      --chip-bg: #262117;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    padding: 48px 24px 80px;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+
+  /* ---------- header ---------- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(28px, 4.5vw, 40px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 12px;
+    text-wrap: balance;
+  }
+  .lede {
+    max-width: 68ch;
+    font-size: 16px;
+    color: var(--ink);
+    margin: 0 0 18px;
+  }
+  .lede strong { color: var(--accent); font-weight: 600; }
+  .meta-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+  .meta-chips span {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+  }
+
+  /* ---------- sections ---------- */
+  section { margin-top: 56px; }
+  h2 {
+    font-family: var(--mono);
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+  }
+  h2 .idx { color: var(--accent); margin-right: 8px; }
+  .sub {
+    color: var(--muted);
+    max-width: 72ch;
+    margin: 0 0 20px;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: .88em;
+    background: var(--chip-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  .scrollbox { overflow-x: auto; padding-bottom: 6px; }
+
+  /* ---------- topology diagram ---------- */
+  .topo {
+    display: grid;
+    grid-template-columns: 1.12fr .98fr 1.12fr 1fr;
+    gap: 14px;
+    min-width: 1020px;
+    align-items: stretch;
+  }
+  .proc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--layer, var(--line));
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .proc-head {
+    padding: 12px 14px 10px;
+    background: var(--layer-soft, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  .proc-head .pname {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--layer, var(--ink));
+  }
+  .proc-head .pruntime {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .proc-body { padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .mod .mname {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .mod .mrole {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+  .proc--renderer { --layer: var(--renderer); --layer-soft: var(--renderer-soft); }
+  .proc--bridge   { --layer: var(--bridge);   --layer-soft: var(--bridge-soft); }
+  .proc--main     { --layer: var(--mainp);    --layer-soft: var(--mainp-soft); }
+  .proc--system   { --layer: var(--system);   --layer-soft: var(--system-soft); }
+
+  .chan { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface2); }
+  .chan .cdir {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--bridge);
+  }
+  .chan .ckind { font-size: 11.5px; color: var(--muted); display: block; margin: 1px 0 5px; }
+  .chan .cnames {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink);
+    line-height: 1.7;
+    word-spacing: 2px;
+  }
+  .bridge-note {
+    font-size: 11.5px;
+    color: var(--muted);
+    border-top: 1px dashed var(--line);
+    padding-top: 8px;
+    margin-top: auto;
+  }
+
+  .sysgroup .gname {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--system);
+  }
+  .sysgroup .gitems { font-size: 12px; color: var(--muted); line-height: 1.5; display: block; }
+  .sysgroup .gitems code { font-size: 11px; }
+
+  .shared-strip {
+    grid-column: 1 / 4;
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    background: var(--accent-soft);
+    padding: 10px 14px;
+    font-size: 12.5px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    align-items: baseline;
+  }
+  .shared-strip .sname { font-family: var(--mono); font-weight: 700; }
+  .shared-strip .sfiles { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .topo-legend {
+    grid-column: 4;
+    align-self: center;
+    font-size: 11.5px;
+    color: var(--muted);
+    padding: 0 4px;
+  }
+
+  /* ---------- flows ---------- */
+  .flow-block { margin-bottom: 22px; }
+  .flow-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 6px;
+  }
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px 11px;
+  }
+  .step .sname { font-family: var(--mono); font-size: 12px; font-weight: 600; display: block; }
+  .step .snote { font-size: 11px; color: var(--muted); display: block; }
+  .step--renderer { border-left: 3px solid var(--renderer); }
+  .step--main { border-left: 3px solid var(--mainp); }
+  .step--bridge { border-left: 3px solid var(--bridge); }
+  .step--system { border-left: 3px solid var(--system); }
+  .arr { font-family: var(--mono); color: var(--muted); font-size: 13px; }
+  .flow-note { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; max-width: 76ch; }
+
+  /* ---------- callouts ---------- */
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 20px; }
+  .fact {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 12px 14px;
+    font-size: 13px;
+  }
+  .fact .fhead {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .fact p { margin: 0; color: var(--muted); }
+
+  /* ---------- tables ---------- */
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 640px;
+    font-size: 13px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--muted);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface2);
+  }
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  td.mono, .mono { font-family: var(--mono); font-size: 12px; }
+  td .ver { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .layer-cell { font-family: var(--mono); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+  .lc-renderer { color: var(--renderer); }
+  .lc-main { color: var(--mainp); }
+  .lc-bridge { color: var(--bridge); }
+  .lc-build { color: var(--system); }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Architecture</p>
+    <h1>harness-deck</h1>
+    <p class="lede">A desktop workspace for running coding-agent CLIs — Claude Code, Codex, Copilot, Gemini, Aider and friends — <strong>side by side</strong> in a deck of terminal panes. One Electron shell, three isolated layers, and a PTY pipeline connecting real child processes to WebGL-rendered terminals.</p>
+    <div class="meta-chips">
+      <span>Electron 43</span><span>TypeScript 5.9</span><span>React 19</span><span>node-pty</span><span>xterm.js 6</span><span>zustand 5</span><span>electron-vite 5</span><span>vitest 4</span>
+    </div>
+  </header>
+
+  <section>
+    <h2><span class="idx">01</span>Process topology</h2>
+    <p class="sub">Classic three-process Electron split with <code>contextIsolation</code> on and <code>nodeIntegration</code> off. The renderer never touches Node — everything crosses one typed bridge, <code>window.harness</code>, exposed by the preload script. A fourth layer of pure TypeScript (<code>src/shared</code>) is imported by all three via the <code>@shared</code> alias.</p>
+    <div class="scrollbox">
+      <div class="topo">
+        <div class="proc proc--renderer">
+          <div class="proc-head">
+            <span class="pname">Renderer</span>
+            <span class="pruntime">Chromium · React 19 · src/renderer</span>
+          </div>
+          <div class="proc-body">
+            <div class="mod"><span class="mname">App.tsx</span><span class="mrole">PTY/update subscriptions, global shortcuts, composition root</span></div>
+            <div class="mod"><span class="mname">store.ts · useDeck</span><span class="mrole">zustand: workspaces, panes, templates, settings, UI state</span></div>
+            <div class="mod"><span class="mname">voice.ts · useVoice</span><span class="mrole">mic capture, RMS meter, silence gate</span></div>
+            <div class="mod"><span class="mname">terminals.ts</span><span class="mrole">live xterm.js registry — deliberately outside React</span></div>
+            <div class="mod"><span class="mname">components/</span><span class="mrole">TitleBar · Sidebar · Toolbar · PaneArea · TerminalPane · BroadcastBar · CommandPalette · CompareView · dialogs</span></div>
+            <div class="mod"><span class="mname">restart.ts · templates.ts · search.ts</span><span class="mrole">pure policy helpers (crash backoff, workspace templates, find-all)</span></div>
+          </div>
+        </div>
+
+        <div class="proc proc--bridge">
+          <div class="proc-head">
+            <span class="pname">Preload bridge</span>
+            <span class="pruntime">contextBridge · window.harness</span>
+          </div>
+          <div class="proc-body">
+            <div class="chan">
+              <span class="cdir">invoke ⇄ handle</span>
+              <span class="ckind">request / response</span>
+              <span class="cnames">pty:ensure · state:load · profiles:* · git:* · update:* · voice:* · dialog:*</span>
+            </div>
+            <div class="chan">
+              <span class="cdir">send → on</span>
+              <span class="ckind">fire-and-forget</span>
+              <span class="cnames">pty:write · pty:resize · pty:kill · state:save · window:* · clipboard:write</span>
+            </div>
+            <div class="chan">
+              <span class="cdir">on ← webContents.send</span>
+              <span class="ckind">push events</span>
+              <span class="cnames">pty:data · pty:exit · pty:quiet · update:changed · window:focus</span>
+            </div>
+            <p class="bridge-note">Single 164-line surface (<code>src/preload/index.ts</code>), fully typed as <code>HarnessApi</code>; tests stub it with <code>satisfies HarnessApi</code>.</p>
+          </div>
+        </div>
+
+        <div class="proc proc--main">
+          <div class="proc-head">
+            <span class="pname">Main process</span>
+            <span class="pruntime">Node.js · Electron 43 · src/main</span>
+          </div>
+          <div class="proc-body">
+            <div class="mod"><span class="mname">index.ts</span><span class="mrole">app entry, BrowserWindow, all IPC handler registration</span></div>
+            <div class="mod"><span class="mname">pty.ts · PtyManager</span><span class="mrole">node-pty sessions, 512 KB replay ring, 8 ms flush, quiet timer</span></div>
+            <div class="mod"><span class="mname">shell-env.ts</span><span class="mrole">login-shell env probe at startup; PATH repair</span></div>
+            <div class="mod"><span class="mname">profiles.ts</span><span class="mrole">detects installed agent CLIs + saved launchers</span></div>
+            <div class="mod"><span class="mname">store.ts · scrollback.ts</span><span class="mrole">persisted state + per-pane logs, atomic JSON writes</span></div>
+            <div class="mod"><span class="mname">git.ts</span><span class="mrole">repo info, worktree add/remove, diff stats</span></div>
+            <div class="mod"><span class="mname">updater.ts · voice.ts</span><span class="mrole">sha512-verified updates; safeStorage keys + transcription calls</span></div>
+          </div>
+        </div>
+
+        <div class="proc proc--system">
+          <div class="proc-head">
+            <span class="pname">Outside world</span>
+            <span class="pruntime">OS · disk · network</span>
+          </div>
+          <div class="proc-body">
+            <div class="sysgroup"><span class="gname">PTY children</span><span class="gitems">claude · codex · copilot · gemini · aider · opencode · cursor-agent · shells; ssh / docker / wsl via <code>HD_CWD</code></span></div>
+            <div class="sysgroup"><span class="gname">git binary</span><span class="gitems">shelled out for worktrees &amp; diffs</span></div>
+            <div class="sysgroup"><span class="gname">Disk · userData</span><span class="gitems"><code>workspaces.json</code> · <code>custom-profiles.json</code> · <code>scrollback/*.log</code> · <code>voice-keys.json</code> · <code>update.json</code></span></div>
+            <div class="sysgroup"><span class="gname">Network</span><span class="gitems">GitHub release feed · voice APIs (OpenAI / Groq / OpenRouter / custom)</span></div>
+          </div>
+        </div>
+
+        <div class="shared-strip">
+          <span class="sname">src/shared — imported by all three layers via @shared</span>
+          <span class="sfiles">types.ts (all cross-boundary types) · remote.ts (ssh/docker command builder) · worktree.ts (branch/path scheme) · voice.ts (provider table)</span>
+        </div>
+        <div class="topo-legend">Only the main process reaches the OS: child PTYs, disk, git, and every outbound network call live here.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="idx">02</span>The PTY pipeline</h2>
+    <p class="sub">The core data path. Each pane owns one <code>node-pty</code> session in the main process, keyed by pane id; sessions outlive the window, so panes re-attach from a replay buffer instead of restarting.</p>
+
+    <div class="flow-block">
+      <p class="flow-label">Output — child → screen</p>
+      <div class="flow">
+        <div class="step step--system"><span class="sname">child stdout</span><span class="snote">agent CLI / shell</span></div>
+        <span class="arr">→</span>
+        <div class="step step--main"><span class="sname">node-pty onData</span><span class="snote">PtyManager.queue</span></div>
+        <span class="arr">→</span>
+        <div class="step step--main"><span class="sname">replay ring + batch</span><span class="snote">512 KB history · flush every 8 ms</span></div>
+        <span class="arr">→</span>
+        <div class="step step--bridge"><span class="sname">pty:data</span><span class="snote">IPC push</span></div>
+        <span class="arr">→</span>
+        <div class="step step--renderer"><span class="sname">xterm.write()</span><span class="snote">WebGL renderer, DOM fallback</span></div>
+      </div>
+    </div>
+
+    <div class="flow-block">
+      <p class="flow-label">Input — keystrokes → child</p>
+      <div class="flow">
+        <div class="step step--renderer"><span class="sname">term.onData</span><span class="snote">single chokepoint: typing, paste, drops</span></div>
+        <span class="arr">→</span>
+        <div class="step step--bridge"><span class="sname">pty:write</span><span class="snote">blocked for read-only panes</span></div>
+        <span class="arr">→</span>
+        <div class="step step--main"><span class="sname">proc.write</span><span class="snote">child stdin</span></div>
+      </div>
+    </div>
+
+    <div class="flow-block">
+      <p class="flow-label">Spawn — how a pane finds its shell</p>
+      <div class="flow">
+        <div class="step step--renderer"><span class="sname">TerminalPane mounts</span><span class="snote">pty.ensure(spec, cols, rows)</span></div>
+        <span class="arr">→</span>
+        <div class="step step--main"><span class="sname">shell-env probe</span><span class="snote">login shell run once at startup; env cached, PATH repaired</span></div>
+        <span class="arr">→</span>
+        <div class="step step--main"><span class="sname">buildEnv + spawn</span><span class="snote">TERM=xterm-256color · HD_CWD for wsl/ssh/docker</span></div>
+        <span class="arr">→</span>
+        <div class="step step--system"><span class="sname">live session</span><span class="snote">or re-attach: created:false + replay buffer</span></div>
+      </div>
+      <p class="flow-note">Attention is a main-process timer: every byte of output re-arms a quiet clock; when it expires, <code>pty:quiet</code> flips the pane to <em>waiting</em> and fires a desktop notification if the window is unfocused. Crash restarts are renderer policy — cap of 3, backoff 1 s / 5 s / 15 s, reset after a 60 s healthy run.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="idx">03</span>State &amp; persistence</h2>
+    <p class="sub">One zustand store is the source of truth in the renderer; the main process owns the disk. Everything is plain JSON under Electron's <code>userData</code> directory, written atomically (<code>.tmp</code> → rename, with a <code>.bak</code> fallback on corrupt reads).</p>
+
+    <div class="flow-block">
+      <div class="flow">
+        <div class="step step--renderer"><span class="sname">useDeck changes</span><span class="snote">workspaces · panes · settings</span></div>
+        <span class="arr">→</span>
+        <div class="step step--renderer"><span class="sname">serialize()</span><span class="snote">strips transient pane state</span></div>
+        <span class="arr">→</span>
+        <div class="step step--renderer"><span class="sname">debounce 400 ms</span><span class="snote">skip if snapshot unchanged</span></div>
+        <span class="arr">→</span>
+        <div class="step step--bridge"><span class="sname">state:save</span></div>
+        <span class="arr">→</span>
+        <div class="step step--main"><span class="sname">writeJsonAtomic</span><span class="snote">workspaces.json</span></div>
+      </div>
+      <p class="flow-note">On boot, <code>hydrate()</code> merges saved settings over defaults (so old files gain new fields), resets panes to idle, and scrollback logs are pruned against the pane ids that survived.</p>
+    </div>
+
+    <div class="scrollbox">
+      <table>
+        <thead><tr><th>File</th><th>Written by</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">workspaces.json</td><td>src/main/store.ts</td><td>Workspaces, panes, layout, settings, templates — the whole deck</td></tr>
+          <tr><td class="mono">custom-profiles.json</td><td>src/main/profiles-store.ts</td><td>User-saved launchers (command, args, env, accent)</td></tr>
+          <tr><td class="mono">scrollback/&lt;paneId&gt;.log</td><td>src/main/scrollback.ts</td><td>Last 128 KB of each pane's output — replayed as "previous session"</td></tr>
+          <tr><td class="mono">voice-keys.json</td><td>src/main/voice.ts</td><td>Transcription API keys, safeStorage-encrypted, mode 0600</td></tr>
+          <tr><td class="mono">update.json</td><td>scripts/release.mjs</td><td>Local-channel release manifest (version, sha512, installer path)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="idx">04</span>Voice dictation path</h2>
+    <p class="sub">Speech-to-prompt for the panes. Audio never touches disk, and API keys never enter the renderer. A silence gate refuses to transcribe room tone — nothing is sent unless ≥150 ms of voiced audio clears a threshold derived from the measured noise floor.</p>
+    <div class="flow">
+      <div class="step step--renderer"><span class="sname">MediaRecorder</span><span class="snote">webm/opus · RMS meter · auto-stop on silence</span></div>
+      <span class="arr">→</span>
+      <div class="step step--renderer"><span class="sname">heardSomething()</span><span class="snote">the gate: voiced ≥ 150 ms &amp; peak &gt; noise floor × 5</span></div>
+      <span class="arr">→</span>
+      <div class="step step--bridge"><span class="sname">voice:transcribe</span><span class="snote">WAV re-encode when the provider needs it</span></div>
+      <span class="arr">→</span>
+      <div class="step step--main"><span class="sname">provider API</span><span class="snote">OpenAI / Groq / OpenRouter / custom · key via safeStorage</span></div>
+      <span class="arr">→</span>
+      <div class="step step--renderer"><span class="sname">deliver()</span><span class="snote">one-line transcript → focused pane or broadcast box</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="idx">05</span>Build, test &amp; release loop</h2>
+    <p class="sub">electron-vite bundles three targets (main, preload, renderer) out of one repo; electron-builder packages them; a script pipeline publishes to GitHub Releases, which the in-app updater watches.</p>
+
+    <div class="flow-block">
+      <p class="flow-label">Ship</p>
+      <div class="flow">
+        <div class="step"><span class="sname">electron-vite</span><span class="snote">Vite 7 · three bundles → out/</span></div>
+        <span class="arr">→</span>
+        <div class="step"><span class="sname">electron-builder</span><span class="snote">NSIS/zip · dmg (arm64+x64) · AppImage/deb; node-pty kept outside asar</span></div>
+        <span class="arr">→</span>
+        <div class="step"><span class="sname">publish-release.mjs</span><span class="snote">GitHub REST · v* tag → draft release</span></div>
+        <span class="arr">→</span>
+        <div class="step"><span class="sname">updater.ts</span><span class="snote">polls latest*.yml every 15 min · sha512-verifies installer</span></div>
+      </div>
+    </div>
+
+    <div class="flow-block">
+      <p class="flow-label">Verify</p>
+      <div class="flow">
+        <div class="step"><span class="sname">typecheck</span><span class="snote">two tsconfigs: node + web</span></div>
+        <span class="arr">→</span>
+        <div class="step"><span class="sname">vitest · node project</span><span class="snote">main/preload/shared, no electron imports</span></div>
+        <span class="arr">→</span>
+        <div class="step"><span class="sname">vitest · renderer project</span><span class="snote">jsdom + Testing Library, typed window.harness stub</span></div>
+        <span class="arr">→</span>
+        <div class="step"><span class="sname">smoke</span><span class="snote">boots the real built app, asserts panes spawn/restart/persist</span></div>
+      </div>
+      <p class="flow-note">CI runs the same sequence on a Windows runner and a self-hosted mac (<code>.github/workflows/build.yml</code>).</p>
+    </div>
+
+    <div class="facts">
+      <div class="fact"><span class="fhead">one runtime dependency</span><p>Everything ships as devDependencies except <code>@lydell/node-pty</code> — the only native module, unpacked from the asar for its prebuilds.</p></div>
+      <div class="fact"><span class="fhead">no telemetry</span><p>The entire codebase makes exactly three kinds of outbound requests: the update feed, the installer download, and voice transcription.</p></div>
+      <div class="fact"><span class="fhead">panes survive the window</span><p>PTY sessions live in the main process; on macOS, closing the window leaves agents running and panes re-attach from the replay buffer.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="idx">06</span>Technology stack by layer</h2>
+    <div class="scrollbox">
+      <table>
+        <thead><tr><th>Layer</th><th>Technology</th><th>Version</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td class="layer-cell">SHELL</td><td class="mono">electron</td><td class="mono ver">43.2.0</td><td>Desktop shell — frameless window, menus, dialogs, safeStorage, clipboard</td></tr>
+          <tr><td class="layer-cell lc-main">MAIN</td><td class="mono">@lydell/node-pty</td><td class="mono ver">1.2.0-beta.12</td><td>Pseudo-terminals for every pane (ConPTY dll on Windows) — the sole runtime dependency</td></tr>
+          <tr><td class="layer-cell lc-main">MAIN</td><td class="mono">node built-ins</td><td class="mono ver">—</td><td>child_process (git, shell probe), fs, crypto (sha512), global fetch</td></tr>
+          <tr><td class="layer-cell lc-bridge">PRELOAD</td><td class="mono">contextBridge / ipcRenderer</td><td class="mono ver">—</td><td>The one typed IPC surface: <code>window.harness</code></td></tr>
+          <tr><td class="layer-cell lc-renderer">RENDERER</td><td class="mono">react · react-dom</td><td class="mono ver">19.2</td><td>UI composition, createRoot</td></tr>
+          <tr><td class="layer-cell lc-renderer">RENDERER</td><td class="mono">zustand</td><td class="mono ver">5.0</td><td>Two stores: useDeck (workspaces/panes/settings) and useVoice</td></tr>
+          <tr><td class="layer-cell lc-renderer">RENDERER</td><td class="mono">@xterm/xterm</td><td class="mono ver">6.0</td><td>Terminal emulator + fit, search, web-links, webgl addons</td></tr>
+          <tr><td class="layer-cell lc-renderer">RENDERER</td><td class="mono">web APIs</td><td class="mono ver">—</td><td>MediaRecorder, AudioContext, ResizeObserver, Notification</td></tr>
+          <tr><td class="layer-cell lc-build">BUILD</td><td class="mono">typescript</td><td class="mono ver">5.9</td><td>Strict types across all four layers, two project configs</td></tr>
+          <tr><td class="layer-cell lc-build">BUILD</td><td class="mono">electron-vite · vite</td><td class="mono ver">5.0 · 7.3</td><td>Three-target bundling with @vitejs/plugin-react</td></tr>
+          <tr><td class="layer-cell lc-build">BUILD</td><td class="mono">electron-builder</td><td class="mono ver">26.15</td><td>NSIS, dmg, AppImage/deb packaging + update feed metadata</td></tr>
+          <tr><td class="layer-cell lc-build">TEST</td><td class="mono">vitest · jsdom</td><td class="mono ver">4.1 · 30</td><td>Split node/renderer projects, v8 coverage</td></tr>
+          <tr><td class="layer-cell lc-build">TEST</td><td class="mono">@testing-library/*</td><td class="mono ver">react 16.3</td><td>Component tests against the typed harness stub</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Mapped from source at <span class="mono">src/{main, preload, renderer, shared}</span> · 2026-08-01
+  </footer>
+</div>
+</body>
+</html>

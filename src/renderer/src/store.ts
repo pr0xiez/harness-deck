@@ -783,3 +783,21 @@ export function startPersistence(): () => void {
     }, 400)
   })
 }
+
+/**
+ * Writes the current state now, skipping the debounce. Called right before a
+ * pane asks the main process to spawn: the main process only launches specs it
+ * can find in the persisted state (or the profile list), so a brand-new pane's
+ * save has to be on the other side of the bridge before `pty.ensure` is.
+ */
+export function flushPersistence(): void {
+  const state = useDeck.getState()
+  if (!state.hydrated) return
+  window.clearTimeout(saveTimer)
+  saveTimer = undefined
+  const payload = serialize(state)
+  const snapshot = JSON.stringify(payload)
+  if (snapshot === lastSnapshot) return
+  lastSnapshot = snapshot
+  api.saveState(payload)
+}

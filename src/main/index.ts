@@ -16,6 +16,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import type {
   DiffRequest,
+  EnsureResult,
   PaneSpec,
   PersistedState,
   SavedProfile,
@@ -27,6 +28,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import { verifyPaneSpec } from './pane-guard'
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -460,8 +462,29 @@ function registerIpc(): void {
   ipcMain.handle('update:setChannel', (_e, channel: UpdateChannel) => setChannel(channel))
   ipcMain.handle('update:install', () => install())
 
-  ipcMain.handle('pty:ensure', (_e, spec: PaneSpec, cols: number, rows: number) =>
-    ptys!.ensure(spec, cols, rows)
+  // The renderer's spec is a claim, not an instruction: it must correspond to
+  // a pane in the persisted state or to a known profile, and what actually
+  // spawns is the main process's copy — see pane-guard.ts (issue #18).
+  ipcMain.handle(
+    'pty:ensure',
+    async (_e, spec: PaneSpec, cols: number, rows: number): Promise<EnsureResult> => {
+      const verdict = await verifyPaneSpec(spec, {
+        state: () => loadState(),
+        profiles: () => detectProfiles(),
+        attached: (id) => ptys!.status(id) !== null
+      })
+      if (!verdict.ok) {
+        console.warn(`[pty] refused pty:ensure: ${verdict.reason}`)
+        return {
+          created: false,
+          status: 'exited',
+          exitCode: -1,
+          replay: `\x1b[31mRefused to launch this pane: ${verdict.reason}\x1b[0m\r\n`,
+          error: verdict.reason
+        }
+      }
+      return ptys!.ensure(verdict.spec, cols, rows)
+    }
   )
   ipcMain.on('pty:write', (_e, id: string, data: string) => ptys!.write(id, data))
   ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>

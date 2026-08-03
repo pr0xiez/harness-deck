@@ -6,7 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { Profile } from '@shared/types'
-import { useDeck, type PaneView } from '../store'
+import { flushPersistence, useDeck, type PaneView } from '../store'
 import { isReservedShortcut } from '../shortcuts'
 import { decideRestart, RESTART_CAP, type RestartDecision } from '../restart'
 import { registerTerminal, unregisterTerminal, type TerminalHandle } from '../terminals'
@@ -211,6 +211,10 @@ export function TerminalPane({
     let cancelled = false
     const { term } = handle
     void (async () => {
+      // The main process only spawns specs it can verify against the saved
+      // state or a profile (see main/pane-guard.ts) — so a pane created or
+      // edited a moment ago must be on disk before we ask for its process.
+      flushPersistence()
       const result = await api.pty.ensure(
         {
           id: paneId,

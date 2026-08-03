@@ -28,7 +28,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
-import { detectProfiles } from './profiles'
+import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
 import { ScrollbackStore } from './scrollback'
@@ -468,6 +468,7 @@ function registerIpc(): void {
   ipcMain.handle('git:removeWorktree', (_e, path: string) => removeWorktree(path))
   ipcMain.handle('git:diffStat', (_e, dir: string) => diffStat(dir))
   ipcMain.handle('git:diffRange', (_e, req: DiffRequest) => diffRange(req))
+  ipcMain.handle('git:forge', () => detectForge())
   // Stubs the later items replace — registered now so four parallel branches
   // build on a settled surface instead of each adding its own. See HD-14.
   ipcMain.handle('git:checkpoint', () => undefined)
@@ -475,7 +476,6 @@ function registerIpc(): void {
   ipcMain.handle('git:restoreCheckpoint', () => ({ ok: false, error: 'not implemented' }))
   ipcMain.handle('git:dropCheckpoints', () => undefined)
   ipcMain.handle('git:deleteBranch', () => ({ ok: false, error: 'not implemented' }))
-  ipcMain.handle('git:forge', () => null)
 
   ipcMain.handle('update:state', () => currentState())
   ipcMain.handle('update:check', () => checkNow())

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { accessSync, constants, existsSync } from 'node:fs'
 import { basename, delimiter, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
-import type { Profile } from '@shared/types'
+import type { ForgeCli, Profile } from '@shared/types'
 import { loadCustomProfiles } from './profiles-store'
 import { defaultShell, shellEnv } from './shell-env'
 
@@ -123,6 +123,25 @@ function decodeWsl(buf: Buffer): string {
   const nulls = buf.subarray(0, Math.min(buf.length, 64)).filter((b) => b === 0).length
   const text = nulls > 4 ? buf.toString('utf16le') : buf.toString('utf8')
   return text.replace(/\r/g, '').replace(/\u0000/g, '')
+}
+
+/** Preferred first, so a machine with both is offered the one it is likelier to want. */
+const FORGES: ForgeCli[] = ['gh', 'glab']
+
+let forgeCache: ForgeCli | null | undefined
+
+/**
+ * Which PR-capable CLI is on PATH. Cached for the run, like `probeWsl`'s answer
+ * — the ship dialog asks every time it opens, and a CLI installed halfway
+ * through a session is not worth re-walking PATH for.
+ *
+ * A PATH lookup rather than `gh --version` on purpose: this answer gates a
+ * button, and asking a binary to introduce itself hands a wedged one the power
+ * to hang the dialog waiting for it. `findExecutable` only stats files.
+ */
+export function detectForge(): ForgeCli | null {
+  if (forgeCache === undefined) forgeCache = FORGES.find((cli) => findExecutable(cli)) ?? null
+  return forgeCache
 }
 
 interface WslInfo {

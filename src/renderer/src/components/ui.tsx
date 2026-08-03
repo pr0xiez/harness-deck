@@ -153,15 +153,18 @@ interface ToggleProps {
   onChange: (checked: boolean) => void
   label: string
   hint?: string
+  /** A switch there is no point flipping. The hint is where the reason goes. */
+  disabled?: boolean
 }
 
-export function Toggle({ checked, onChange, label, hint }: ToggleProps): React.JSX.Element {
+export function Toggle({ checked, onChange, label, hint, disabled }: ToggleProps): React.JSX.Element {
   return (
     <label className="toggle-row">
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        disabled={disabled}
         className={`toggle ${checked ? 'on' : ''}`}
         onClick={() => onChange(!checked)}
       >

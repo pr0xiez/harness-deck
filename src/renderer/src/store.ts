@@ -136,6 +136,8 @@ interface UiState {
   waitingQueue: boolean
   /** Workspace whose setup command and actions are being edited. See HD-16. */
   workspaceDialogFor: string | null
+  /** Pane whose ship dialog is open — a worktree pane, always. See HD-18. */
+  shipFor: string | null
 }
 
 interface DeckState {
@@ -303,7 +305,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     compare: false,
     pendingInsert: null,
     waitingQueue: false,
-    workspaceDialogFor: null
+    workspaceDialogFor: null,
+    shipFor: null
   },
   update: null,
   updateDismissed: null,

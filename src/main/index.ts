@@ -11,7 +11,7 @@ import {
   systemPreferences
 } from 'electron'
 import type { NativeImage } from 'electron'
-import { mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import type {
@@ -110,8 +110,12 @@ function argValue(flag: string): string | undefined {
 
 // A smoke run gets its own state directory, so it can neither read nor damage a
 // real session's layout — and its single-instance lock is separate too, which
-// means it can run while the app is open.
+// means it can run while the app is open. Wiped on the way in: the directory
+// outlives interrupted runs, and a stale state file makes later runs assert
+// against a session nobody seeded. Only the throwaway default is wiped — a run
+// pointed at a directory by hand gets to keep what is in it.
 if (smoke && !process.argv.some((a) => a.startsWith('--user-data-dir'))) {
+  rmSync(SMOKE_USER_DATA, { recursive: true, force: true })
   app.setPath('userData', SMOKE_USER_DATA)
 }
 

@@ -18,6 +18,7 @@ import type {
   DiffRequest,
   PaneSpec,
   PersistedState,
+  RemoteStatus,
   SavedProfile,
   SaveTextRequest,
   SaveTextResult,
@@ -411,6 +412,19 @@ function restrictPermissions(): void {
   session.defaultSession.setPermissionCheckHandler((_contents, permission) => decide(permission))
 }
 
+/**
+ * Deck Remote is stubs until HD-21 builds the server. Off is the whole truth:
+ * no socket exists — the README's nothing-reaches-the-network promise extends
+ * to listening.
+ */
+const REMOTE_OFF: RemoteStatus = {
+  enabled: false,
+  url: null,
+  lan: false,
+  allowTyping: false,
+  clients: 0
+}
+
 function registerIpc(): void {
   ipcMain.handle('app:info', () => ({
     platform: process.platform,
@@ -454,6 +468,14 @@ function registerIpc(): void {
   ipcMain.handle('git:removeWorktree', (_e, path: string) => removeWorktree(path))
   ipcMain.handle('git:diffStat', (_e, dir: string) => diffStat(dir))
   ipcMain.handle('git:diffRange', (_e, req: DiffRequest) => diffRange(req))
+  // Stubs the later items replace — registered now so four parallel branches
+  // build on a settled surface instead of each adding its own. See HD-14.
+  ipcMain.handle('git:checkpoint', () => undefined)
+  ipcMain.handle('git:checkpoints', () => [])
+  ipcMain.handle('git:restoreCheckpoint', () => ({ ok: false, error: 'not implemented' }))
+  ipcMain.handle('git:dropCheckpoints', () => undefined)
+  ipcMain.handle('git:deleteBranch', () => ({ ok: false, error: 'not implemented' }))
+  ipcMain.handle('git:forge', () => null)
 
   ipcMain.handle('update:state', () => currentState())
   ipcMain.handle('update:check', () => checkNow())
@@ -475,6 +497,12 @@ function registerIpc(): void {
     const text = ptys!.transcript(id)
     return strip ? stripAnsi(text) : text
   })
+  ipcMain.handle('pty:tail', () => [])
+
+  ipcMain.handle('remote:status', () => REMOTE_OFF)
+  ipcMain.handle('remote:setEnabled', () => REMOTE_OFF)
+  ipcMain.handle('remote:setLan', () => REMOTE_OFF)
+  ipcMain.handle('remote:setAllowTyping', () => REMOTE_OFF)
 
   ipcMain.handle('fs:missingDirs', (_e, paths: string[]) =>
     (paths ?? []).filter((path) => {

@@ -7,6 +7,7 @@ import type {
   PaneStatus,
   PersistedState,
   Profile,
+  RemoteSettings,
   RepoInfo,
   SavedProfile,
   Settings,
@@ -41,6 +42,14 @@ export const DEFAULT_ATTENTION: AttentionSettings = {
   badge: true
 }
 
+// Off, loopback-only, read-only: the server does not exist until each is
+// changed by hand. See HD-21.
+export const DEFAULT_REMOTE: RemoteSettings = {
+  enabled: false,
+  lan: false,
+  allowTyping: false
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 13,
   fontFamily: MONO_STACK,
@@ -55,6 +64,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarCollapsed: false,
   voice: DEFAULT_VOICE,
   attention: DEFAULT_ATTENTION,
+  remote: DEFAULT_REMOTE,
   // Nothing reaches the network until this is changed by hand.
   updateChannel: 'local',
   broadcastHistory: [],
@@ -268,7 +278,8 @@ export const useDeck = create<DeckState>((set, get) => ({
       defaultCwd,
       // Nested, so a state file written before a field existed still gets it.
       voice: { ...DEFAULT_VOICE, ...saved?.settings?.voice },
-      attention: { ...DEFAULT_ATTENTION, ...saved?.settings?.attention }
+      attention: { ...DEFAULT_ATTENTION, ...saved?.settings?.attention },
+      remote: { ...DEFAULT_REMOTE, ...saved?.settings?.remote }
     }
 
     let workspaces: DeckWorkspace[] = (saved?.workspaces ?? []).map((ws) => ({

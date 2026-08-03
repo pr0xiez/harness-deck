@@ -258,6 +258,25 @@ export class PtyManager {
     return this.sessions.get(id)?.chunks.join('') ?? ''
   }
 
+  /**
+   * The last `lines` non-empty lines the pane produced, stripped of escapes.
+   *
+   * The cutting happens here rather than in the renderer because the buffer is
+   * half a megabyte and the answer is three lines of it: shipping the rest
+   * across IPC so the other side could throw it away would cost a thousand
+   * times what the question is worth. Blank lines are dropped before the count,
+   * so a TUI that pads its frame still yields three lines that say something.
+   */
+  tail(id: string, lines: number): string[] {
+    const session = this.sessions.get(id)
+    if (!session || lines <= 0) return []
+    return stripAnsi(session.chunks.join(''))
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .slice(-lines)
+  }
+
   /** Ids of every live process, used to warn before quitting. */
   runningIds(): string[] {
     return [...this.sessions.values()].filter((s) => s.status === 'running').map((s) => s.id)

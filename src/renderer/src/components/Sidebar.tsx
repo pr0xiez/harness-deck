@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { isLive, useDeck, type DeckWorkspace } from '../store'
+import { isActionable, isLive, useDeck, type DeckWorkspace } from '../store'
 import { ACCENTS } from '../theme'
 import { Dropdown } from './ui'
 import { Icon } from './Icon'
@@ -40,7 +40,9 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
   const moveWorkspace = useDeck((s) => s.moveWorkspace)
   const setUi = useDeck((s) => s.setUi)
 
-  const waiting = workspace.panes.filter((p) => p.status === 'waiting').length
+  // A pane you muted, snoozed or already looked at is not something this row
+  // should still be asking you about.
+  const waiting = workspace.panes.filter((p) => isActionable(p)).length
   const running = workspace.panes.filter((p) => p.status === 'running').length
   const exited = workspace.panes.filter((p) => p.status === 'exited').length
 

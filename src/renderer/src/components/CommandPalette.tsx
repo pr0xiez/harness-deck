@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useDeck } from '../store'
+import { isActionable, useDeck } from '../store'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
 import { getTerminal } from '../terminals'
@@ -192,18 +192,27 @@ export function CommandPalette(): React.JSX.Element {
       })
 
       const waiting = state.workspaces.reduce(
-        (total, ws) => total + ws.panes.filter((p) => p.status === 'waiting').length,
+        (total, ws) => total + ws.panes.filter((p) => isActionable(p)).length,
         0
       )
-      list.push({
-        id: 'pane:next-waiting',
-        group: 'Panes',
-        label: waiting
-          ? `Jump to the next waiting pane (${waiting} waiting)`
-          : 'Jump to the next waiting pane',
-        hint: 'Ctrl+Shift+J',
-        run: () => state.focusNextWaiting()
-      })
+      list.push(
+        {
+          id: 'pane:next-waiting',
+          group: 'Panes',
+          label: waiting
+            ? `Jump to the next waiting pane (${waiting} waiting)`
+            : 'Jump to the next waiting pane',
+          hint: 'Ctrl+Shift+J',
+          run: () => state.focusNextWaiting()
+        },
+        {
+          id: 'pane:waiting-queue',
+          group: 'Panes',
+          label: 'Waiting queue',
+          hint: 'Ctrl+Shift+U',
+          run: () => state.setUi({ waitingQueue: true })
+        }
+      )
 
       workspace.panes.forEach((pane, index) => {
         const profile = state.profiles.find((p) => p.id === pane.profileId)
@@ -254,6 +263,17 @@ export function CommandPalette(): React.JSX.Element {
               : 'Lock this pane read-only',
             hint: activePane.readOnly ? 'locked' : 'refuses typing, paste, broadcast, dictation',
             run: () => state.updatePane(activePane.id, { readOnly: !activePane.readOnly })
+          },
+          {
+            id: 'pane:mute-attention',
+            group: 'Active pane',
+            label: activePane.attentionMuted
+              ? 'Count this pane as waiting again'
+              : 'Never count this pane as waiting',
+            hint: activePane.attentionMuted
+              ? 'muted'
+              : 'no badge, sidebar count, notification or queue',
+            run: () => state.updatePane(activePane.id, { attentionMuted: !activePane.attentionMuted })
           },
           {
             id: 'pane:auto-restart',

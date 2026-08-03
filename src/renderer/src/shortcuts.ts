@@ -49,6 +49,7 @@ export type ShortcutId =
   | 'font-reset'
   | 'focus-pane-by-digit'
   | 'send-selection'
+  | 'toggle-waiting-queue'
 
 export interface Shortcut {
   id: ShortcutId
@@ -130,6 +131,9 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'find-pane', whileTyping: false, reserved: true, when: ctrlShift('f') },
   { id: 'clear-pane', whileTyping: false, reserved: true, when: ctrlShift('k') },
   { id: 'focus-waiting', whileTyping: false, reserved: true, when: ctrlShift('j') },
+  // Typing-guarded like its neighbour, and the same chord closes the overlay:
+  // the queue itself is not a text box, so it still gets the key back.
+  { id: 'toggle-waiting-queue', whileTyping: false, reserved: true, when: ctrlShift('u') },
   { id: 'copy-selection', whileTyping: false, reserved: true, when: ctrlShift('c') },
   { id: 'paste', whileTyping: false, reserved: true, when: ctrlShift('v') },
   { id: 'move-pane-left', whileTyping: false, reserved: true, when: ctrlShift('arrowleft') },

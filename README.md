@@ -49,6 +49,13 @@ badge counts them, and a background window notifies once as each goes quiet.
 How long the silence has to last, and whether it notifies or badges at all, are
 in Settings.
 
+**The waiting queue** — `Ctrl+Shift+U` lists every waiting pane across every
+workspace, oldest first, each with the last three lines it printed: for an agent
+at an approval gate, that tail is the question. Three reversible verbs on each
+row — `A` acknowledge (seen it, until it stops again), `S` snooze (until it next
+goes quiet, then for an hour), `M` mute (this pane never counts). A snoozed pane
+that rings the terminal bell comes back at once.
+
 **Survives restarts** — Workspaces, panes, folders and layout are saved to
 `workspaces.json` in the app's user-data folder. Reloading the window
 re-attaches to the running processes and repaints the last ~512 KB of output.
@@ -195,6 +202,7 @@ pane, and `Cmd+Alt+I` for developer tools.
 | `Ctrl+Shift+R` | Restart the process in the focused pane |
 | `Ctrl+Shift+Z` | Zoom / restore the focused pane |
 | `Ctrl+Shift+J` | Jump to the next pane waiting for you |
+| `Ctrl+Shift+U` | The waiting queue (`A` acknowledge, `S` snooze, `M` mute) |
 | `Alt+1` … `Alt+9` | Focus pane by position |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous pane |
 | `Ctrl+Shift+←/→` | Move the focused pane in the layout |

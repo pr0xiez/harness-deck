@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isLive, useDeck, type DeckWorkspace } from '../store'
+import { isLive, onQuietPane, useDeck, type DeckWorkspace } from '../store'
 import { CompareView } from './CompareView'
 import { Icon } from './Icon'
 import { MicButton } from './MicButton'
@@ -42,7 +42,9 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
     const offFocus = api.window.onFocusChange((focused) => {
       if (focused) read()
     })
-    const offQuiet = api.pty.onQuiet(({ quiet }) => {
+    // Through the store rather than the bridge: one subscription owns the quiet
+    // event now, and hands it on once it has decided the pane really did stop.
+    const offQuiet = onQuietPane(({ quiet }) => {
       if (quiet) read()
     })
     return () => {

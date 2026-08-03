@@ -497,7 +497,7 @@ function registerIpc(): void {
     const text = ptys!.transcript(id)
     return strip ? stripAnsi(text) : text
   })
-  ipcMain.handle('pty:tail', () => [])
+  ipcMain.handle('pty:tail', (_e, id: string, lines: number) => ptys!.tail(id, lines))
 
   ipcMain.handle('remote:status', () => REMOTE_OFF)
   ipcMain.handle('remote:setEnabled', () => REMOTE_OFF)

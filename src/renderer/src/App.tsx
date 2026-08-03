@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useDeck, type DeckWorkspace } from './store'
+import { isActionable, useDeck, type DeckWorkspace } from './store'
 import { digitOf, matchShortcut, type ShortcutId } from './shortcuts'
 import { getTerminal, refitAll } from './terminals'
 import { TitleBar } from './components/TitleBar'
@@ -9,6 +9,7 @@ import { PaneArea } from './components/PaneArea'
 import { BroadcastBar, fencedBlock } from './components/BroadcastBar'
 import { DeckSearch } from './components/DeckSearch'
 import { CommandPalette } from './components/CommandPalette'
+import { WaitingQueue } from './components/WaitingQueue'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
 import { UpdateToast } from './components/UpdateToast'
@@ -31,10 +32,7 @@ export function App(): React.JSX.Element {
   const addWorkspace = useDeck((s) => s.addWorkspace)
   const badgeEnabled = useDeck((s) => s.settings.attention.badge)
   const waitingCount = useDeck((s) =>
-    s.workspaces.reduce(
-      (total, ws) => total + ws.panes.filter((p) => p.status === 'waiting').length,
-      0
-    )
+    s.workspaces.reduce((total, ws) => total + ws.panes.filter((p) => isActionable(p)).length, 0)
   )
 
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
@@ -62,26 +60,9 @@ export function App(): React.JSX.Element {
       useDeck.getState().setPaneStatus(id, 'exited', exitCode)
     })
 
-    // Output *stopping* is the signal worth having: the agent has hit a prompt,
-    // an approval gate, or finished. The main process owns the clock; all that
-    // is left here is turning it into a status the UI can route on.
-    const offQuiet = api.pty.onQuiet(({ id, quiet }) => {
-      const state = useDeck.getState()
-      const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === id)
-      // An exit is the newer truth — a dead pane is not waiting for you — and
-      // the guard doubles as the once-per-transition rule for the notification.
-      if (!pane || pane.status !== (quiet ? 'running' : 'waiting')) return
-      state.setPaneStatus(id, quiet ? 'waiting' : 'running')
-      if (!quiet || !state.settings.attention.notify || document.hasFocus()) return
-      new Notification('Harness Deck', {
-        body: `${pane.name || pane.processTitle || pane.command} is waiting for you`
-      })
-    })
-
     return () => {
       offData()
       offExit()
-      offQuiet()
     }
   }, [])
 
@@ -210,6 +191,10 @@ export function App(): React.JSX.Element {
         // you check whether anything is waiting at all.
         const next = state.focusNextWaiting()
         if (next) getTerminal(next)?.term.focus()
+      },
+      'toggle-waiting-queue': ({ state, take }) => {
+        take()
+        state.setUi({ waitingQueue: !state.ui.waitingQueue })
       },
       'copy-selection': ({ paneId, take }) => {
         take()
@@ -359,6 +344,9 @@ export function App(): React.JSX.Element {
       <UpdateToast />
       <VoiceHud />
 
+      {/* Outside the deck: it lists panes from every workspace, so it cannot
+          belong to the one on screen. */}
+      {ui.waitingQueue ? <WaitingQueue /> : null}
       {ui.palette ? <CommandPalette /> : null}
       {ui.settings ? <SettingsDialog /> : null}
       {ui.help ? <HelpDialog /> : null}

@@ -7,7 +7,7 @@ import type {
   VoiceKeyState,
   VoiceProvider
 } from '@shared/types'
-import { voiceProvider } from '@shared/voice'
+import { voiceEndpointAllowed, voiceProvider } from '@shared/voice'
 import { shellEnv } from './shell-env'
 
 /**
@@ -226,6 +226,18 @@ export async function transcribe(req: TranscribeRequest): Promise<TranscribeResu
 
   if (!/^https?:\/\//i.test(req.baseUrl)) {
     return done({ error: 'No transcription URL configured — set one in Settings › Voice input.' })
+  }
+  // The renderer names both the provider and the URL, so a compromised
+  // renderer could pair a real key with an attacker's endpoint. Refuse before
+  // any key is resolved: a hosted provider's key only ever goes to that
+  // provider's own host, over https.
+  if (!voiceEndpointAllowed(req.provider, req.baseUrl)) {
+    const info = voiceProvider(req.provider)
+    return done({
+      error: info.baseUrl
+        ? `Refusing to contact ${req.baseUrl} — ${info.name} requests only go to ${info.baseUrl}.`
+        : `${req.baseUrl} is not a usable endpoint URL — check Settings › Voice input.`
+    })
   }
   if (req.audio.byteLength < MIN_AUDIO_BYTES) {
     return done({ error: 'That was too short to transcribe.' })

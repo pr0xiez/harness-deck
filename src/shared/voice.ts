@@ -88,10 +88,33 @@ export function voiceProvider(id: VoiceProvider): VoiceProviderInfo {
   return VOICE_PROVIDERS.find((p) => p.id === id) ?? VOICE_PROVIDERS[0]
 }
 
-/** Endpoint root for these settings, trailing slashes trimmed. */
+/**
+ * Endpoint root for these settings, trailing slashes trimmed. Only the custom
+ * service takes a user-supplied address; for a hosted service any stored
+ * override is ignored, so its key can never be aimed somewhere else.
+ */
 export function voiceBaseUrl(voice: VoiceSettings): string {
-  const base = voice.baseUrl.trim() || voiceProvider(voice.provider).baseUrl
+  const base =
+    voice.provider === 'custom' ? voice.baseUrl.trim() : voiceProvider(voice.provider).baseUrl
   return base.replace(/\/+$/, '')
+}
+
+/**
+ * Whether a request for `provider` may go to `baseUrl`. Hosted services only
+ * ever talk to their own https endpoint — an exact host match, so neither
+ * `api.openai.com.evil.com` nor `evil.com/?x=api.openai.com` slips a key out.
+ * The custom service accepts any http(s) address, and its requests only ever
+ * carry the custom-scoped key.
+ */
+export function voiceEndpointAllowed(provider: VoiceProvider, baseUrl: string): boolean {
+  let url: URL
+  try {
+    url = new URL(baseUrl)
+  } catch {
+    return false
+  }
+  if (provider === 'custom') return url.protocol === 'https:' || url.protocol === 'http:'
+  return url.protocol === 'https:' && url.host === new URL(voiceProvider(provider).baseUrl).host
 }
 
 export function voiceModel(voice: VoiceSettings): string {

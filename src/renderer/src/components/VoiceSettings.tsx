@@ -48,7 +48,7 @@ export function VoiceSettings(): React.JSX.Element {
       </p>
 
       <div className="voice-grid">
-        <Field label="Service">
+        <Field label="Service" hint={voice.provider === 'custom' ? undefined : info.hint}>
           <select
             value={voice.provider}
             onChange={(event) => updateVoice({ provider: event.target.value as VoiceProvider })}
@@ -75,13 +75,18 @@ export function VoiceSettings(): React.JSX.Element {
           </datalist>
         </Field>
 
-        <Field label="Endpoint" hint={info.hint}>
-          <input
-            value={voice.baseUrl}
-            placeholder={info.baseUrl || 'http://127.0.0.1:8000/v1'}
-            onChange={(event) => updateVoice({ baseUrl: event.target.value })}
-          />
-        </Field>
+        {voice.provider === 'custom' ? (
+          // Hosted services get no endpoint override: their key must never be
+          // sendable anywhere but their own host (the main process enforces
+          // the same rule before attaching a key).
+          <Field label="Endpoint" hint={info.hint}>
+            <input
+              value={voice.baseUrl}
+              placeholder="http://127.0.0.1:8000/v1"
+              onChange={(event) => updateVoice({ baseUrl: event.target.value })}
+            />
+          </Field>
+        ) : null}
 
         <Field label="API key" hint={keyLine(keyState, voice.provider)}>
           <div className="row">

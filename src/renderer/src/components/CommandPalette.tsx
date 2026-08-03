@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useDeck } from '../store'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
+import { getTerminal } from '../terminals'
+import { fencedBlock } from './BroadcastBar'
 import { Icon } from './Icon'
 
 const api = window.harness
@@ -274,6 +276,17 @@ export function CommandPalette(): React.JSX.Element {
             label: 'Copy pane transcript',
             hint: 'plain text',
             run: () => void copyTranscript(true)
+          },
+          {
+            id: 'pane:send-selection',
+            group: 'Active pane',
+            label: 'Send the selection to the broadcast box',
+            hint: 'Ctrl+Shift+E',
+            run: () => {
+              const selection = getTerminal(activePane.id)?.term.getSelection() ?? ''
+              if (!selection.trim()) return
+              state.setUi({ broadcast: true, pendingInsert: fencedBlock(selection) })
+            }
           },
           {
             id: 'pane:copy-transcript-raw',

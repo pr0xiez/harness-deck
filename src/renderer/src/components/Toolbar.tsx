@@ -1,11 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { WorkspaceAction } from '@shared/types'
 import { isLive, onQuietPane, useDeck, type DeckWorkspace } from '../store'
 import { CompareView } from './CompareView'
 import { Icon } from './Icon'
 import { MicButton } from './MicButton'
 import { ProfileMenu } from './ProfileMenu'
+import { Dropdown } from './ui'
 
 const api = window.harness
+
+/** Past this many the chips stop being a glance and become a wall. */
+const CHIP_LIMIT = 4
+
+/** What an action's chip says it will do, and how to fire it without the mouse. */
+const actionTitle = (action: WorkspaceAction, index: number): string =>
+  `${action.command}${index < 9 ? `\nAlt+Shift+${index + 1}` : ''}\nOpens a shell pane in the workspace folder`
 
 interface Props {
   workspace: DeckWorkspace
@@ -20,9 +29,14 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
   const home = useDeck((s) => s.info?.homeDir ?? '')
   const repo = useDeck((s) => s.repos[workspace.cwd] ?? null)
   const refreshRepo = useDeck((s) => s.refreshRepo)
+  const runWorkspaceAction = useDeck((s) => s.runWorkspaceAction)
   const menuOpen = ui.profileMenu
   const setMenuOpen = (open: boolean): void => setUi({ profileMenu: open })
   const [editingName, setEditingName] = useState(false)
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const actionsButton = useRef<HTMLButtonElement>(null)
+
+  const actions = workspace.actions ?? []
 
   const displayCwd =
     home && workspace.cwd.startsWith(home) ? `~${workspace.cwd.slice(home.length)}` : workspace.cwd
@@ -101,6 +115,58 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
             <Icon name="branch" size={12} />
             <span className="repo-branch">{repo.branch}</span>
             {repo.dirty ? <span className="dirty">{repo.dirty}</span> : null}
+          </span>
+        ) : null}
+
+        {/* The commands this project runs all day, one click each. Past four
+            they stop reading as a glance, so they fold into one. */}
+        {actions.length > 0 && actions.length <= CHIP_LIMIT
+          ? actions.map((action, index) => (
+              <button
+                key={action.id}
+                className="action-chip"
+                title={actionTitle(action, index)}
+                onClick={() => runWorkspaceAction(workspace.id, action.id)}
+              >
+                <Icon name="chevronRight" size={11} />
+                <span>{action.label}</span>
+              </button>
+            ))
+          : null}
+
+        {actions.length > CHIP_LIMIT ? (
+          <span className="action-menu-anchor">
+            <button
+              ref={actionsButton}
+              className={`action-chip ${actionsOpen ? 'on' : ''}`}
+              title="The commands saved on this workspace"
+              onClick={() => setActionsOpen((v) => !v)}
+            >
+              <Icon name="chevronRight" size={11} />
+              <span>{actions.length} actions</span>
+              <Icon name="chevronDown" size={11} />
+            </button>
+            {actionsOpen ? (
+              <Dropdown onClose={() => setActionsOpen(false)} anchor={actionsButton}>
+                {actions.map((action, index) => (
+                  <button
+                    key={action.id}
+                    className="menu-item action-item"
+                    title={actionTitle(action, index)}
+                    onClick={() => {
+                      setActionsOpen(false)
+                      runWorkspaceAction(workspace.id, action.id)
+                    }}
+                  >
+                    <span className="action-item-label">{action.label}</span>
+                    <span className="action-item-command">{action.command}</span>
+                    {index < 9 ? (
+                      <span className="action-item-key">Alt+Shift+{index + 1}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </Dropdown>
+            ) : null}
           </span>
         ) : null}
 

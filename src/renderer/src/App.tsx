@@ -264,6 +264,16 @@ export function App(): React.JSX.Element {
           state.setActivePane(workspace.id, pane.id)
           getTerminal(pane.id)?.term.focus()
         }
+      },
+      // Same rule as the workspace digits: no action at that position is no
+      // take() either, so the key is not swallowed on a workspace that has none.
+      'run-action-by-digit': ({ event, state, workspace, take }) => {
+        if (!workspace) return
+        const action = workspace.actions?.[Number(digitOf(event)) - 1]
+        if (action) {
+          take()
+          state.runWorkspaceAction(workspace.id, action.id)
+        }
       }
     }
 

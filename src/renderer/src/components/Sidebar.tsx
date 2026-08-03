@@ -4,6 +4,7 @@ import { ACCENTS } from '../theme'
 import { Dropdown } from './ui'
 import { Icon } from './Icon'
 import { SaveTemplateDialog, TemplatePicker } from './TemplateDialog'
+import { WorkspaceDialog } from './WorkspaceDialog'
 
 const api = window.harness
 
@@ -132,6 +133,12 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
               </button>
               <button className="menu-item" onClick={() => { setMenuOpen(false); duplicateWorkspace(workspace.id) }}>
                 Duplicate with panes
+              </button>
+              <button
+                className="menu-item"
+                onClick={() => { setMenuOpen(false); setUi({ workspaceDialogFor: workspace.id }) }}
+              >
+                Setup and actions…
               </button>
               <button
                 className="menu-item"
@@ -265,6 +272,14 @@ export function Sidebar(): React.JSX.Element {
         />
       ) : null}
       {ui.templatePicker ? <TemplatePicker onClose={() => setUi({ templatePicker: false })} /> : null}
+      {/* Mounted here rather than in the toolbar because the palette opens it
+          too, and the sidebar is the one thing on screen whatever is active. */}
+      {ui.workspaceDialogFor ? (
+        <WorkspaceDialog
+          workspaceId={ui.workspaceDialogFor}
+          onClose={() => setUi({ workspaceDialogFor: null })}
+        />
+      ) : null}
     </aside>
   )
 }

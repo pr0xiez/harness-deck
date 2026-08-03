@@ -532,6 +532,84 @@ code {
   font-weight: 650;
 }
 
+/* A workspace's saved commands, one click each. Sits between the repo chip and
+   the pane count, so the toolbar reads left to right as where you are, what the
+   repo is doing, what you can run, and what is open. See HD-16. */
+.action-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 3px 9px 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-1);
+  color: var(--fg-1);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.action-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.action-chip:hover,
+.action-chip.on {
+  border-color: var(--line-2);
+  background: var(--bg-2);
+  color: var(--fg);
+}
+
+.action-menu-anchor {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.action-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.action-item-command {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-2);
+  font: 11px/1.4 var(--mono);
+}
+
+.action-item-key {
+  color: var(--fg-2);
+  font-size: 11px;
+}
+
+/* The dialog's editor for the same list. */
+.action-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.action-row .action-command {
+  font-family: var(--mono);
+}
+
+.action-add {
+  align-self: flex-start;
+}
+
 .pane-count {
   font-size: 11px;
   color: var(--fg-2);

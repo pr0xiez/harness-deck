@@ -50,6 +50,7 @@ export type ShortcutId =
   | 'focus-pane-by-digit'
   | 'send-selection'
   | 'toggle-waiting-queue'
+  | 'run-action-by-digit'
 
 export interface Shortcut {
   id: ShortcutId
@@ -190,11 +191,21 @@ export const SHORTCUTS: readonly Shortcut[] = [
     reserved: true,
     when: (e) => ctrl(e) && !e.shiftKey && e.key === '0'
   },
+  // Before the pane digits, and the reason they now exclude Shift: Alt+Shift
+  // used to fall into them, so Alt+Shift+1 focused pane 1. Reserved by flag
+  // rather than by family — the blanket rule below covers Ctrl+Shift only, and
+  // without it xterm would eat the chord.
+  {
+    id: 'run-action-by-digit',
+    whileTyping: false,
+    reserved: true,
+    when: (e) => e.altKey && e.shiftKey && digitOf(e) !== null
+  },
   {
     id: 'focus-pane-by-digit',
     whileTyping: false,
     reserved: true,
-    when: (e) => e.altKey && digitOf(e) !== null
+    when: (e) => e.altKey && !e.shiftKey && digitOf(e) !== null
   }
 ]
 

@@ -326,15 +326,30 @@ export async function detectProfiles(): Promise<Profile[]> {
   return profiles
 }
 
+/**
+ * Which command-line grammar `defaultShell()` speaks. Named rather than
+ * inferred at each call site because two of the three differ in more than their
+ * argv: cmd.exe has no `exec`, and PowerShell before 7 has no `&&` (see
+ * `pty.ts`, where a pane's setup command is composed onto its command line).
+ */
+export type ShellFlavour = 'posix' | 'cmd' | 'powershell'
+
+export function shellFlavour(shell = defaultShell()): ShellFlavour {
+  if (process.platform !== 'win32') return 'posix'
+  return shell.toLowerCase().endsWith('cmd.exe') ? 'cmd' : 'powershell'
+}
+
 /** Expands a `viaShell` command line into an argv for the current platform. */
 export function shellCommandLine(cmdline: string): { command: string; args: string[] } {
   const shell = defaultShell()
-  if (process.platform === 'win32') {
-    const lower = shell.toLowerCase()
-    if (lower.endsWith('cmd.exe')) return { command: shell, args: ['/k', cmdline] }
-    return { command: shell, args: ['-NoLogo', '-NoExit', '-Command', cmdline] }
+  switch (shellFlavour(shell)) {
+    case 'cmd':
+      return { command: shell, args: ['/k', cmdline] }
+    case 'powershell':
+      return { command: shell, args: ['-NoLogo', '-NoExit', '-Command', cmdline] }
+    default:
+      return { command: shell, args: ['-l', '-i', '-c', cmdline] }
   }
-  return { command: shell, args: ['-l', '-i', '-c', cmdline] }
 }
 
 export function homeDir(): string {

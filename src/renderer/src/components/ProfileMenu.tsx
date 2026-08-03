@@ -23,6 +23,9 @@ interface Group {
 export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): React.JSX.Element {
   const profiles = useDeck((s) => s.profiles)
   const cwd = useDeck((s) => s.workspaces.find((w) => w.id === workspaceId)?.cwd ?? '')
+  const setupCommand = useDeck(
+    (s) => s.workspaces.find((w) => w.id === workspaceId)?.setupCommand ?? ''
+  )
   const repo = useDeck((s) => s.repos[cwd] ?? null)
   const refreshRepo = useDeck((s) => s.refreshRepo)
   const addPane = useDeck((s) => s.addPane)
@@ -85,7 +88,11 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
     addPane(workspaceId, profile, {
       cwd: result.path,
       worktree: result.path,
-      name: `${profile.name} · ${folder}`
+      name: `${profile.name} · ${folder}`,
+      // A brand-new checkout has no node_modules and no build, and three agents
+      // discovering that separately is three different guesses at the install.
+      // The pane runs the workspace's answer first, in front of you. See HD-16.
+      ...(setupCommand ? { setup: setupCommand } : {})
     })
     onClose()
   }
@@ -163,9 +170,15 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
         <div className="menu-note">
           <Icon name="branch" size={11} />
           <span>
-            {busy
-              ? 'Creating the worktree…'
-              : 'opens the agent in its own worktree, so two of them can work at once.'}
+            {busy ? (
+              'Creating the worktree…'
+            ) : setupCommand ? (
+              <>
+                opens the agent in its own worktree, after <code>{setupCommand}</code> has run in it.
+              </>
+            ) : (
+              'opens the agent in its own worktree, so two of them can work at once.'
+            )}
           </span>
         </div>
       ) : null}

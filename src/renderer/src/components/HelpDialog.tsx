@@ -7,7 +7,8 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
     [
       ['Ctrl+1 … Ctrl+9', 'Switch to workspace by position'],
       ['Ctrl+Shift+N', 'New workspace'],
-      ['Ctrl+Page Down / Page Up', 'Next / previous workspace']
+      ['Ctrl+Page Down / Page Up', 'Next / previous workspace'],
+      ['Alt+Shift+1 … Alt+Shift+9', 'Run the workspace action at that position']
     ]
   ],
   [

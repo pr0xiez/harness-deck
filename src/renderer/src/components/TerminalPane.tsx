@@ -228,7 +228,8 @@ export function TerminalPane({
           args: pane.args,
           cwd: pane.cwd,
           viaShell: pane.viaShell,
-          env: pane.env
+          env: pane.env,
+          setup: pane.setup
         },
         Math.max(term.cols, 20),
         Math.max(term.rows, 5)

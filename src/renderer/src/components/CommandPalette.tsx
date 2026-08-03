@@ -27,24 +27,53 @@ function transcriptName(workspace: string, pane: string, at: Date): string {
 }
 
 export function CommandPalette(): React.JSX.Element {
-  const state = useDeck()
+  const workspaces = useDeck((s) => s.workspaces)
+  const activeWorkspaceId = useDeck((s) => s.activeWorkspaceId)
+  const templates = useDeck((s) => s.templates)
+  const profiles = useDeck((s) => s.profiles)
+  const update = useDeck((s) => s.update)
+  const defaultCwd = useDeck((s) => s.settings.defaultCwd)
+  const sidebarCollapsed = useDeck((s) => s.settings.sidebarCollapsed)
+  const broadcastOpen = useDeck((s) => s.ui.broadcast)
+  const setUi = useDeck((s) => s.setUi)
+  const setActiveWorkspace = useDeck((s) => s.setActiveWorkspace)
+  const addWorkspace = useDeck((s) => s.addWorkspace)
+  const newWorkspaceFromTemplate = useDeck((s) => s.newWorkspaceFromTemplate)
+  const updateWorkspace = useDeck((s) => s.updateWorkspace)
+  const duplicateWorkspace = useDeck((s) => s.duplicateWorkspace)
+  const removeWorkspace = useDeck((s) => s.removeWorkspace)
+  const setLayout = useDeck((s) => s.setLayout)
+  const setColumns = useDeck((s) => s.setColumns)
+  const addPane = useDeck((s) => s.addPane)
+  const focusNextWaiting = useDeck((s) => s.focusNextWaiting)
+  const setActivePane = useDeck((s) => s.setActivePane)
+  const restartPane = useDeck((s) => s.restartPane)
+  const updatePane = useDeck((s) => s.updatePane)
+  const killPane = useDeck((s) => s.killPane)
+  const toggleZoom = useDeck((s) => s.toggleZoom)
+  const closePane = useDeck((s) => s.closePane)
+  const refreshProfiles = useDeck((s) => s.refreshProfiles)
+  const showUpdate = useDeck((s) => s.showUpdate)
+  const checkForUpdate = useDeck((s) => s.checkForUpdate)
+  const installUpdate = useDeck((s) => s.installUpdate)
+  const updateSettings = useDeck((s) => s.updateSettings)
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
-  const close = (): void => state.setUi({ palette: false })
+  const close = (): void => setUi({ palette: false })
 
   const commands = useMemo<Command[]>(() => {
-    const workspace = state.workspaces.find((w) => w.id === state.activeWorkspaceId)
+    const workspace = workspaces.find((w) => w.id === activeWorkspaceId)
     const activePane = workspace?.panes.find((p) => p.id === workspace.activePaneId)
     const list: Command[] = []
 
-    state.workspaces.forEach((ws, index) => {
+    workspaces.forEach((ws, index) => {
       list.push({
         id: `ws:${ws.id}`,
         group: 'Workspaces',
         label: `Switch to ${ws.name}`,
         hint: index < 9 ? `Ctrl+${index + 1}` : undefined,
-        run: () => state.setActiveWorkspace(ws.id)
+        run: () => setActiveWorkspace(ws.id)
       })
     })
 
@@ -54,7 +83,7 @@ export function CommandPalette(): React.JSX.Element {
         group: 'Workspaces',
         label: 'New workspace',
         hint: 'Ctrl+Shift+N',
-        run: () => state.addWorkspace()
+        run: () => addWorkspace()
       },
       {
         id: 'ws:new-folder',
@@ -62,30 +91,30 @@ export function CommandPalette(): React.JSX.Element {
         label: 'New workspace from folder…',
         run: async () => {
           const dir = await api.pickDirectory()
-          if (dir) state.addWorkspace(undefined, dir)
+          if (dir) addWorkspace(undefined, dir)
         }
       }
     )
 
-    if (state.templates.length) {
+    if (templates.length) {
       list.push({
         id: 'ws:new-template',
         group: 'Workspaces',
         label: 'New workspace from template…',
-        hint: `${state.templates.length} saved`,
-        run: () => state.setUi({ templatePicker: true })
+        hint: `${templates.length} saved`,
+        run: () => setUi({ templatePicker: true })
       })
       // Named entries too, so the common case is one search and one folder pick
       // rather than a trip through the picker.
-      state.templates.forEach((template) => {
+      templates.forEach((template) => {
         list.push({
           id: `ws:template:${template.id}`,
           group: 'Templates',
           label: `New workspace from “${template.name}”…`,
           hint: `${template.panes.length} pane${template.panes.length === 1 ? '' : 's'}`,
           run: async () => {
-            const dir = await api.pickDirectory(state.settings.defaultCwd)
-            if (dir) await state.newWorkspaceFromTemplate(template.id, dir)
+            const dir = await api.pickDirectory(defaultCwd)
+            if (dir) await newWorkspaceFromTemplate(template.id, dir)
           }
         })
       })
@@ -99,53 +128,53 @@ export function CommandPalette(): React.JSX.Element {
           label: `Change folder for ${workspace.name}…`,
           run: async () => {
             const dir = await api.pickDirectory(workspace.cwd)
-            if (dir) state.updateWorkspace(workspace.id, { cwd: dir })
+            if (dir) updateWorkspace(workspace.id, { cwd: dir })
           }
         },
         {
           id: 'ws:duplicate',
           group: 'Workspace',
           label: 'Duplicate workspace with its panes',
-          run: () => state.duplicateWorkspace(workspace.id)
+          run: () => duplicateWorkspace(workspace.id)
         },
         {
           id: 'ws:save-template',
           group: 'Workspace',
           label: 'Save workspace as a template…',
           hint: 'its panes, without its folder',
-          run: () => state.setUi({ templateSaveFor: workspace.id })
+          run: () => setUi({ templateSaveFor: workspace.id })
         },
         {
           id: 'ws:layout-grid',
           group: 'Workspace',
           label: 'Layout: grid',
-          run: () => state.setLayout(workspace.id, 'grid')
+          run: () => setLayout(workspace.id, 'grid')
         },
         {
           id: 'ws:layout-tabs',
           group: 'Workspace',
           label: 'Layout: tabs',
-          run: () => state.setLayout(workspace.id, 'tabs')
+          run: () => setLayout(workspace.id, 'tabs')
         },
         {
           id: 'ws:broadcast',
           group: 'Workspace',
-          label: state.ui.broadcast ? 'Hide broadcast bar' : 'Broadcast a prompt to every pane',
+          label: broadcastOpen ? 'Hide broadcast bar' : 'Broadcast a prompt to every pane',
           hint: 'Ctrl+Shift+B',
-          run: () => state.setUi({ broadcast: !state.ui.broadcast })
+          run: () => setUi({ broadcast: !broadcastOpen })
         },
         {
           id: 'ws:find-all',
           group: 'Workspace',
           label: 'Find across every pane…',
           hint: 'Ctrl+Shift+Alt+F',
-          run: () => state.setUi({ findAll: true })
+          run: () => setUi({ findAll: true })
         },
         {
           id: 'ws:delete',
           group: 'Workspace',
           label: `Delete workspace ${workspace.name}`,
-          run: () => state.removeWorkspace(workspace.id)
+          run: () => removeWorkspace(workspace.id)
         }
       )
 
@@ -159,7 +188,7 @@ export function CommandPalette(): React.JSX.Element {
           group: 'Workspace',
           label: 'Compare what the agents did',
           hint: `${worktrees} worktrees, side by side`,
-          run: () => state.setUi({ compare: true })
+          run: () => setUi({ compare: true })
         })
       }
 
@@ -169,13 +198,13 @@ export function CommandPalette(): React.JSX.Element {
           group: 'Workspace',
           label: `Grid: ${columns} column${columns === 1 ? '' : 's'}`,
           run: () => {
-            state.setLayout(workspace.id, 'grid')
-            state.setColumns(workspace.id, columns)
+            setLayout(workspace.id, 'grid')
+            setColumns(workspace.id, columns)
           }
         })
       }
 
-      state.profiles.forEach((profile) => {
+      profiles.forEach((profile) => {
         list.push({
           id: `pane:new:${profile.id}`,
           group: 'New pane',
@@ -183,13 +212,13 @@ export function CommandPalette(): React.JSX.Element {
           hint: profile.kind === 'agent' ? 'agent' : profile.kind,
           run: () => {
             // The bare `custom` entry has no command line yet — it needs the dialog.
-            if (profile.id === 'custom') state.setUi({ profileMenu: true })
-            else state.addPane(workspace.id, profile)
+            if (profile.id === 'custom') setUi({ profileMenu: true })
+            else addPane(workspace.id, profile)
           }
         })
       })
 
-      const waiting = state.workspaces.reduce(
+      const waiting = workspaces.reduce(
         (total, ws) => total + ws.panes.filter((p) => p.status === 'waiting').length,
         0
       )
@@ -200,17 +229,17 @@ export function CommandPalette(): React.JSX.Element {
           ? `Jump to the next waiting pane (${waiting} waiting)`
           : 'Jump to the next waiting pane',
         hint: 'Ctrl+Shift+J',
-        run: () => state.focusNextWaiting()
+        run: () => focusNextWaiting()
       })
 
       workspace.panes.forEach((pane, index) => {
-        const profile = state.profiles.find((p) => p.id === pane.profileId)
+        const profile = profiles.find((p) => p.id === pane.profileId)
         list.push({
           id: `pane:focus:${pane.id}`,
           group: 'Panes',
           label: `Focus ${pane.name || pane.processTitle || profile?.name || pane.command}`,
           hint: index < 9 ? `Alt+${index + 1}` : undefined,
-          run: () => state.setActivePane(workspace.id, pane.id)
+          run: () => setActivePane(workspace.id, pane.id)
         })
       })
 
@@ -218,7 +247,7 @@ export function CommandPalette(): React.JSX.Element {
         const paneLabel =
           activePane.name ||
           activePane.processTitle ||
-          state.profiles.find((p) => p.id === activePane.profileId)?.name ||
+          profiles.find((p) => p.id === activePane.profileId)?.name ||
           activePane.command
         const copyTranscript = async (strip: boolean): Promise<void> =>
           api.clipboard.write(await api.pty.transcript(activePane.id, strip))
@@ -235,14 +264,14 @@ export function CommandPalette(): React.JSX.Element {
             group: 'Active pane',
             label: 'Edit pane…',
             hint: 'command, folder, environment',
-            run: () => state.setUi({ paneDialogFor: activePane.id })
+            run: () => setUi({ paneDialogFor: activePane.id })
           },
           {
             id: 'pane:restart',
             group: 'Active pane',
             label: 'Restart process',
             hint: 'Ctrl+Shift+R',
-            run: () => state.restartPane(activePane.id)
+            run: () => restartPane(activePane.id)
           },
           {
             id: 'pane:read-only',
@@ -251,7 +280,7 @@ export function CommandPalette(): React.JSX.Element {
               ? 'Let this pane take input again'
               : 'Lock this pane read-only',
             hint: activePane.readOnly ? 'locked' : 'refuses typing, paste, broadcast, dictation',
-            run: () => state.updatePane(activePane.id, { readOnly: !activePane.readOnly })
+            run: () => updatePane(activePane.id, { readOnly: !activePane.readOnly })
           },
           {
             id: 'pane:auto-restart',
@@ -260,13 +289,13 @@ export function CommandPalette(): React.JSX.Element {
               ? 'Stop restarting this pane when it crashes'
               : 'Restart this pane when it crashes',
             hint: activePane.autoRestart ? 'on' : `${RESTART_CAP} attempts, then it stops`,
-            run: () => state.updatePane(activePane.id, { autoRestart: !activePane.autoRestart })
+            run: () => updatePane(activePane.id, { autoRestart: !activePane.autoRestart })
           },
           {
             id: 'pane:kill',
             group: 'Active pane',
             label: 'Send SIGHUP (stop process)',
-            run: () => state.killPane(activePane.id)
+            run: () => killPane(activePane.id)
           },
           {
             id: 'pane:copy-transcript',
@@ -301,14 +330,14 @@ export function CommandPalette(): React.JSX.Element {
             group: 'Active pane',
             label: 'Zoom / restore pane',
             hint: 'Ctrl+Shift+Z',
-            run: () => state.toggleZoom(workspace.id, activePane.id)
+            run: () => toggleZoom(workspace.id, activePane.id)
           },
           {
             id: 'pane:close',
             group: 'Active pane',
             label: 'Close pane',
             hint: 'Ctrl+Shift+W',
-            run: () => state.closePane(workspace.id, activePane.id)
+            run: () => closePane(workspace.id, activePane.id)
           }
         )
       }
@@ -320,14 +349,14 @@ export function CommandPalette(): React.JSX.Element {
         group: 'Application',
         label: 'Settings',
         hint: 'Ctrl+Shift+,',
-        run: () => state.setUi({ settings: true })
+        run: () => setUi({ settings: true })
       },
       {
         id: 'app:help',
         group: 'Application',
         label: 'Keyboard shortcuts',
         hint: 'Ctrl+Shift+/',
-        run: () => state.setUi({ help: true })
+        run: () => setUi({ help: true })
       },
       {
         id: 'app:dictate',
@@ -343,38 +372,69 @@ export function CommandPalette(): React.JSX.Element {
         id: 'app:rescan',
         group: 'Application',
         label: 'Rescan for installed harnesses',
-        run: () => void state.refreshProfiles()
+        run: () => void refreshProfiles()
       },
       {
         id: 'app:check-update',
         group: 'Application',
         label: 'Check for updates',
-        hint: state.update?.stage === 'available' ? state.update.available?.version : undefined,
+        hint: update?.stage === 'available' ? update.available?.version : undefined,
         run: () => {
-          state.showUpdate()
-          void state.checkForUpdate()
+          showUpdate()
+          void checkForUpdate()
         }
       },
-      ...(state.update?.stage === 'available' && state.update.installable
+      ...(update?.stage === 'available' && update.installable
         ? [
             {
               id: 'app:install-update',
               group: 'Application',
-              label: `Restart and install ${state.update.available?.version}`,
-              run: () => void state.installUpdate()
+              label: `Restart and install ${update.available?.version}`,
+              run: () => void installUpdate()
             }
           ]
         : []),
       {
         id: 'app:sidebar',
         group: 'Application',
-        label: state.settings.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
-        run: () => state.updateSettings({ sidebarCollapsed: !state.settings.sidebarCollapsed })
+        label: sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+        run: () => updateSettings({ sidebarCollapsed: !sidebarCollapsed })
       }
     )
 
     return list
-  }, [state])
+  }, [
+    workspaces,
+    activeWorkspaceId,
+    templates,
+    profiles,
+    update,
+    defaultCwd,
+    sidebarCollapsed,
+    broadcastOpen,
+    setUi,
+    setActiveWorkspace,
+    addWorkspace,
+    newWorkspaceFromTemplate,
+    updateWorkspace,
+    duplicateWorkspace,
+    removeWorkspace,
+    setLayout,
+    setColumns,
+    addPane,
+    focusNextWaiting,
+    setActivePane,
+    restartPane,
+    updatePane,
+    killPane,
+    toggleZoom,
+    closePane,
+    refreshProfiles,
+    showUpdate,
+    checkForUpdate,
+    installUpdate,
+    updateSettings
+  ])
 
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase()

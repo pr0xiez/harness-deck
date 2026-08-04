@@ -440,9 +440,11 @@ function registerIpc(): void {
     rememberAttention(state)
     return state
   })
-  ipcMain.on('state:save', (_e, state: PersistedState) => {
+  // handle/invoke rather than on/send, so a write that failed makes it back to
+  // the renderer instead of dying as a console line here. See issue #26.
+  ipcMain.handle('state:save', (_e, state: PersistedState) => {
     rememberAttention(state)
-    saveState(state)
+    return saveState(state)
   })
   ipcMain.handle('state:location', () => stateLocation())
 

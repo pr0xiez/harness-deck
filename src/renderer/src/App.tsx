@@ -12,6 +12,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
 import { UpdateToast } from './components/UpdateToast'
+import { SaveErrorToast } from './components/SaveErrorToast'
 import { VoiceHud } from './components/VoiceHud'
 import { Icon } from './components/Icon'
 import { useVoice } from './voice'
@@ -346,6 +347,7 @@ export function App(): React.JSX.Element {
       </div>
 
       <UpdateToast />
+      <SaveErrorToast />
       <VoiceHud />
 
       {ui.palette ? <CommandPalette /> : null}

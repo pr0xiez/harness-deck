@@ -14,6 +14,7 @@ import type {
   PtyQuietEvent,
   RepoInfo,
   SavedProfile,
+  SaveStateResult,
   SaveTextRequest,
   SaveTextResult,
   TranscribeRequest,
@@ -36,7 +37,9 @@ const api = {
   info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
 
   loadState: (): Promise<PersistedState | null> => ipcRenderer.invoke('state:load'),
-  saveState: (state: PersistedState): void => ipcRenderer.send('state:save', state),
+  /** Resolves with what became of the write, so the renderer can say when it failed. */
+  saveState: (state: PersistedState): Promise<SaveStateResult> =>
+    ipcRenderer.invoke('state:save', state),
   stateLocation: (): Promise<string> => ipcRenderer.invoke('state:location'),
 
   /** @deprecated Use `profiles.list`. Kept so older call sites keep compiling. */

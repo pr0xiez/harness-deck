@@ -28,6 +28,7 @@ import type {
 } from '@shared/types'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
 import { PasteGate } from './paste-gate'
+import { resolveWithin } from './paths'
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -576,14 +577,27 @@ function registerIpc(): void {
   ipcMain.on('app:openPath', (_e, path: string) => shell.openPath(path))
   ipcMain.on('app:setBadge', (_e, count: number) => setBadge(count))
 
-  ipcMain.handle('app:capture', async (_e, target: string) => {
-    if (!mainWindow) return null
-    const image = await mainWindow.webContents.capturePage()
-    const file = resolve(target)
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, image.toPNG())
-    return file
-  })
+  // The channel exists solely for the --capture dev flow (see the flag table
+  // above), so in a normal run it is never registered and a renderer that
+  // calls it gets a rejection, not a file. Even in a capture run the renderer
+  // only names a file inside the directory the CLI flag already chose — its
+  // string used to be resolved and written verbatim, which let any code in
+  // the renderer overwrite whatever the OS user could (issue #29).
+  if (captureTarget) {
+    const captureDir = dirname(resolve(captureTarget))
+    ipcMain.handle('app:capture', async (_e, target: string) => {
+      if (!mainWindow) return null
+      const file = resolveWithin(captureDir, target)
+      if (!file) {
+        console.warn(`[capture] refused a path outside ${captureDir}: ${target}`)
+        return null
+      }
+      const image = await mainWindow.webContents.capturePage()
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, image.toPNG())
+      return file
+    })
+  }
 }
 
 if (!app.requestSingleInstanceLock()) {

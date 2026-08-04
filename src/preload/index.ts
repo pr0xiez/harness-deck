@@ -157,6 +157,11 @@ const api = {
 
   openExternal: (url: string): void => ipcRenderer.send('app:openExternal', url),
   openPath: (path: string): void => ipcRenderer.send('app:openPath', path),
+  /**
+   * Dev-only: the channel is registered only when the app was launched with
+   * `--capture=` (rejects otherwise), and the target must stay inside that
+   * flag's directory — anything else comes back null. See issue #29.
+   */
   capture: (target: string): Promise<string | null> => ipcRenderer.invoke('app:capture', target)
 }
 

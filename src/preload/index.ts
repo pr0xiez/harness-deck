@@ -125,6 +125,7 @@ const api = {
     ipcRenderer.invoke('dialog:saveText', req),
 
   clipboard: {
+    /** Empty unless invoked within a moment of the paste chord (paste-gate.ts). */
     read: (): Promise<string> => ipcRenderer.invoke('clipboard:read'),
     write: (text: string): void => ipcRenderer.send('clipboard:write', text)
   },

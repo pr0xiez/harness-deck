@@ -27,6 +27,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import { PasteGate } from './paste-gate'
 import { detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -49,6 +50,8 @@ const isMac = process.platform === 'darwin'
 
 let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
+/** Records the paste chord off real keyboard input; gates `clipboard:read`. */
+const pasteGate = new PasteGate()
 /** Set when we are quitting to hand over to an installer — skip the pane prompt. */
 let quittingForUpdate = false
 /**
@@ -291,6 +294,12 @@ function createWindow(): BrowserWindow {
     if (/^https?:/.test(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
+
+  // The renderer's paste path (Ctrl/Cmd+Shift+V, see shortcuts.ts) asks the
+  // main process for the clipboard over IPC. The chord is recorded here, off
+  // keyboard input the renderer cannot forge, and `clipboard:read` only
+  // answers within a moment of it — see registerIpc and paste-gate.ts.
+  win.webContents.on('before-input-event', (_event, input) => pasteGate.observe(input))
 
   // DevTools without an application menu. macOS has one (see installMenu), and
   // its View item owns Cmd+Alt+I — handling it here too would toggle twice.
@@ -543,7 +552,11 @@ function registerIpc(): void {
     return systemPreferences.askForMediaAccess('microphone')
   })
 
-  ipcMain.handle('clipboard:read', () => clipboard.readText())
+  // Only within a moment of a real paste chord (see createWindow). The
+  // permission handler already refuses the web clipboard-read permission; a
+  // channel that answered unconditionally was a side door around it. An
+  // unprompted caller gets an empty string, not what the user last copied.
+  ipcMain.handle('clipboard:read', () => (pasteGate.allows() ? clipboard.readText() : ''))
   ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
 
   ipcMain.on('window:minimize', () => mainWindow?.minimize())

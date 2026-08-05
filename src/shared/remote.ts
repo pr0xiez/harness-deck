@@ -35,8 +35,8 @@ export const DEFAULT_REMOTE_SHELL = 'bash'
 /** What a remote pane runs when the user names no command: a login shell. */
 const LOGIN_SHELL = '"${SHELL:-/bin/sh}" -l'
 
-/** Single-quotes a value for the far shell, which parses whatever we send it. */
-function quote(value: string): string {
+/** Single-quotes a value for a POSIX shell — the far one, or any other we compose a command line for. */
+export function quote(value: string): string {
   return `'${value.split("'").join(`'\\''`)}'`
 }
 

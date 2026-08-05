@@ -1,9 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppInfo,
+  CheckpointInfo,
   DiffRequest,
   DiffResult,
   EnsureResult,
+  ForgeCli,
   InstallResult,
   PaneSpec,
   PaneStatus,
@@ -12,6 +14,7 @@ import type {
   PtyDataEvent,
   PtyExitEvent,
   PtyQuietEvent,
+  RemoteStatus,
   RepoInfo,
   SavedProfile,
   SaveTextRequest,
@@ -59,7 +62,18 @@ const api = {
       ipcRenderer.invoke('git:removeWorktree', path),
     diffStat: (dir: string): Promise<string> => ipcRenderer.invoke('git:diffStat', dir),
     /** What a pane changed since its branch left the trunk, already capped. See HD-3. */
-    diffRange: (req: DiffRequest): Promise<DiffResult> => ipcRenderer.invoke('git:diffRange', req)
+    diffRange: (req: DiffRequest): Promise<DiffResult> => ipcRenderer.invoke('git:diffRange', req),
+    /** Quiet-burst snapshots of a worktree, hidden refs only. See HD-20. */
+    checkpoint: (dir: string): Promise<void> => ipcRenderer.invoke('git:checkpoint', dir),
+    checkpoints: (dir: string): Promise<CheckpointInfo[]> =>
+      ipcRenderer.invoke('git:checkpoints', dir),
+    restoreCheckpoint: (dir: string, ref: string): Promise<WorktreeResult> =>
+      ipcRenderer.invoke('git:restoreCheckpoint', dir, ref),
+    dropCheckpoints: (repoRoot: string, paneId: string): Promise<void> =>
+      ipcRenderer.invoke('git:dropCheckpoints', repoRoot, paneId),
+    deleteBranch: (repoRoot: string, branch: string): Promise<WorktreeResult> =>
+      ipcRenderer.invoke('git:deleteBranch', repoRoot, branch),
+    forge: (): Promise<ForgeCli | null> => ipcRenderer.invoke('git:forge')
   },
 
   attention: {
@@ -109,7 +123,10 @@ const api = {
      * terminal; leave it off to get a stream that replays.
      */
     transcript: (id: string, strip = false): Promise<string> =>
-      ipcRenderer.invoke('pty:transcript', id, strip)
+      ipcRenderer.invoke('pty:transcript', id, strip),
+    /** Last `lines` non-empty lines, ANSI-stripped in main (`stripAnsi` lives there). */
+    tail: (id: string, lines: number): Promise<string[]> =>
+      ipcRenderer.invoke('pty:tail', id, lines)
   },
 
   pickDirectory: (current?: string): Promise<string | null> =>
@@ -139,6 +156,17 @@ const api = {
       ipcRenderer.invoke('voice:transcribe', req),
     /** macOS only; elsewhere the OS has no per-app microphone gate. */
     requestMicAccess: (): Promise<boolean> => ipcRenderer.invoke('voice:micAccess')
+  },
+
+  /** Deck Remote — the watch-from-elsewhere page. All stubs until HD-21. */
+  remote: {
+    status: (): Promise<RemoteStatus> => ipcRenderer.invoke('remote:status'),
+    setEnabled: (on: boolean): Promise<RemoteStatus> => ipcRenderer.invoke('remote:setEnabled', on),
+    setLan: (on: boolean): Promise<RemoteStatus> => ipcRenderer.invoke('remote:setLan', on),
+    setAllowTyping: (on: boolean): Promise<RemoteStatus> =>
+      ipcRenderer.invoke('remote:setAllowTyping', on),
+    onStatus: (handler: (status: RemoteStatus) => void): (() => void) =>
+      subscribe('remote:status', handler)
   },
 
   window: {

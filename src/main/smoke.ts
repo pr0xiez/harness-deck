@@ -403,18 +403,11 @@ export function watchRendererErrors(win: BrowserWindow): string[] {
   return errors
 }
 
-export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Promise<SmokeReport> {
-  const started = Date.now()
-  const checks: Check[] = []
-  const record = async (name: string, run: () => Promise<string | null>): Promise<void> => {
-    try {
-      const failure = await run()
-      checks.push({ name, ok: !failure, ...(failure ? { detail: failure } : {}) })
-    } catch (err) {
-      checks.push({ name, ok: false, detail: err instanceof Error ? err.message : String(err) })
-    }
-  }
+/** One check: run it, and file its outcome under `name` — pass, fail, or throw. */
+type RecordCheck = (name: string, run: () => Promise<string | null>) => Promise<void>
 
+/** The renderer booted, the window showed, and every piece of chrome is live. */
+async function checkRendererBoot(win: BrowserWindow, record: RecordCheck): Promise<void> {
   const probe = async (): Promise<Probe> =>
     (await win.webContents.executeJavaScript(PROBE, true)) as Probe
 
@@ -569,7 +562,10 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     const closed = await until(async () => !(await dialog()).open, 10_000)
     return closed ? null : 'it would not close again'
   })
+}
 
+/** Harness detection and the updater — the two things that probe the machine. */
+async function checkHarnessAndUpdater(record: RecordCheck): Promise<void> {
   await record('harnesses are detected', async () => {
     const profiles = await detectProfiles()
     if (!profiles.length) return 'detectProfiles() returned nothing'
@@ -591,7 +587,10 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     }
     return state.stage === 'error' ? `the local channel reported: ${state.error}` : null
   })
+}
 
+/** The git worktree plumbing, exercised against a real repo in a temp directory. */
+async function checkGitWorktrees(record: RecordCheck): Promise<void> {
   /**
    * HD-2 in one assertion: two panes pointed at one repo have to end up writing
    * to different directories, and closing one must never be able to take the
@@ -686,7 +685,10 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
       rmSync(base, { recursive: true, force: true })
     }
   })
+}
 
+/** The pty lifecycle, on its own manager — disposed of before this returns. */
+async function checkPtyLifecycle(record: RecordCheck): Promise<void> {
   // Everything below drives node-pty directly. If the native prebuild didn't
   // survive packaging, this is where it shows up.
   const { mgr, dataFor, exitsFor, quietFor } = recordingManager()
@@ -862,10 +864,32 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
   })
 
   mgr.disposeAll()
+}
 
+/** Last, so it sees everything the earlier checks provoked the renderer into. */
+async function checkRendererErrors(record: RecordCheck, rendererErrors: string[]): Promise<void> {
   await record('the renderer logged no errors', async () =>
     rendererErrors.length ? rendererErrors.join(' | ') : null
   )
+}
+
+export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Promise<SmokeReport> {
+  const started = Date.now()
+  const checks: Check[] = []
+  const record: RecordCheck = async (name, run) => {
+    try {
+      const failure = await run()
+      checks.push({ name, ok: !failure, ...(failure ? { detail: failure } : {}) })
+    } catch (err) {
+      checks.push({ name, ok: false, detail: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  await checkRendererBoot(win, record)
+  await checkHarnessAndUpdater(record)
+  await checkGitWorktrees(record)
+  await checkPtyLifecycle(record)
+  await checkRendererErrors(record, rendererErrors)
 
   return {
     ok: checks.every((c) => c.ok),

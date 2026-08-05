@@ -312,7 +312,7 @@ export function PaneDialog({ workspaceId, paneId, where: opensOn, onClose }: Pro
       {where === 'local' ? (
         <Field
           label="Run first"
-          hint="Optional. Runs in the same pane, ahead of the command line, every time the pane starts. If it fails the command line is never reached — the pane exits with the failure still on screen."
+          hint="Optional. Runs in the same pane, ahead of the command line, every time the pane starts. If it fails the command line is never reached — the pane exits with the failure still on screen. Both run through your login shell, so its profile (PATH edits and the like) applies to a pane that used to launch directly."
         >
           <input
             value={setup}

@@ -339,14 +339,29 @@ export function shellFlavour(shell = defaultShell()): ShellFlavour {
   return shell.toLowerCase().endsWith('cmd.exe') ? 'cmd' : 'powershell'
 }
 
-/** Expands a `viaShell` command line into an argv for the current platform. */
-export function shellCommandLine(cmdline: string): { command: string; args: string[] } {
-  const shell = defaultShell()
+/**
+ * Expands a `viaShell` command line into an argv for the current platform.
+ *
+ * `exits` says the shell must not outlive the line: the pty's onExit is how a
+ * pane reports its exit code, and cmd's `/k` and PowerShell's `-NoExit` leave
+ * an interactive prompt sitting where that report should be — the pane reads
+ * as running forever and auto-restart never fires. A plain `viaShell` pane
+ * keeps the interactive default it has always had; a pane with a setup command
+ * needs `exits`. POSIX `-c` exits with the line's status either way.
+ */
+export function shellCommandLine(
+  cmdline: string,
+  { exits = false, shell = defaultShell() }: { exits?: boolean; shell?: string } = {}
+): { command: string; args: string[] } {
   switch (shellFlavour(shell)) {
     case 'cmd':
-      return { command: shell, args: ['/k', cmdline] }
+      return { command: shell, args: [exits ? '/c' : '/k', cmdline] }
     case 'powershell':
-      return { command: shell, args: ['-NoLogo', '-NoExit', '-Command', cmdline] }
+      // `exit $LASTEXITCODE`, because -Command's own exit status collapses to
+      // 0-or-1 — the pane wants the real code, for the crash-restart backoff.
+      return exits
+        ? { command: shell, args: ['-NoLogo', '-Command', `${cmdline}; exit $LASTEXITCODE`] }
+        : { command: shell, args: ['-NoLogo', '-NoExit', '-Command', cmdline] }
     default:
       return { command: shell, args: ['-l', '-i', '-c', cmdline] }
   }

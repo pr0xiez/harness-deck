@@ -265,10 +265,11 @@ export function App(): React.JSX.Element {
           getTerminal(pane.id)?.term.focus()
         }
       },
-      // Same rule as the workspace digits: no action at that position is no
-      // take() either, so the key is not swallowed on a workspace that has none.
+      // Unlike the other digit shortcuts this one is not idempotent — every
+      // firing opens a pane with a real process in it — so key autorepeat must
+      // not count as pressing it again.
       'run-action-by-digit': ({ event, state, workspace, take }) => {
-        if (!workspace) return
+        if (!workspace || event.repeat) return
         const action = workspace.actions?.[Number(digitOf(event)) - 1]
         if (action) {
           take()

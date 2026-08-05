@@ -273,9 +273,13 @@ export function Sidebar(): React.JSX.Element {
       ) : null}
       {ui.templatePicker ? <TemplatePicker onClose={() => setUi({ templatePicker: false })} /> : null}
       {/* Mounted here rather than in the toolbar because the palette opens it
-          too, and the sidebar is the one thing on screen whatever is active. */}
+          too, and the sidebar is the one thing on screen whatever is active.
+          Keyed so retargeting to another workspace remounts it — the fields
+          are useState initialisers, and stale ones would save one workspace's
+          setup and actions onto another. */}
       {ui.workspaceDialogFor ? (
         <WorkspaceDialog
+          key={ui.workspaceDialogFor}
           workspaceId={ui.workspaceDialogFor}
           onClose={() => setUi({ workspaceDialogFor: null })}
         />

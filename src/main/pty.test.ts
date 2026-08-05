@@ -970,7 +970,26 @@ describe('a pane with a setup command', () => {
 
     expect(argvFor({ setup: ' npm ci ', command: 'npm run dev', viaShell: true })).toEqual({
       command: '/bin/bash',
-      args: ['-l', '-i', '-c', 'npm ci && exec npm run dev']
+      args: ['-l', '-i', '-c', 'npm ci && npm run dev']
+    })
+  })
+
+  /**
+   * No `exec` on a `viaShell` line: it is the user's own, `&&`s and `;`s
+   * included, and `exec` binds to the first simple command only — `npm ci &&
+   * exec npm run build && npm run dev` runs the build and silently never the
+   * dev server. The shell staying as the parent is also what a `viaShell` pane
+   * did before it had a setup.
+   */
+  it('leaves a compound viaShell line whole rather than handing it to exec', () => {
+    onPlatform('linux')
+    vi.stubEnv('SHELL', '/bin/bash')
+
+    expect(
+      argvFor({ setup: 'npm ci', command: 'npm run build && npm run dev', viaShell: true })
+    ).toEqual({
+      command: '/bin/bash',
+      args: ['-l', '-i', '-c', 'npm ci && npm run build && npm run dev']
     })
   })
 
@@ -991,17 +1010,34 @@ describe('a pane with a setup command', () => {
     })
   })
 
-  it('leaves out the exec on cmd.exe, which has none', () => {
+  /**
+   * `/c`, not `/k`: a pane with a setup must report its exit — `/k` leaves an
+   * interactive prompt as the pty's process, so onExit never fires, the pane
+   * reads as running forever and auto-restart is dead. A plain viaShell pane
+   * keeps the `/k` it has always had.
+   */
+  it('leaves out the exec on cmd.exe, which has none, and tells it to exit', () => {
     onPlatform('win32')
     windowsShellsIn(dir)
     vi.stubEnv('COMSPEC', 'C:\\Windows\\System32\\cmd.exe')
 
     expect(argvFor({ setup: 'npm ci', command: 'npm run dev', viaShell: true })).toEqual({
       command: 'C:\\Windows\\System32\\cmd.exe',
-      args: ['/k', 'npm ci && npm run dev']
+      args: ['/c', 'npm ci && npm run dev']
+    })
+    expect(argvFor({ command: 'npm run dev', viaShell: true })).toEqual({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/k', 'npm run dev']
     })
   })
 
+  /**
+   * The PowerShell preamble carries three findings at once: $LASTEXITCODE is
+   * $null until a *native* executable sets it, so it is primed to 0 or a
+   * cmdlet-only setup would never start the agent; $? is what a failing cmdlet
+   * shows; and there is no -NoExit — the shell must die with the command so
+   * the pane's exit code is real (the trailing `exit` forwards the agent's).
+   */
   it('asks PowerShell for the exit code, having no && to ask it with', () => {
     onPlatform('win32')
     const pwsh = join(dir, 'PowerShell', '7', 'pwsh.exe')
@@ -1009,17 +1045,31 @@ describe('a pane with a setup command', () => {
     writeFileSync(pwsh, '')
     windowsShellsIn(dir)
 
+    const guard =
+      '$LASTEXITCODE = 0; npm ci; $ok = $?; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if (-not $ok) { exit 1 }'
     expect(argvFor({ setup: 'npm ci', command: 'npm run dev', viaShell: true })).toEqual({
       command: pwsh,
-      args: ['-NoLogo', '-NoExit', '-Command', 'npm ci; if ($LASTEXITCODE -eq 0) { npm run dev }']
+      args: ['-NoLogo', '-Command', `${guard}; npm run dev; exit $LASTEXITCODE`]
     })
-    // The call operator, because a quoted path on its own is a string to print.
-    expect(argvFor({ setup: 'npm ci', command: 'C:\\Program Files\\hd\\claude.cmd' }).args).toEqual([
+    // The call operator, because a quoted path on its own is a string to
+    // print — and single quotes, PowerShell's literal string: double quotes
+    // expand, and would rewrite `$env:USER` before the agent saw it.
+    expect(
+      argvFor({
+        setup: 'npm ci',
+        command: 'C:\\Program Files\\hd\\claude.cmd',
+        args: ['--prompt=$env:USER']
+      }).args
+    ).toEqual([
       '-NoLogo',
-      '-NoExit',
       '-Command',
-      'npm ci; if ($LASTEXITCODE -eq 0) { & "C:\\Program Files\\hd\\claude.cmd" }'
+      `${guard}; & 'C:\\Program Files\\hd\\claude.cmd' '--prompt=$env:USER'; exit $LASTEXITCODE`
     ])
+    // Without a setup nothing changes: interactive, and the line as typed.
+    expect(argvFor({ command: 'npm run dev', viaShell: true })).toEqual({
+      command: pwsh,
+      args: ['-NoLogo', '-NoExit', '-Command', 'npm run dev']
+    })
   })
 
   /**

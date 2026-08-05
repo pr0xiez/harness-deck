@@ -573,6 +573,14 @@ code {
   gap: 8px;
 }
 
+/* Capped so a long label truncates itself instead of pushing the command out. */
+.action-item-label {
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .action-item-command {
   flex: 1;
   overflow: hidden;

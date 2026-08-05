@@ -110,6 +110,12 @@ interface UiState {
   findAll: boolean
   /** The side-by-side diff over the active workspace's worktree panes. See HD-3. */
   compare: boolean
+  /**
+   * Text waiting for the broadcast box to pick it up — a pane's selection,
+   * already fenced. The bar clears it the moment it lands in the box, so the
+   * same selection can be sent again and land again.
+   */
+  pendingInsert: string | null
 }
 
 interface DeckState {
@@ -257,7 +263,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     templateSaveFor: null,
     templatePicker: false,
     findAll: false,
-    compare: false
+    compare: false,
+    pendingInsert: null
   },
   update: null,
   updateDismissed: null,

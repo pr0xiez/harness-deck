@@ -48,6 +48,7 @@ export type ShortcutId =
   | 'font-smaller'
   | 'font-reset'
   | 'focus-pane-by-digit'
+  | 'send-selection'
 
 export interface Shortcut {
   id: ShortcutId
@@ -109,6 +110,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   },
   { id: 'toggle-palette', whileTyping: true, reserved: true, when: ctrlShift('p') },
   { id: 'toggle-broadcast', whileTyping: true, reserved: true, when: ctrlShift('b') },
+  { id: 'send-selection', whileTyping: false, reserved: true, when: ctrlShift('e') },
   // Not typing-guarded, so dictation also works from a text box.
   { id: 'toggle-dictation', whileTyping: true, reserved: true, when: ctrlShift('m') },
   { id: 'new-workspace', whileTyping: true, reserved: true, when: ctrlShift('n') },

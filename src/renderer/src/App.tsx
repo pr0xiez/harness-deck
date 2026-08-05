@@ -6,7 +6,7 @@ import { TitleBar } from './components/TitleBar'
 import { Sidebar } from './components/Sidebar'
 import { Toolbar } from './components/Toolbar'
 import { PaneArea } from './components/PaneArea'
-import { BroadcastBar } from './components/BroadcastBar'
+import { BroadcastBar, fencedBlock } from './components/BroadcastBar'
 import { DeckSearch } from './components/DeckSearch'
 import { CommandPalette } from './components/CommandPalette'
 import { SettingsDialog } from './components/SettingsDialog'
@@ -156,6 +156,17 @@ export function App(): React.JSX.Element {
       'toggle-broadcast': ({ state, take }) => {
         take()
         state.setUi({ broadcast: !state.ui.broadcast })
+      },
+      // The shortest path from "the error is on screen" to "the agents have
+      // it": what xterm hands back is already plain text, so all that is left
+      // is fencing it and opening the bar over whatever you were looking at.
+      'send-selection': ({ state, paneId, take }) => {
+        take()
+        const selection = paneId ? getTerminal(paneId)?.term.getSelection() ?? '' : ''
+        // A drag across empty terminal is not a selection — it must not open
+        // the bar on an empty fence.
+        if (!selection.trim()) return
+        state.setUi({ broadcast: true, pendingInsert: fencedBlock(selection) })
       },
       'toggle-dictation': ({ take }) => {
         take()

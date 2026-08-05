@@ -40,6 +40,7 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
       ['Ctrl+Shift+P', 'Command palette'],
       ['Ctrl+Shift+M', 'Dictate into the focused prompt (Esc discards)'],
       ['Ctrl+Shift+B', 'Broadcast a prompt to every pane'],
+      ['Ctrl+Shift+E', 'Send the pane selection to the broadcast box, fenced'],
       ['Ctrl+Shift+,', 'Settings'],
       ['Ctrl+Shift+/', 'This help'],
       ['F12', 'Developer tools']

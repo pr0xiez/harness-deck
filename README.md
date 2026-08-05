@@ -30,7 +30,8 @@ resized properly, so TUIs reflow instead of corrupting.
 
 **Broadcast** — Type one prompt and send it to every agent pane in the
 workspace at once (`Ctrl+Shift+B`). Useful for handing the same task to two
-models and comparing.
+models and comparing. `Ctrl+Shift+E` takes what is selected in the focused
+pane, fences it, and drops it in the box for you to describe.
 
 **Dictation** — `Ctrl+Shift+M` records you and types the transcript into the
 focused agent's prompt line, or into the broadcast box when that has focus. It
@@ -204,6 +205,7 @@ pane, and `Cmd+Alt+I` for developer tools.
 | `Ctrl+Shift+P` | Command palette |
 | `Ctrl+Shift+M` | Dictate into the focused prompt (`Esc` discards) |
 | `Ctrl+Shift+B` | Broadcast bar |
+| `Ctrl+Shift+E` | Send the focused pane's selection to the broadcast box |
 | `Ctrl+Shift+,` | Settings |
 | `Ctrl+Shift+/` | Shortcut help |
 | `F12` | DevTools |

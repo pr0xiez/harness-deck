@@ -11,9 +11,9 @@ import {
   systemPreferences
 } from 'electron'
 import type { NativeImage } from 'electron'
-import { mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   DiffRequest,
   PaneSpec,
@@ -34,7 +34,15 @@ import { ScrollbackStore } from './scrollback'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
-import { checkNow, currentState, disposeUpdater, initUpdater, install, setChannel } from './updater'
+import {
+  checkNow,
+  currentState,
+  disposeUpdater,
+  initUpdater,
+  install,
+  manifestPath,
+  setChannel
+} from './updater'
 import {
   formatReport,
   runSmoke,
@@ -411,6 +419,28 @@ function restrictPermissions(): void {
   session.defaultSession.setPermissionCheckHandler((_contents, permission) => decide(permission))
 }
 
+/** win32 compares paths case-insensitively, like `samePath` in git.ts. */
+const normPath = (path: string): string =>
+  process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path)
+
+/**
+ * `path.relative`-based containment, so neither `..` segments nor a sibling
+ * that merely shares the prefix (`/data-evil` against `/data`) counts as
+ * inside.
+ */
+function isInsideDir(base: string, candidate: string): boolean {
+  const rel = relative(normPath(base), normPath(candidate))
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+}
+
+function isUpdateManifest(target: string): boolean {
+  try {
+    return normPath(target) === normPath(realpathSync(manifestPath()))
+  } catch {
+    return false
+  }
+}
+
 function registerIpc(): void {
   ipcMain.handle('app:info', () => ({
     platform: process.platform,
@@ -560,7 +590,29 @@ function registerIpc(): void {
   ipcMain.on('app:openExternal', (_e, url: string) => {
     if (/^(https?|ms-settings):/.test(url)) shell.openExternal(url)
   })
-  ipcMain.on('app:openPath', (_e, path: string) => shell.openPath(path))
+  // A directory only ever raises the file manager, but `openPath` on a file
+  // hands it to the OS — which will execute it — so files are held to the
+  // app's own data. Same posture as `app:openExternal` above: fail closed.
+  ipcMain.on('app:openPath', (_e, path: string) => {
+    try {
+      // realpath, so a symlink cannot stand in for something outside the
+      // allowed locations, and a missing path fails here instead of at the OS.
+      const target = realpathSync(resolve(path))
+      // The state file lives under userData; the update manifest usually does
+      // too, but HD_UPDATE_MANIFEST can move it, so it is named explicitly.
+      if (
+        statSync(target).isDirectory() ||
+        isInsideDir(app.getPath('userData'), target) ||
+        isUpdateManifest(target)
+      ) {
+        shell.openPath(target)
+        return
+      }
+    } catch {
+      // resolution failed — rejected below like any other disallowed path
+    }
+    console.warn(`[main] blocked app:openPath for ${path}`)
+  })
   ipcMain.on('app:setBadge', (_e, count: number) => setBadge(count))
 
   ipcMain.handle('app:capture', async (_e, target: string) => {

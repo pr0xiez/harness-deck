@@ -3,6 +3,7 @@ import { accessSync, constants, existsSync } from 'node:fs'
 import { basename, delimiter, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { ForgeCli, Profile } from '@shared/types'
+import { flavourOf, type ShellFlavour } from '@shared/shell'
 import { loadCustomProfiles } from './profiles-store'
 import { defaultShell, shellEnv } from './shell-env'
 
@@ -350,12 +351,13 @@ export async function detectProfiles(): Promise<Profile[]> {
  * inferred at each call site because two of the three differ in more than their
  * argv: cmd.exe has no `exec`, and PowerShell before 7 has no `&&` (see
  * `pty.ts`, where a pane's setup command is composed onto its command line).
+ * The rule itself lives in `@shared/shell` so the renderer's ship-chain
+ * composition speaks the same grammar this process spawns.
  */
-export type ShellFlavour = 'posix' | 'cmd' | 'powershell'
+export type { ShellFlavour } from '@shared/shell'
 
 export function shellFlavour(shell = defaultShell()): ShellFlavour {
-  if (process.platform !== 'win32') return 'posix'
-  return shell.toLowerCase().endsWith('cmd.exe') ? 'cmd' : 'powershell'
+  return flavourOf(process.platform, shell)
 }
 
 /** Expands a `viaShell` command line into an argv for the current platform. */

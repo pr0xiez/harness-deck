@@ -24,6 +24,7 @@ const plan = (over: Partial<ShipPlan> = {}): ShipPlan => ({
   push: true,
   pr: true,
   forge: 'gh',
+  flavour: 'posix',
   ...over
 })
 
@@ -102,6 +103,30 @@ describe('shipChain', () => {
   it('is empty when nothing is selected, which is what disables the buttons', () => {
     expect(shipChain(plan({ commit: false, push: false, pr: false }))).toBe('')
   })
+
+  // The pane spawns `shell:default`, and on Windows that is never a POSIX
+  // shell — the chain has to arrive in the spawning shell's own grammar or the
+  // preview contract is a lie there (PS 5.1 has no `&&` at all).
+  it("speaks PowerShell when that is the pane's shell: doubled quotes, no &&", () => {
+    expect(shipChain(plan({ flavour: 'powershell', message: "don't stop" }))).toBe(
+      "git add -A; if ($LASTEXITCODE -eq 0) { git commit -m 'don''t stop'; " +
+        'if ($LASTEXITCODE -eq 0) { git push -u origin feat/hd-18-ship; ' +
+        'if ($LASTEXITCODE -eq 0) { gh pr create --fill } } }'
+    )
+  })
+
+  it("speaks cmd when that is the pane's shell: double quotes, one line", () => {
+    expect(shipChain(plan({ flavour: 'cmd', message: 'say "when"' }))).toBe(
+      'git add -A && git commit -m "say ""when""" && ' +
+        'git push -u origin feat/hd-18-ship && gh pr create --fill'
+    )
+  })
+
+  it('quotes a shell-ish branch in the same grammar as the message', () => {
+    expect(shipCommands(plan({ flavour: 'powershell', branch: 'feat/$(id)' }))[2]).toBe(
+      "git push -u origin 'feat/$(id)'"
+    )
+  })
 })
 
 const SHELL: Profile = {
@@ -170,7 +195,7 @@ describe('ShipDialog', () => {
       columns: 2,
       zoomedPaneId: null
     }
-    useDeck.setState({ profiles: [SHELL], workspaces: [workspace], repos: {} })
+    useDeck.setState({ profiles: [SHELL], workspaces: [workspace], repos: {}, info: null })
     harness.git.forge.mockResolvedValue('gh')
     harness.git.info.mockResolvedValue(linked)
   })
@@ -200,6 +225,50 @@ describe('ShipDialog', () => {
     // Not the ship pane's to delete: closing it must never offer to take the
     // folder the agent pane is still working in.
     expect(pane.worktree).toBeUndefined()
+    // And not the state file's to keep: a persisted ship pane would autostart
+    // on relaunch and run the chain again against whatever is in the tree.
+    expect(pane.transient).toBe(true)
+  })
+
+  it('runs nothing when the dialog closes while git is still answering', async () => {
+    const user = userEvent.setup()
+    let answer: (info: RepoInfo) => void = () => {}
+    harness.git.info.mockImplementation(
+      () =>
+        new Promise<RepoInfo>((resolve) => {
+          answer = resolve
+        })
+    )
+    const view = render(
+      <ShipDialog workspaceId="ws_1" pane={shipPane} diff={diff()} onClose={vi.fn()} />
+    )
+    await screen.findByText(/gh pr create/)
+    await user.type(screen.getByRole('textbox'), 'ready')
+    await user.click(screen.getByRole('button', { name: 'Run in a pane' }))
+
+    // Escape landed while the worktree re-check was in flight: the dialog is
+    // gone by the time git answers. The footer's promise holds — nothing runs.
+    view.unmount()
+    answer(linked)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(shipped()).toBeUndefined()
+  })
+
+  it('previews the chain in the grammar of the shell the pane will spawn', async () => {
+    useDeck.setState({
+      info: {
+        platform: 'win32',
+        versions: { electron: '', chrome: '', node: '', app: '' },
+        homeDir: 'C:\\Users\\t',
+        defaultShell: 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+        defaultCwd: 'C:\\Users\\t'
+      }
+    })
+    render(<ShipDialog workspaceId="ws_1" pane={shipPane} diff={diff()} onClose={vi.fn()} />)
+    await screen.findByText(/gh pr create/)
+
+    expect(preview()).toContain('$LASTEXITCODE')
+    expect(preview()).not.toContain('&&')
   })
 
   it('runs nothing when the dialog is closed', async () => {

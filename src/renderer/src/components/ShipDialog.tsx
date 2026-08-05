@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { quote } from '@shared/remote'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { chainFor, flavourOf, quoteFor, type ShellFlavour } from '@shared/shell'
 import type { DiffResult, ForgeCli } from '@shared/types'
 import { useDeck, type PaneView } from '../store'
 import { Field, Modal, Toggle } from './ui'
@@ -24,6 +24,13 @@ export interface ShipPlan {
   push: boolean
   pr: boolean
   forge: ForgeCli | null
+  /**
+   * The grammar of the shell the pane will actually spawn (`shell:default` via
+   * `shellCommandLine`). The preview is a contract, so it must be written in
+   * that shell's words — a POSIX-quoted chain handed to PowerShell would show
+   * one thing and run another, or nothing.
+   */
+  flavour: ShellFlavour
 }
 
 /**
@@ -32,7 +39,8 @@ export interface ShipPlan {
  * ordinary case would make the preview read like machinery. Quote the rest.
  */
 const BARE = /^[A-Za-z0-9._/-]+$/
-const arg = (value: string): string => (BARE.test(value) ? value : quote(value))
+const arg = (value: string, flavour: ShellFlavour): string =>
+  BARE.test(value) ? value : quoteFor(value, flavour)
 
 /** Where the branch goes when git could not name one — `push -u` still resolves it. */
 const NO_BRANCH = 'HEAD'
@@ -41,13 +49,17 @@ const NO_BRANCH = 'HEAD'
  * The chain, one command per entry, in the only order they make sense in.
  *
  * `git commit -m` takes the message as one argv entry, so the whole of it —
- * apostrophes, spaces, newlines — has to survive the shell as a single word.
- * That is exactly what `quote()` is already proving for remote panes.
+ * apostrophes, spaces, newlines — has to survive the shell as a single word,
+ * written in that shell's own quoting (`quoteFor`).
  */
 export function shipCommands(plan: ShipPlan): string[] {
   const out: string[] = []
-  if (plan.commit) out.push('git add -A', `git commit -m ${quote(plan.message.trim())}`)
-  if (plan.push) out.push(`git push -u origin ${arg(plan.branch.trim() || NO_BRANCH)}`)
+  if (plan.commit) {
+    out.push('git add -A', `git commit -m ${quoteFor(plan.message.trim(), plan.flavour)}`)
+  }
+  if (plan.push) {
+    out.push(`git push -u origin ${arg(plan.branch.trim() || NO_BRANCH, plan.flavour)}`)
+  }
   // No forge, no step: the chain is shorter, not broken.
   if (plan.pr && plan.forge) {
     out.push(plan.forge === 'glab' ? 'glab mr create --fill' : 'gh pr create --fill')
@@ -56,14 +68,15 @@ export function shipCommands(plan: ShipPlan): string[] {
 }
 
 /**
- * Joined with `&&` rather than newlines, and shown that way, because the join is
- * part of what the user is agreeing to: a push the remote rejected must not be
- * followed by a PR against a branch that never arrived. It also makes the pane
- * safe to restart — the second run's `git commit` finds nothing to commit and
- * stops the chain there, instead of pushing and opening a second PR.
+ * Joined stop-on-failure (`&&`, or PowerShell's `$LASTEXITCODE` form — see
+ * `chainFor`), and shown that way, because the join is part of what the user
+ * is agreeing to: a push the remote rejected must not be followed by a PR
+ * against a branch that never arrived. It also makes the pane safe to restart
+ * — the second run's `git commit` finds nothing to commit and stops the chain
+ * there, instead of pushing and opening a second PR.
  */
 export function shipChain(plan: ShipPlan): string {
-  return shipCommands(plan).join(' &&\n')
+  return chainFor(shipCommands(plan), plan.flavour)
 }
 
 /** The voice `detectProfiles` uses for a harness that isn't installed. */
@@ -83,6 +96,11 @@ export function ShipDialog({ workspaceId, pane, diff, onClose }: Props): React.J
   // Only ever the fallback: `repos` is keyed by folder and the toolbar only
   // refreshes the workspace's own, so a worktree is usually absent from it.
   const repoBranch = useDeck((s) => s.repos[pane.cwd]?.branch ?? '')
+  // The grammar of the shell the pane will spawn. `info` is loaded before the
+  // first workspace renders, so the posix fallback is for tests, not for users.
+  const flavour = useDeck((s) =>
+    s.info ? flavourOf(s.info.platform, s.info.defaultShell) : 'posix'
+  )
 
   const [asked, setAsked] = useState<DiffResult | null>(null)
   const [forge, setForge] = useState<ForgeCli | null>(null)
@@ -94,6 +112,15 @@ export function ShipDialog({ workspaceId, pane, diff, onClose }: Props): React.J
   const [copied, setCopied] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Closing the dialog is a promise that nothing runs — including a run() that
+  // was already awaiting git when the Escape landed.
+  const open = useRef(true)
+  useEffect(() => {
+    return () => {
+      open.current = false
+    }
+  }, [])
 
   useEffect(() => {
     let live = true
@@ -137,8 +164,8 @@ export function ShipDialog({ workspaceId, pane, diff, onClose }: Props): React.J
   const commitOn = commit && !nothingChanged
   const prOn = pr && forge !== null
   const chain = useMemo(
-    () => shipChain({ message, branch, commit: commitOn, push, pr: prOn, forge }),
-    [message, branch, commitOn, push, prOn, forge]
+    () => shipChain({ message, branch, commit: commitOn, push, pr: prOn, forge, flavour }),
+    [message, branch, commitOn, push, prOn, forge, flavour]
   )
 
   const needsMessage = commitOn && !message.trim()
@@ -159,6 +186,9 @@ export function ShipDialog({ workspaceId, pane, diff, onClose }: Props): React.J
     // in somebody's main checkout.
     const dir = pane.worktree ?? ''
     const info = dir ? await api.git.info(dir) : null
+    // The dialog closed while git was answering. The footer's promise wins
+    // over the click that was in flight: nothing runs.
+    if (!open.current) return
     setBusy(false)
     if (!info?.worktreeOf) {
       setError(`${dir || 'This pane'} is not a linked worktree any more. Nothing was run.`)
@@ -176,7 +206,12 @@ export function ShipDialog({ workspaceId, pane, diff, onClose }: Props): React.J
       command: chain,
       args: [],
       viaShell: true,
-      name: `ship · ${branch || folder}`
+      name: `ship · ${branch || folder}`,
+      // This pane is the run of one approved chain, not a fixture of the
+      // deck: were it persisted, relaunch would autostart it and re-run the
+      // commit/push against whatever the tree holds by then — under a stale
+      // message, or (worktree since deleted) in the homedir fallback cwd.
+      transient: true
       // Deliberately no `worktree`: the tree belongs to the pane that made it,
       // and closing a ship pane must never offer to delete the folder another
       // pane is still working in.

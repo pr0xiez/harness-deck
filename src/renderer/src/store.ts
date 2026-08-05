@@ -85,6 +85,13 @@ interface StoredPane extends Omit<Pane, 'status' | 'exitCode' | 'activity' | 'be
 export interface PaneView extends Pane {
   autostart?: boolean
   /**
+   * Never written to disk — the pane exists for one run of one command (the
+   * ship pane, HD-18). A persisted copy would autostart on relaunch and run
+   * the command again against whatever the folder holds by then, which for a
+   * commit-and-push chain is a repo mutation nobody asked for.
+   */
+  transient?: boolean
+  /**
    * Auto-restarts spent on the crash loop the pane is in. Transient on purpose:
    * a pane that comes back with the app is starting fresh, not resuming a loop
    * whose process died before the window closed.
@@ -882,50 +889,58 @@ export function serialize(state: DeckState): PersistedState {
     activeWorkspaceId: state.activeWorkspaceId,
     settings: state.settings,
     templates: state.templates,
-    workspaces: state.workspaces.map((ws) => ({
-      ...ws,
-      zoomedPaneId: null,
-      panes: ws.panes.map(
-        ({
-          id,
-          profileId,
-          command,
-          args,
-          cwd,
-          viaShell,
-          name,
-          env,
-          setup,
-          worktree,
-          autoRestart,
-          readOnly,
-          attentionMuted
-        }) => ({
-          id,
-          profileId,
-          command,
-          args,
-          cwd,
-          viaShell,
-          name,
-          env,
-          // Kept for the same reason as `worktree`: a restart re-runs the setup,
-          // and a pane that forgot it would put the agent in a tree nothing has
-          // installed into since the app was last quit.
-          setup,
-          // Kept, or a restart would forget that this folder is ours to remove.
-          worktree,
-          autoRestart,
-          readOnly,
-          // The build pane that goes quiet all day is still that pane tomorrow.
-          // Snoozes and acknowledgements are not: those expire with the session.
-          attentionMuted,
-          status: 'idle' as PaneStatus,
-          exitCode: null,
-          epoch: 0
-        })
-      )
-    }))
+    workspaces: state.workspaces.map((ws) => {
+      // A transient pane (the ship pane) is one run of one command; writing it
+      // to disk would make relaunch run the command again.
+      const kept = ws.panes.filter((p) => !p.transient)
+      return {
+        ...ws,
+        zoomedPaneId: null,
+        activePaneId: kept.some((p) => p.id === ws.activePaneId)
+          ? ws.activePaneId
+          : (kept[kept.length - 1]?.id ?? null),
+        panes: kept.map(
+          ({
+            id,
+            profileId,
+            command,
+            args,
+            cwd,
+            viaShell,
+            name,
+            env,
+            setup,
+            worktree,
+            autoRestart,
+            readOnly,
+            attentionMuted
+          }) => ({
+            id,
+            profileId,
+            command,
+            args,
+            cwd,
+            viaShell,
+            name,
+            env,
+            // Kept for the same reason as `worktree`: a restart re-runs the setup,
+            // and a pane that forgot it would put the agent in a tree nothing has
+            // installed into since the app was last quit.
+            setup,
+            // Kept, or a restart would forget that this folder is ours to remove.
+            worktree,
+            autoRestart,
+            readOnly,
+            // The build pane that goes quiet all day is still that pane tomorrow.
+            // Snoozes and acknowledgements are not: those expire with the session.
+            attentionMuted,
+            status: 'idle' as PaneStatus,
+            exitCode: null,
+            epoch: 0
+          })
+        )
+      }
+    })
   }
 }
 

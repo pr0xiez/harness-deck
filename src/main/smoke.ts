@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import type { PaneSpec, PersistedState, WorkspaceTemplate } from '@shared/types'
 import { addWorktree, diffRange, info as repoInfo, removeWorktree } from './git'
 import { PtyManager } from './pty'
-import { detectProfiles } from './profiles'
+import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { ScrollbackStore } from './scrollback'
 import { loadState, saveState } from './store'
@@ -577,6 +577,22 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     // A runner has no agent CLIs installed, so only the shell is guaranteed —
     // an empty list at all, though, means detection itself is broken.
     return available.length ? null : `none of ${profiles.length} profiles resolved to a binary`
+  })
+
+  /**
+   * The ship dialog opens on this answer, so the only failure that matters is
+   * the one a runner can't be made to reproduce: a probe that shells out and
+   * waits. Whether this machine has `gh` is not the assertion — that it comes
+   * back at PATH-walk speed, with one of the three answers, is. See HD-18.
+   */
+  await record('a forge probe answers without hanging', async () => {
+    const started = Date.now()
+    const forge = detectForge()
+    const took = Date.now() - started
+    if (forge !== null && forge !== 'gh' && forge !== 'glab') {
+      return `answered ${JSON.stringify(forge)}, which is not a forge CLI`
+    }
+    return took < 2000 ? null : `took ${took}ms — that is a spawn, not a PATH lookup`
   })
 
   // The GitHub channel is opt-in, and a build that reaches for it on its own

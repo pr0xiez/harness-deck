@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { DiffResult } from '@shared/types'
 import { useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { Icon } from './Icon'
+import { ShipDialog } from './ShipDialog'
 
 const api = window.harness
 
@@ -9,8 +10,11 @@ const api = window.harness
  * The payoff of worktree panes: broadcast one prompt, then read three agents'
  * answers as three diffs rather than three terminals.
  *
- * Read-only throughout. Nothing here writes to a repo, stages anything or opens
- * an editor — the pane already has a shell in it, and that is where git lives.
+ * The view itself reads and never writes: nothing here stages, commits or opens
+ * an editor. The one exception is the Ship button in each column header, and it
+ * is not really an exception — it composes commands, shows them, and hands them
+ * to a pane. Reading a verdict and then having to retype four commands in the
+ * right folder was the gap; git still runs where it always did.
  */
 
 /**
@@ -62,6 +66,7 @@ interface ColumnProps {
 
 function Column({ pane, accent, diff, full }: ColumnProps): React.JSX.Element {
   const profile = useDeck((s) => s.profiles.find((p) => p.id === pane.profileId))
+  const setUi = useDeck((s) => s.setUi)
   const title = pane.name || pane.processTitle || profile?.name || pane.command
 
   return (
@@ -73,6 +78,13 @@ function Column({ pane, accent, diff, full }: ColumnProps): React.JSX.Element {
         <span className="cmp-col-title" title={pane.cwd}>
           {title}
         </span>
+        <button
+          className="icon-btn tiny cmp-ship"
+          title={`Ship ${diff?.branch || 'this worktree'} — commit, push, open a PR`}
+          onClick={() => setUi({ shipFor: pane.id })}
+        >
+          <Icon name="branch" size={11} />
+        </button>
         <button
           className="icon-btn tiny"
           title={`Open ${pane.cwd}`}
@@ -128,6 +140,8 @@ export function CompareView({ workspace, onClose }: Props): React.JSX.Element {
   const [diffs, setDiffs] = useState<Loaded>({})
   const [busy, setBusy] = useState(true)
   const [full, setFull] = useState(false)
+  const shipFor = useDeck((s) => s.ui.shipFor)
+  const setUi = useDeck((s) => s.setUi)
 
   // A pane going quiet or changing status rebuilds `workspace.panes`, and
   // re-reading git every time one did would make the view flicker for no
@@ -152,6 +166,10 @@ export function CompareView({ workspace, onClose }: Props): React.JSX.Element {
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
+      // The ship dialog is on top and registered its own capture handler after
+      // this one, so it would never see the key — and closing the view out from
+      // under it would take the message the user was typing with it.
+      if (useDeck.getState().ui.shipFor) return
       // Captured before the terminals see it, the same way a modal takes it.
       event.stopPropagation()
       onClose()
@@ -161,6 +179,7 @@ export function CompareView({ workspace, onClose }: Props): React.JSX.Element {
   }, [onClose])
 
   const changed = panes.filter((pane) => diffs[pane.id]?.stat).length
+  const shipped = panes.find((pane) => pane.id === shipFor)
 
   return (
     <div className="compare" role="dialog" aria-label="Compare worktrees">
@@ -203,6 +222,18 @@ export function CompareView({ workspace, onClose }: Props): React.JSX.Element {
           />
         ))}
       </div>
+
+      {/* Opened from here rather than from the grid, because this is where the
+          column's diff already is: the dialog needs no second ask of git to know
+          whether the column has anything to commit. */}
+      {shipped ? (
+        <ShipDialog
+          workspaceId={workspace.id}
+          pane={shipped}
+          diff={diffs[shipped.id]}
+          onClose={() => setUi({ shipFor: null })}
+        />
+      ) : null}
     </div>
   )
 }

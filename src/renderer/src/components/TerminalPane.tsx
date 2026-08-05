@@ -41,6 +41,13 @@ interface Props {
  */
 const LOCK_HINT = 'Read-only: typing, paste, broadcast and dictation are refused'
 
+/**
+ * The other half of the mute promise: the pane keeps its own amber dot, because
+ * what this pane is doing is never something the app should misreport. Muting is
+ * about the counts that speak for every pane at once.
+ */
+const MUTE_HINT = 'Never count this pane as waiting — no badge, sidebar count, notification or queue'
+
 export function TerminalPane({
   pane,
   workspaceId,
@@ -77,6 +84,7 @@ export function TerminalPane({
   const paneId = pane.id
   const autoRestart = Boolean(pane.autoRestart)
   const locked = Boolean(pane.readOnly)
+  const muted = Boolean(pane.attentionMuted)
   // The terminal's handlers outlive the render that built them, so the lock is
   // read through a ref rather than the closure they captured.
   const lockedRef = useRef(locked)
@@ -166,7 +174,9 @@ export function TerminalPane({
       term.onTitleChange((next) => updatePane(paneId, { processTitle: next.trim() || undefined })),
       term.onBell(() => {
         const state = useDeck.getState()
-        state.updatePane(paneId, { bell: true })
+        // Not a plain `bell: true`: a pane ringing is a raised hand, and the
+        // store is where a raised hand outranks a snooze someone put on it.
+        state.ringBell(paneId)
         if (state.settings.bellNotifications && !document.hasFocus()) {
           const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId)
           new Notification('Harness Deck', {
@@ -218,7 +228,8 @@ export function TerminalPane({
           args: pane.args,
           cwd: pane.cwd,
           viaShell: pane.viaShell,
-          env: pane.env
+          env: pane.env,
+          setup: pane.setup
         },
         Math.max(term.cols, 20),
         Math.max(term.rows, 5)
@@ -404,6 +415,17 @@ export function TerminalPane({
           >
             <Icon name={zoomed ? 'minimize' : 'maximize'} />
           </button>
+          {/* Worktree panes only. The workspace's own tree is the user's, and
+              this app does not commit it. */}
+          {pane.worktree ? (
+            <button
+              className="icon-btn"
+              title="Ship this worktree — commit, push, open a PR"
+              onClick={() => setUi({ shipFor: paneId })}
+            >
+              <Icon name="branch" />
+            </button>
+          ) : null}
           <button
             className={`icon-btn pane-lock-btn ${locked ? 'on' : ''}`}
             aria-pressed={locked}
@@ -411,6 +433,14 @@ export function TerminalPane({
             onClick={() => updatePane(paneId, { readOnly: !locked })}
           >
             <Icon name="lock" />
+          </button>
+          <button
+            className={`icon-btn pane-mute-btn ${muted ? 'on' : ''}`}
+            aria-pressed={muted}
+            title={muted ? 'Count this pane as waiting again' : MUTE_HINT}
+            onClick={() => updatePane(paneId, { attentionMuted: !muted })}
+          >
+            <Icon name="broadcast" />
           </button>
           <button
             className="icon-btn"

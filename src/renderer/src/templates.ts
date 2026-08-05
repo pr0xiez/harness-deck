@@ -77,6 +77,11 @@ export function templateFromWorkspace(
     layout: workspace.layout,
     columns: workspace.columns,
     createdAt,
+    // Neither names a folder, so both travel intact — the whole point of a
+    // template is arriving at another repo ready to work, and an agent that has
+    // to discover there is no node_modules is not that. See HD-16.
+    ...(workspace.setupCommand ? { setupCommand: workspace.setupCommand } : {}),
+    ...(workspace.actions?.length ? { actions: workspace.actions.map((a) => ({ ...a })) } : {}),
     panes: workspace.panes.map((pane) => {
       const stored: TemplatePane = {
         profileId: pane.profileId,
@@ -141,6 +146,10 @@ export function workspaceFromTemplate(
     accent: template.accent,
     layout: template.layout,
     columns: template.columns,
+    // Copied rather than shared, the way a pane's args and env are: editing the
+    // new workspace's actions must not rewrite the template they came from.
+    ...(template.setupCommand ? { setupCommand: template.setupCommand } : {}),
+    ...(template.actions?.length ? { actions: template.actions.map((a) => ({ ...a })) } : {}),
     panes,
     activePaneId: panes[0]?.id ?? null,
     zoomedPaneId: null

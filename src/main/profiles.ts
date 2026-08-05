@@ -2,7 +2,8 @@ import { execFile } from 'node:child_process'
 import { accessSync, constants, existsSync } from 'node:fs'
 import { basename, delimiter, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
-import type { Profile } from '@shared/types'
+import type { ForgeCli, Profile } from '@shared/types'
+import { flavourOf, type ShellFlavour } from '@shared/shell'
 import { loadCustomProfiles } from './profiles-store'
 import { defaultShell, shellEnv } from './shell-env'
 
@@ -123,6 +124,25 @@ function decodeWsl(buf: Buffer): string {
   const nulls = buf.subarray(0, Math.min(buf.length, 64)).filter((b) => b === 0).length
   const text = nulls > 4 ? buf.toString('utf16le') : buf.toString('utf8')
   return text.replace(/\r/g, '').replace(/\u0000/g, '')
+}
+
+/** Preferred first, so a machine with both is offered the one it is likelier to want. */
+const FORGES: ForgeCli[] = ['gh', 'glab']
+
+let forgeCache: ForgeCli | null | undefined
+
+/**
+ * Which PR-capable CLI is on PATH. Cached for the run, like `probeWsl`'s answer
+ * — the ship dialog asks every time it opens, and a CLI installed halfway
+ * through a session is not worth re-walking PATH for.
+ *
+ * A PATH lookup rather than `gh --version` on purpose: this answer gates a
+ * button, and asking a binary to introduce itself hands a wedged one the power
+ * to hang the dialog waiting for it. `findExecutable` only stats files.
+ */
+export function detectForge(): ForgeCli | null {
+  if (forgeCache === undefined) forgeCache = FORGES.find((cli) => findExecutable(cli)) ?? null
+  return forgeCache
 }
 
 interface WslInfo {
@@ -326,15 +346,46 @@ export async function detectProfiles(): Promise<Profile[]> {
   return profiles
 }
 
-/** Expands a `viaShell` command line into an argv for the current platform. */
-export function shellCommandLine(cmdline: string): { command: string; args: string[] } {
-  const shell = defaultShell()
-  if (process.platform === 'win32') {
-    const lower = shell.toLowerCase()
-    if (lower.endsWith('cmd.exe')) return { command: shell, args: ['/k', cmdline] }
-    return { command: shell, args: ['-NoLogo', '-NoExit', '-Command', cmdline] }
+/**
+ * Which command-line grammar `defaultShell()` speaks. Named rather than
+ * inferred at each call site because two of the three differ in more than their
+ * argv: cmd.exe has no `exec`, and PowerShell before 7 has no `&&` (see
+ * `pty.ts`, where a pane's setup command is composed onto its command line).
+ * The rule itself lives in `@shared/shell` so the renderer's ship-chain
+ * composition speaks the same grammar this process spawns.
+ */
+export type { ShellFlavour } from '@shared/shell'
+
+export function shellFlavour(shell = defaultShell()): ShellFlavour {
+  return flavourOf(process.platform, shell)
+}
+
+/**
+ * Expands a `viaShell` command line into an argv for the current platform.
+ *
+ * `exits` says the shell must not outlive the line: the pty's onExit is how a
+ * pane reports its exit code, and cmd's `/k` and PowerShell's `-NoExit` leave
+ * an interactive prompt sitting where that report should be — the pane reads
+ * as running forever and auto-restart never fires. A plain `viaShell` pane
+ * keeps the interactive default it has always had; a pane with a setup command
+ * needs `exits`. POSIX `-c` exits with the line's status either way.
+ */
+export function shellCommandLine(
+  cmdline: string,
+  { exits = false, shell = defaultShell() }: { exits?: boolean; shell?: string } = {}
+): { command: string; args: string[] } {
+  switch (shellFlavour(shell)) {
+    case 'cmd':
+      return { command: shell, args: [exits ? '/c' : '/k', cmdline] }
+    case 'powershell':
+      // `exit $LASTEXITCODE`, because -Command's own exit status collapses to
+      // 0-or-1 — the pane wants the real code, for the crash-restart backoff.
+      return exits
+        ? { command: shell, args: ['-NoLogo', '-Command', `${cmdline}; exit $LASTEXITCODE`] }
+        : { command: shell, args: ['-NoLogo', '-NoExit', '-Command', cmdline] }
+    default:
+      return { command: shell, args: ['-l', '-i', '-c', cmdline] }
   }
-  return { command: shell, args: ['-l', '-i', '-c', cmdline] }
 }
 
 export function homeDir(): string {

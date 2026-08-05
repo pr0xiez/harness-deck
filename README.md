@@ -30,7 +30,8 @@ resized properly, so TUIs reflow instead of corrupting.
 
 **Broadcast** — Type one prompt and send it to every agent pane in the
 workspace at once (`Ctrl+Shift+B`). Useful for handing the same task to two
-models and comparing.
+models and comparing. `Ctrl+Shift+E` takes what is selected in the focused
+pane, fences it, and drops it in the box for you to describe.
 
 **Dictation** — `Ctrl+Shift+M` records you and types the transcript into the
 focused agent's prompt line, or into the broadcast box when that has focus. It
@@ -47,6 +48,13 @@ lives in shows a waiting count. `Ctrl+Shift+J` jumps to the next one, the dock
 badge counts them, and a background window notifies once as each goes quiet.
 How long the silence has to last, and whether it notifies or badges at all, are
 in Settings.
+
+**The waiting queue** — `Ctrl+Shift+U` lists every waiting pane across every
+workspace, oldest first, each with the last three lines it printed: for an agent
+at an approval gate, that tail is the question. Three reversible verbs on each
+row — `A` acknowledge (seen it, until it stops again), `S` snooze (until it next
+goes quiet, then for an hour), `M` mute (this pane never counts). A snoozed pane
+that rings the terminal bell comes back at once.
 
 **Survives restarts** — Workspaces, panes, folders and layout are saved to
 `workspaces.json` in the app's user-data folder. Reloading the window
@@ -189,11 +197,13 @@ pane, and `Cmd+Alt+I` for developer tools.
 | `Ctrl+1` … `Ctrl+9` | Switch workspace |
 | `Ctrl+Shift+N` | New workspace |
 | `Ctrl+Page Up/Down` | Previous / next workspace |
+| `Alt+Shift+1` … `Alt+Shift+9` | Run the workspace action at that position |
 | `Ctrl+Shift+T` | New pane (harness picker) |
 | `Ctrl+Shift+W` | Close focused pane |
 | `Ctrl+Shift+R` | Restart the process in the focused pane |
 | `Ctrl+Shift+Z` | Zoom / restore the focused pane |
 | `Ctrl+Shift+J` | Jump to the next pane waiting for you |
+| `Ctrl+Shift+U` | The waiting queue (`A` acknowledge, `S` snooze, `M` mute) |
 | `Alt+1` … `Alt+9` | Focus pane by position |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous pane |
 | `Ctrl+Shift+←/→` | Move the focused pane in the layout |
@@ -204,6 +214,7 @@ pane, and `Cmd+Alt+I` for developer tools.
 | `Ctrl+Shift+P` | Command palette |
 | `Ctrl+Shift+M` | Dictate into the focused prompt (`Esc` discards) |
 | `Ctrl+Shift+B` | Broadcast bar |
+| `Ctrl+Shift+E` | Send the focused pane's selection to the broadcast box |
 | `Ctrl+Shift+,` | Settings |
 | `Ctrl+Shift+/` | Shortcut help |
 | `F12` | DevTools |

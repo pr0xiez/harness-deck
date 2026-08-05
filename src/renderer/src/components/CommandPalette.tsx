@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useDeck } from '../store'
+import { isActionable, useDeck } from '../store'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
+import { getTerminal } from '../terminals'
+import { fencedBlock } from './BroadcastBar'
 import { Icon } from './Icon'
 
 const api = window.harness
@@ -142,12 +144,31 @@ export function CommandPalette(): React.JSX.Element {
           run: () => state.setUi({ findAll: true })
         },
         {
+          id: 'ws:setup-actions',
+          group: 'Workspace',
+          label: 'Setup command and actions…',
+          hint: workspace.setupCommand || 'what a fresh worktree runs first',
+          run: () => state.setUi({ workspaceDialogFor: workspace.id })
+        },
+        {
           id: 'ws:delete',
           group: 'Workspace',
           label: `Delete workspace ${workspace.name}`,
           run: () => state.removeWorkspace(workspace.id)
         }
       )
+
+      // The chips, by name. Searching for "test" and pressing Enter is the
+      // whole point of having saved the command in the first place.
+      workspace.actions?.forEach((action, index) => {
+        list.push({
+          id: `ws:action:${action.id}`,
+          group: 'Workspace',
+          label: `Run ${action.label}`,
+          hint: index < 9 ? `Alt+Shift+${index + 1}` : action.command,
+          run: () => state.runWorkspaceAction(workspace.id, action.id)
+        })
+      })
 
       // Only once there are two answers to compare. One worktree pane has
       // nothing to sit beside, and the entry would open an overlay with a
@@ -190,18 +211,27 @@ export function CommandPalette(): React.JSX.Element {
       })
 
       const waiting = state.workspaces.reduce(
-        (total, ws) => total + ws.panes.filter((p) => p.status === 'waiting').length,
+        (total, ws) => total + ws.panes.filter((p) => isActionable(p)).length,
         0
       )
-      list.push({
-        id: 'pane:next-waiting',
-        group: 'Panes',
-        label: waiting
-          ? `Jump to the next waiting pane (${waiting} waiting)`
-          : 'Jump to the next waiting pane',
-        hint: 'Ctrl+Shift+J',
-        run: () => state.focusNextWaiting()
-      })
+      list.push(
+        {
+          id: 'pane:next-waiting',
+          group: 'Panes',
+          label: waiting
+            ? `Jump to the next waiting pane (${waiting} waiting)`
+            : 'Jump to the next waiting pane',
+          hint: 'Ctrl+Shift+J',
+          run: () => state.focusNextWaiting()
+        },
+        {
+          id: 'pane:waiting-queue',
+          group: 'Panes',
+          label: 'Waiting queue',
+          hint: 'Ctrl+Shift+U',
+          run: () => state.setUi({ waitingQueue: true })
+        }
+      )
 
       workspace.panes.forEach((pane, index) => {
         const profile = state.profiles.find((p) => p.id === pane.profileId)
@@ -254,6 +284,17 @@ export function CommandPalette(): React.JSX.Element {
             run: () => state.updatePane(activePane.id, { readOnly: !activePane.readOnly })
           },
           {
+            id: 'pane:mute-attention',
+            group: 'Active pane',
+            label: activePane.attentionMuted
+              ? 'Count this pane as waiting again'
+              : 'Never count this pane as waiting',
+            hint: activePane.attentionMuted
+              ? 'muted'
+              : 'no badge, sidebar count, notification or queue',
+            run: () => state.updatePane(activePane.id, { attentionMuted: !activePane.attentionMuted })
+          },
+          {
             id: 'pane:auto-restart',
             group: 'Active pane',
             label: activePane.autoRestart
@@ -274,6 +315,17 @@ export function CommandPalette(): React.JSX.Element {
             label: 'Copy pane transcript',
             hint: 'plain text',
             run: () => void copyTranscript(true)
+          },
+          {
+            id: 'pane:send-selection',
+            group: 'Active pane',
+            label: 'Send the selection to the broadcast box',
+            hint: 'Ctrl+Shift+E',
+            run: () => {
+              const selection = getTerminal(activePane.id)?.term.getSelection() ?? ''
+              if (!selection.trim()) return
+              state.setUi({ broadcast: true, pendingInsert: fencedBlock(selection) })
+            }
           },
           {
             id: 'pane:copy-transcript-raw',
@@ -311,6 +363,18 @@ export function CommandPalette(): React.JSX.Element {
             run: () => state.closePane(workspace.id, activePane.id)
           }
         )
+
+        // Worktree panes only — the workspace's own tree is the user's, and
+        // this app does not commit it. See HD-18.
+        if (activePane.worktree) {
+          list.push({
+            id: 'pane:ship',
+            group: 'Active pane',
+            label: 'Ship this worktree…',
+            hint: 'commit, push, open a PR',
+            run: () => state.setUi({ shipFor: activePane.id })
+          })
+        }
       }
     }
 

@@ -378,6 +378,60 @@ describe('transcript', () => {
 })
 
 /**
+ * The waiting queue's answer to "why is this pane waiting" is the last thing it
+ * said, so the cut has to happen here: the buffer is half a megabyte and the
+ * question is three lines wide.
+ */
+describe('tail', () => {
+  it('hands back the last lines, stripped of the escapes that drew them', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('\x1b[32mRunning tests\x1b[0m\r\n')
+    spawned[0].emit('\x1b[2m14 passed\x1b[0m\r\n')
+    spawned[0].emit('Apply this patch? \x1b[1m(y/n)\x1b[0m')
+
+    expect(mgr.tail('a', 3)).toEqual(['Running tests', '14 passed', 'Apply this patch? (y/n)'])
+  })
+
+  it('skips the blank lines a redrawn frame leaves behind', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('first\r\n\r\n   \r\nsecond\r\n\r\n')
+
+    expect(mgr.tail('a', 3)).toEqual(['first', 'second'])
+  })
+
+  it('reads the tail of a pane that has scrolled past the replay limit without shipping it', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    const chunk = `${'x'.repeat(64 * 1024)}\r\n`
+    for (let i = 0; i < 20; i++) spawned[0].emit(chunk)
+    spawned[0].emit('Waiting for your approval\r\n')
+
+    const tail = mgr.tail('a', 3)
+    expect(tail[tail.length - 1]).toBe('Waiting for your approval')
+    // The whole point: the caller gets three lines, not the 512 KB they came
+    // out of. Two of these are still the last of the giant chunks.
+    expect(tail).toHaveLength(3)
+    expect(mgr.transcript('a').length).toBeGreaterThan(REPLAY_LIMIT / 2)
+  })
+
+  it('is empty for a pane that never started, rather than an error', () => {
+    const { mgr } = harness()
+
+    expect(mgr.tail('ghost', 3)).toEqual([])
+  })
+
+  it('is empty when nothing was asked for', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('something\r\n')
+
+    expect(mgr.tail('a', 0)).toEqual([])
+  })
+})
+
+/**
  * Quitting the app used to be indistinguishable from deleting every pane's
  * output. These are the edges of no longer doing that: a tail that keeps its
  * own size down, a restored one that never claims to be a live process, and a

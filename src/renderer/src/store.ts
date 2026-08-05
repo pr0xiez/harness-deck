@@ -74,6 +74,9 @@ export const DEFAULT_SETTINGS: Settings = {
 /** How far back ↑ reaches in the broadcast box before prompts are forgotten. */
 const BROADCAST_HISTORY = 50
 
+/** The long leg of the snooze cycle. Long enough to be a decision, short enough to forget. */
+export const SNOOZE_MS = 60 * 60 * 1000
+
 /** Panes carry a bit of state we never want to write to disk. */
 interface StoredPane extends Omit<Pane, 'status' | 'exitCode' | 'activity' | 'bell' | 'processTitle'> {
   autostart?: boolean
@@ -87,6 +90,19 @@ export interface PaneView extends Pane {
    * whose process died before the window closed.
    */
   crashRestarts?: number
+  /**
+   * When the pane last went quiet — the queue's ordering, oldest first. The
+   * three fields below are the same bargain as `crashRestarts`: how you felt
+   * about a prompt an hour ago is not something a restart should inherit, so
+   * none of them are persisted. Only `attentionMuted` is, on `Pane`.
+   */
+  waitingSince?: number
+  /** Seen it. Cleared the next time the pane goes quiet — a fresh stop is fresh news. */
+  acknowledged?: boolean
+  /** Not now: until this pane next goes quiet, or until a wall-clock moment. */
+  snooze?: 'quiet' | number
+  /** The bell cut a snooze short: this pane raised its hand while you were away. */
+  woke?: boolean
 }
 
 export interface DeckWorkspace extends Workspace {
@@ -116,6 +132,8 @@ interface UiState {
    * same selection can be sent again and land again.
    */
   pendingInsert: string | null
+  /** Every pane waiting for you, across all workspaces, with its last lines. See HD-15. */
+  waitingQueue: boolean
 }
 
 interface DeckState {
@@ -180,8 +198,19 @@ interface DeckState {
   setPaneStatus: (paneId: string, status: PaneStatus, exitCode?: number | null) => void
   setActivePane: (workspaceId: string, paneId: string) => void
   cyclePane: (delta: number) => void
-  /** Focuses the next pane that has gone quiet; returns its id, or null. */
+  /** Focuses the pane that has been waiting longest; returns its id, or null. */
   focusNextWaiting: () => string | null
+  /**
+   * The pane rang the terminal bell. A raised hand outranks a snooze — Claude
+   * Code rings it at permission prompts — so this is also what wakes one.
+   */
+  ringBell: (paneId: string) => void
+  /** Seen it, or un-seen it. Reversible, like all three attention verbs. */
+  toggleAcknowledged: (paneId: string) => void
+  /** Cycles the snooze: off → until this pane next goes quiet → for an hour → off. */
+  cycleSnooze: (paneId: string) => void
+  /** Never count this pane. Persisted, unlike the rest of the attention state. */
+  toggleMuted: (paneId: string) => void
   movePane: (workspaceId: string, paneId: string, delta: number) => void
   toggleZoom: (workspaceId: string, paneId: string) => void
   setLayout: (workspaceId: string, layout: LayoutMode) => void
@@ -264,7 +293,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     templatePicker: false,
     findAll: false,
     compare: false,
-    pendingInsert: null
+    pendingInsert: null,
+    waitingQueue: false
   },
   update: null,
   updateDismissed: null,
@@ -662,17 +692,61 @@ export const useDeck = create<DeckState>((set, get) => ({
   focusNextWaiting: () => {
     const { workspaces, activeWorkspaceId } = get()
     const active = workspaces.find((w) => w.id === activeWorkspaceId)
-    const flat = workspaces.flatMap((ws) => ws.panes.map((pane) => ({ ws, pane })))
-    // Start just after the focused pane, so pressing it again walks the queue
-    // rather than landing on the same pane every time.
-    const from =
-      flat.findIndex(({ ws, pane }) => ws.id === active?.id && pane.id === active?.activePaneId) + 1
-    const ordered = [...flat.slice(from), ...flat.slice(0, from)]
-    const next = ordered.find(({ pane }) => pane.status === 'waiting')
+    const now = Date.now()
+    // Oldest first: with six panes, "which one next" has an answer, and it is
+    // whichever agent has been sitting at its prompt longest. Muted, snoozed
+    // and acknowledged panes are not answers to that question.
+    const queue = workspaces
+      .flatMap((ws) => ws.panes.map((pane) => ({ ws, pane })))
+      .filter(({ pane }) => isActionable(pane, now))
+      .sort((a, b) => (a.pane.waitingSince ?? 0) - (b.pane.waitingSince ?? 0))
+    // Start just after the pane already in front, and never offer it back, so
+    // pressing the key again walks the queue rather than bouncing between two.
+    const at = queue.findIndex(
+      ({ ws, pane }) => ws.id === active?.id && pane.id === active?.activePaneId
+    )
+    const next = (at < 0 ? queue : [...queue.slice(at + 1), ...queue.slice(0, at)])[0]
     if (!next) return null
     if (next.ws.id !== activeWorkspaceId) get().setActiveWorkspace(next.ws.id)
     get().setActivePane(next.ws.id, next.pane.id)
     return next.pane.id
+  },
+
+  ringBell: (paneId) => {
+    const pane = get()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === paneId)
+    // `woke` is only news when there was a snooze to cut short; setting it on
+    // every bell would flag panes nobody had put off in the first place.
+    get().updatePane(paneId, {
+      bell: true,
+      ...(pane && isSnoozed(pane) ? { snooze: undefined, woke: true } : {})
+    })
+  },
+
+  toggleAcknowledged: (paneId) => {
+    const pane = get()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === paneId)
+    if (pane) get().updatePane(paneId, { acknowledged: !pane.acknowledged })
+  },
+
+  cycleSnooze: (paneId) => {
+    const pane = get()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === paneId)
+    if (!pane) return
+    const next =
+      pane.snooze === undefined ? 'quiet' : pane.snooze === 'quiet' ? Date.now() + SNOOZE_MS : undefined
+    // Snoozing is saying "not now", so it also un-flags the bell that said now.
+    get().updatePane(paneId, { snooze: next, woke: false })
+  },
+
+  toggleMuted: (paneId) => {
+    const pane = get()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === paneId)
+    if (pane) get().updatePane(paneId, { attentionMuted: !pane.attentionMuted })
   },
 
   movePane: (workspaceId, paneId, delta) =>
@@ -734,6 +808,37 @@ export const useDeck = create<DeckState>((set, get) => ({
 export const isLive = (pane: { status: PaneStatus }): boolean =>
   pane.status === 'running' || pane.status === 'waiting'
 
+/**
+ * Is this pane's snooze still in force? "Until next quiet" runs until the quiet
+ * handler lifts it; an hour-long one expires on its own, and is re-read rather
+ * than cleared on a timer — nothing else in the app is waiting on the moment it
+ * lapses, and the next thing that touches the store notices.
+ */
+export function isSnoozed(pane: PaneView, now: number = Date.now()): boolean {
+  if (pane.snooze === undefined) return false
+  return pane.snooze === 'quiet' || pane.snooze > now
+}
+
+/**
+ * The one question every aggregate is really asking: does this pane want you,
+ * *and* have you not already said otherwise? The dock badge, the sidebar counts,
+ * the palette hint and Ctrl+Shift+J all run on this, so muting a pane, snoozing
+ * it or acknowledging it takes it out of all four at once.
+ *
+ * The waiting queue itself is deliberately looser — it still shows what you
+ * acknowledged, dimmed — and a pane's own amber header dot is looser still: that
+ * is the local truth, and muting is about the aggregates, not about lying to the
+ * pane you are looking at.
+ */
+export function isActionable(pane: PaneView, now: number = Date.now()): boolean {
+  return (
+    pane.status === 'waiting' &&
+    !pane.attentionMuted &&
+    !pane.acknowledged &&
+    !isSnoozed(pane, now)
+  )
+}
+
 export const activeWorkspace = (state: DeckState): DeckWorkspace | undefined =>
   state.workspaces.find((w) => w.id === state.activeWorkspaceId)
 
@@ -761,7 +866,8 @@ export function serialize(state: DeckState): PersistedState {
           env,
           worktree,
           autoRestart,
-          readOnly
+          readOnly,
+          attentionMuted
         }) => ({
           id,
           profileId,
@@ -775,6 +881,9 @@ export function serialize(state: DeckState): PersistedState {
           worktree,
           autoRestart,
           readOnly,
+          // The build pane that goes quiet all day is still that pane tomorrow.
+          // Snoozes and acknowledgements are not: those expire with the session.
+          attentionMuted,
           status: 'idle' as PaneStatus,
           exitCode: null,
           epoch: 0
@@ -782,6 +891,76 @@ export function serialize(state: DeckState): PersistedState {
       )
     }))
   }
+}
+
+/** What a quiet subscriber is told: the event, and the pane it was about. */
+export interface QuietPaneEvent {
+  id: string
+  quiet: boolean
+  pane: PaneView
+}
+
+const quietSubscribers = new Set<(event: QuietPaneEvent) => void>()
+
+/**
+ * Also told when a pane falls quiet. Three things want that moment — the
+ * toolbar's git refresh, the attention state above, and HD-20's checkpoints —
+ * and each one subscribing to the bridge separately would mean three copies of
+ * the "is this the transition or a repeat?" rule. `startAttention` owns the rule
+ * and hands on what survived it.
+ */
+export function onQuietPane(handler: (event: QuietPaneEvent) => void): () => void {
+  quietSubscribers.add(handler)
+  return () => quietSubscribers.delete(handler)
+}
+
+/**
+ * The single subscription to `pty:quiet`, started once from main.tsx.
+ *
+ * Output *stopping* is the signal worth having: the agent has hit a prompt, an
+ * approval gate, or finished. The main process owns the clock; all that is left
+ * here is turning it into a status the UI can route on — and, for a window
+ * nobody is looking at, one notification per pane per stop.
+ */
+export function startAttention(): () => void {
+  return api.pty.onQuiet(({ id, quiet }) => {
+    const state = useDeck.getState()
+    const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === id)
+    // An exit is the newer truth — a dead pane is not waiting for you — and
+    // the guard doubles as the once-per-transition rule for the notification.
+    if (!pane || pane.status !== (quiet ? 'running' : 'waiting')) return
+
+    // Read before the transition lifts it: "until next quiet" ends *at* this
+    // quiet, which is exactly the moment the pane becomes news again. An
+    // hour-long one that has not yet run out still holds.
+    const stillSnoozed = quiet && pane.snooze !== 'quiet' && isSnoozed(pane)
+    if (quiet) {
+      state.updatePane(id, {
+        status: 'waiting',
+        exitCode: null,
+        waitingSince: Date.now(),
+        // A fresh stop is fresh news, so having been seen last time counts for
+        // nothing — and a hand raised during the last stop has been answered.
+        acknowledged: false,
+        woke: false,
+        snooze: pane.snooze === 'quiet' ? undefined : pane.snooze
+      })
+    } else {
+      state.setPaneStatus(id, 'running')
+    }
+
+    if (quiet && state.settings.attention.notify && !document.hasFocus()) {
+      // Muted and snoozed panes reach no aggregate, and a notification is the
+      // loudest aggregate there is.
+      if (!pane.attentionMuted && !stillSnoozed) {
+        new Notification('Harness Deck', {
+          body: `${pane.name || pane.processTitle || pane.command} is waiting for you`
+        })
+      }
+    }
+
+    for (const handler of [...quietSubscribers]) handler({ id, quiet, pane })
+  })
 }
 
 let saveTimer: number | undefined

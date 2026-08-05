@@ -61,6 +61,12 @@ describe('matching', () => {
     expect(matchShortcut(ctrlShift('ƒ', { code: 'KeyF', altKey: true }), true)?.id).toBe('find-all')
     expect(matchShortcut(ctrlShift('f', { code: 'KeyF' }), true)?.id).toBe('find-pane')
   })
+
+  /** The two halves of attention routing, one chord apart. */
+  it('separates jumping to the next waiting pane from the queue of all of them', () => {
+    expect(matchShortcut(ctrlShift('j'), false)?.id).toBe('focus-waiting')
+    expect(matchShortcut(ctrlShift('u'), false)?.id).toBe('toggle-waiting-queue')
+  })
 })
 
 describe('the typing guard', () => {

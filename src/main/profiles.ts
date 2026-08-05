@@ -2,7 +2,8 @@ import { execFile } from 'node:child_process'
 import { accessSync, constants, existsSync } from 'node:fs'
 import { basename, delimiter, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
-import type { Profile } from '@shared/types'
+import type { ForgeCli, Profile } from '@shared/types'
+import { flavourOf, type ShellFlavour } from '@shared/shell'
 import { loadCustomProfiles } from './profiles-store'
 import { defaultShell, shellEnv } from './shell-env'
 
@@ -123,6 +124,25 @@ function decodeWsl(buf: Buffer): string {
   const nulls = buf.subarray(0, Math.min(buf.length, 64)).filter((b) => b === 0).length
   const text = nulls > 4 ? buf.toString('utf16le') : buf.toString('utf8')
   return text.replace(/\r/g, '').replace(/\u0000/g, '')
+}
+
+/** Preferred first, so a machine with both is offered the one it is likelier to want. */
+const FORGES: ForgeCli[] = ['gh', 'glab']
+
+let forgeCache: ForgeCli | null | undefined
+
+/**
+ * Which PR-capable CLI is on PATH. Cached for the run, like `probeWsl`'s answer
+ * — the ship dialog asks every time it opens, and a CLI installed halfway
+ * through a session is not worth re-walking PATH for.
+ *
+ * A PATH lookup rather than `gh --version` on purpose: this answer gates a
+ * button, and asking a binary to introduce itself hands a wedged one the power
+ * to hang the dialog waiting for it. `findExecutable` only stats files.
+ */
+export function detectForge(): ForgeCli | null {
+  if (forgeCache === undefined) forgeCache = FORGES.find((cli) => findExecutable(cli)) ?? null
+  return forgeCache
 }
 
 interface WslInfo {
@@ -331,12 +351,13 @@ export async function detectProfiles(): Promise<Profile[]> {
  * inferred at each call site because two of the three differ in more than their
  * argv: cmd.exe has no `exec`, and PowerShell before 7 has no `&&` (see
  * `pty.ts`, where a pane's setup command is composed onto its command line).
+ * The rule itself lives in `@shared/shell` so the renderer's ship-chain
+ * composition speaks the same grammar this process spawns.
  */
-export type ShellFlavour = 'posix' | 'cmd' | 'powershell'
+export type { ShellFlavour } from '@shared/shell'
 
 export function shellFlavour(shell = defaultShell()): ShellFlavour {
-  if (process.platform !== 'win32') return 'posix'
-  return shell.toLowerCase().endsWith('cmd.exe') ? 'cmd' : 'powershell'
+  return flavourOf(process.platform, shell)
 }
 
 /**

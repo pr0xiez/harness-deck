@@ -415,6 +415,17 @@ export function TerminalPane({
           >
             <Icon name={zoomed ? 'minimize' : 'maximize'} />
           </button>
+          {/* Worktree panes only. The workspace's own tree is the user's, and
+              this app does not commit it. */}
+          {pane.worktree ? (
+            <button
+              className="icon-btn"
+              title="Ship this worktree — commit, push, open a PR"
+              onClick={() => setUi({ shipFor: paneId })}
+            >
+              <Icon name="branch" />
+            </button>
+          ) : null}
           <button
             className={`icon-btn pane-lock-btn ${locked ? 'on' : ''}`}
             aria-pressed={locked}

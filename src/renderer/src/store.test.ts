@@ -182,6 +182,30 @@ describe('serialize', () => {
    * that owns it will ever offer to remove it. Forget it on quit and the
    * checkout is orphaned on disk with nothing left that knows it is ours.
    */
+  /**
+   * The ship pane runs a commit-and-push chain the user approved once. A
+   * persisted copy would autostart on relaunch and run it again — against
+   * whatever the tree holds by then, under the old message.
+   */
+  it('leaves a transient pane out entirely, and repoints the active id past it', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace(
+          'one',
+          [
+            pane('a', 'waiting'),
+            pane('ship', 'running', { command: 'git add -A', transient: true })
+          ],
+          { activePaneId: 'ship' }
+        )
+      ]
+    })
+
+    const ws = saved().workspaces[0]
+    expect(ws.panes.map((p) => p.id)).toEqual(['a'])
+    expect(ws.activePaneId).toBe('a')
+  })
+
   it('keeps the worktree a pane owns even while stripping the rest of its state', () => {
     useDeck.setState({
       workspaces: [

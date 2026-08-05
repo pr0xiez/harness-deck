@@ -2297,6 +2297,37 @@ code {
   font: inherit;
 }
 
+/* The one control in the column header that writes something, so it carries the
+   column's accent instead of sitting quiet beside the folder button. */
+.cmp-ship {
+  color: var(--pane-accent);
+}
+
+/* The ship dialog. Filed with compare because that is where it is reached from,
+   even though the pane header offers it too. */
+
+/* Fixed height, so flipping a toggle never resizes the dialog under the cursor
+   — the chain is at most four lines and the box is sized for all four. */
+.ship-preview {
+  margin: 0;
+  min-height: 76px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  font: 11.5px/1.65 var(--mono);
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Belongs to the toggle primitive, kept here with the item that needed it: the
+   PR switch with no gh on PATH, and commit with nothing to commit. */
+.toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ---------- command palette ---------- */
 
 .palette-scrim {

@@ -363,6 +363,18 @@ export function CommandPalette(): React.JSX.Element {
             run: () => state.closePane(workspace.id, activePane.id)
           }
         )
+
+        // Worktree panes only — the workspace's own tree is the user's, and
+        // this app does not commit it. See HD-18.
+        if (activePane.worktree) {
+          list.push({
+            id: 'pane:ship',
+            group: 'Active pane',
+            label: 'Ship this worktree…',
+            hint: 'commit, push, open a PR',
+            run: () => state.setUi({ shipFor: activePane.id })
+          })
+        }
       }
     }
 

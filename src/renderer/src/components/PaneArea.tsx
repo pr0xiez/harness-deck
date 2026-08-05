@@ -3,6 +3,7 @@ import { useDeck, type DeckWorkspace } from '../store'
 import { TerminalPane } from './TerminalPane'
 import { ProfileMenu } from './ProfileMenu'
 import { PaneDialog } from './PaneDialog'
+import { ShipDialog } from './ShipDialog'
 import { Icon } from './Icon'
 
 interface Props {
@@ -21,6 +22,16 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
   const dialogFor = useDeck((s) =>
     workspace.panes.some((p) => p.id === s.ui.paneDialogFor) ? s.ui.paneDialogFor : null
   )
+  // Same reasoning, plus one more: while the compare overlay is up it renders
+  // its own ship dialog for the column it owns — with that column's diff already
+  // in hand — and two of them would stack. The condition is the one the toolbar
+  // mounts the overlay on, so only ever one of the two is showing.
+  const shipFor = useDeck((s) => {
+    const worktrees = workspace.panes.filter((p) => p.worktree)
+    if (s.ui.compare && worktrees.length >= 2) return null
+    return worktrees.some((p) => p.id === s.ui.shipFor) ? s.ui.shipFor : null
+  })
+  const shipPane = workspace.panes.find((p) => p.id === shipFor)
   const [addOpen, setAddOpen] = useState(false)
 
   const zoomed = workspace.zoomedPaneId
@@ -98,6 +109,14 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
           workspaceId={workspace.id}
           paneId={dialogFor}
           onClose={() => setUi({ paneDialogFor: null })}
+        />
+      ) : null}
+
+      {shipPane ? (
+        <ShipDialog
+          workspaceId={workspace.id}
+          pane={shipPane}
+          onClose={() => setUi({ shipFor: null })}
         />
       ) : null}
 

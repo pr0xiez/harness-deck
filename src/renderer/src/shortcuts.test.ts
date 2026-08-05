@@ -96,6 +96,26 @@ describe('digits', () => {
     )
   })
 
+  /**
+   * Alt+Shift used to fall into the pane digits, so Alt+Shift+1 focused pane 1.
+   * It fires the workspace's first action now, and the pane digits had to learn
+   * to exclude Shift for that to be reachable at all.
+   */
+  it('sends Alt+Shift+digit to an action and leaves Alt+digit on the pane', () => {
+    expect(
+      matchShortcut(press({ key: '2', code: 'Digit2', altKey: true, shiftKey: true }), false)?.id
+    ).toBe('run-action-by-digit')
+    expect(matchShortcut(press({ key: '2', code: 'Digit2', altKey: true }), false)?.id).toBe(
+      'focus-pane-by-digit'
+    )
+  })
+
+  it('reserves Alt+Shift+digit, which no Ctrl+Shift rule covers', () => {
+    expect(isReservedShortcut(press({ key: '2', code: 'Digit2', altKey: true, shiftKey: true }))).toBe(
+      true
+    )
+  })
+
   it('keeps Ctrl+Alt+digit on the workspace, as the old handler ordered it', () => {
     expect(
       matchShortcut(press({ key: '1', code: 'Digit1', ctrlKey: true, altKey: true }), false)?.id

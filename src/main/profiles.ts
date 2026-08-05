@@ -326,15 +326,45 @@ export async function detectProfiles(): Promise<Profile[]> {
   return profiles
 }
 
-/** Expands a `viaShell` command line into an argv for the current platform. */
-export function shellCommandLine(cmdline: string): { command: string; args: string[] } {
-  const shell = defaultShell()
-  if (process.platform === 'win32') {
-    const lower = shell.toLowerCase()
-    if (lower.endsWith('cmd.exe')) return { command: shell, args: ['/k', cmdline] }
-    return { command: shell, args: ['-NoLogo', '-NoExit', '-Command', cmdline] }
+/**
+ * Which command-line grammar `defaultShell()` speaks. Named rather than
+ * inferred at each call site because two of the three differ in more than their
+ * argv: cmd.exe has no `exec`, and PowerShell before 7 has no `&&` (see
+ * `pty.ts`, where a pane's setup command is composed onto its command line).
+ */
+export type ShellFlavour = 'posix' | 'cmd' | 'powershell'
+
+export function shellFlavour(shell = defaultShell()): ShellFlavour {
+  if (process.platform !== 'win32') return 'posix'
+  return shell.toLowerCase().endsWith('cmd.exe') ? 'cmd' : 'powershell'
+}
+
+/**
+ * Expands a `viaShell` command line into an argv for the current platform.
+ *
+ * `exits` says the shell must not outlive the line: the pty's onExit is how a
+ * pane reports its exit code, and cmd's `/k` and PowerShell's `-NoExit` leave
+ * an interactive prompt sitting where that report should be — the pane reads
+ * as running forever and auto-restart never fires. A plain `viaShell` pane
+ * keeps the interactive default it has always had; a pane with a setup command
+ * needs `exits`. POSIX `-c` exits with the line's status either way.
+ */
+export function shellCommandLine(
+  cmdline: string,
+  { exits = false, shell = defaultShell() }: { exits?: boolean; shell?: string } = {}
+): { command: string; args: string[] } {
+  switch (shellFlavour(shell)) {
+    case 'cmd':
+      return { command: shell, args: [exits ? '/c' : '/k', cmdline] }
+    case 'powershell':
+      // `exit $LASTEXITCODE`, because -Command's own exit status collapses to
+      // 0-or-1 — the pane wants the real code, for the crash-restart backoff.
+      return exits
+        ? { command: shell, args: ['-NoLogo', '-Command', `${cmdline}; exit $LASTEXITCODE`] }
+        : { command: shell, args: ['-NoLogo', '-NoExit', '-Command', cmdline] }
+    default:
+      return { command: shell, args: ['-l', '-i', '-c', cmdline] }
   }
-  return { command: shell, args: ['-l', '-i', '-c', cmdline] }
 }
 
 export function homeDir(): string {

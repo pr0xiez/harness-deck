@@ -259,6 +259,43 @@ describe('shellCommandLine', () => {
     })
   })
 
+  /**
+   * `exits` is what a pane with a setup command asks for: the pty's onExit is
+   * the pane's exit report, and an interactive `/k` or `-NoExit` shell would
+   * sit at a prompt in its place — running forever, auto-restart never firing.
+   * POSIX `-c` exits with the line either way, so its argv does not change.
+   */
+  it('lets the shell die with the command when asked to', () => {
+    onPlatform('win32')
+    noWindowsShells()
+    vi.stubEnv('COMSPEC', 'C:\\Windows\\System32\\cmd.exe')
+    expect(shellCommandLine('npm run dev', { exits: true }).args).toEqual(['/c', 'npm run dev'])
+
+    onPlatform('linux')
+    vi.stubEnv('SHELL', '/bin/bash')
+    expect(shellCommandLine('npm run dev', { exits: true }).args).toEqual([
+      '-l',
+      '-i',
+      '-c',
+      'npm run dev'
+    ])
+  })
+
+  it('exits PowerShell with the line, forwarding its code', () => {
+    onPlatform('win32')
+    const pwsh = join(dir, 'PowerShell', '7', 'pwsh.exe')
+    mkdirSync(join(dir, 'PowerShell', '7'), { recursive: true })
+    writeFileSync(pwsh, '')
+    noWindowsShells()
+
+    // `exit $LASTEXITCODE`, because -Command's own exit status collapses to
+    // 0-or-1 and the crash-restart backoff wants the real code.
+    expect(shellCommandLine('npm run dev', { exits: true })).toEqual({
+      command: pwsh,
+      args: ['-NoLogo', '-Command', 'npm run dev; exit $LASTEXITCODE']
+    })
+  })
+
   /** `/k` handed to PowerShell is an error dialog, so the test is the name. */
   it('reads the executable name, not the path it sits in', () => {
     onPlatform('win32')

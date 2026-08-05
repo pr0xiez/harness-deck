@@ -134,6 +134,8 @@ interface UiState {
   pendingInsert: string | null
   /** Every pane waiting for you, across all workspaces, with its last lines. See HD-15. */
   waitingQueue: boolean
+  /** Workspace whose setup command and actions are being edited. See HD-16. */
+  workspaceDialogFor: string | null
 }
 
 interface DeckState {
@@ -189,6 +191,12 @@ interface DeckState {
   cycleWorkspace: (delta: number) => void
 
   addPane: (workspaceId: string, profile: Profile, overrides?: Partial<PaneView>) => string
+  /**
+   * Opens one of the workspace's saved commands as an ordinary shell pane in the
+   * workspace folder. Returns the new pane's id, or '' when there is nothing at
+   * that id to run. See HD-16.
+   */
+  runWorkspaceAction: (workspaceId: string, actionId: string) => string
   closePane: (workspaceId: string, paneId: string) => void
   /** Close, asking first when the pane still has a live process. */
   requestClosePane: (workspaceId: string, paneId: string) => Promise<void>
@@ -294,7 +302,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     findAll: false,
     compare: false,
     pendingInsert: null,
-    waitingQueue: false
+    waitingQueue: false,
+    workspaceDialogFor: null
   },
   update: null,
   updateDismissed: null,
@@ -563,6 +572,25 @@ export const useDeck = create<DeckState>((set, get) => ({
       )
     })
     return pane.id
+  },
+
+  // Nothing special about the pane this makes: the bare `custom` launcher, the
+  // workspace folder, the command line through a login shell. A chip is a
+  // shortcut for typing it, not a second kind of pane — so it restarts, closes
+  // and hands over a transcript like any other.
+  runWorkspaceAction: (workspaceId, actionId) => {
+    const { workspaces, profiles } = get()
+    const workspace = workspaces.find((w) => w.id === workspaceId)
+    const action = workspace?.actions?.find((a) => a.id === actionId)
+    const custom = profiles.find((p) => p.id === 'custom')
+    if (!workspace || !action || !custom) return ''
+    return get().addPane(workspaceId, custom, {
+      command: action.command,
+      args: [],
+      viaShell: true,
+      cwd: workspace.cwd,
+      name: action.label
+    })
   },
 
   closePane: (workspaceId, paneId) => {
@@ -864,6 +892,7 @@ export function serialize(state: DeckState): PersistedState {
           viaShell,
           name,
           env,
+          setup,
           worktree,
           autoRestart,
           readOnly,
@@ -877,6 +906,10 @@ export function serialize(state: DeckState): PersistedState {
           viaShell,
           name,
           env,
+          // Kept for the same reason as `worktree`: a restart re-runs the setup,
+          // and a pane that forgot it would put the agent in a tree nothing has
+          // installed into since the app was last quit.
+          setup,
           // Kept, or a restart would forget that this folder is ours to remove.
           worktree,
           autoRestart,

@@ -144,12 +144,31 @@ export function CommandPalette(): React.JSX.Element {
           run: () => state.setUi({ findAll: true })
         },
         {
+          id: 'ws:setup-actions',
+          group: 'Workspace',
+          label: 'Setup command and actions…',
+          hint: workspace.setupCommand || 'what a fresh worktree runs first',
+          run: () => state.setUi({ workspaceDialogFor: workspace.id })
+        },
+        {
           id: 'ws:delete',
           group: 'Workspace',
           label: `Delete workspace ${workspace.name}`,
           run: () => state.removeWorkspace(workspace.id)
         }
       )
+
+      // The chips, by name. Searching for "test" and pressing Enter is the
+      // whole point of having saved the command in the first place.
+      workspace.actions?.forEach((action, index) => {
+        list.push({
+          id: `ws:action:${action.id}`,
+          group: 'Workspace',
+          label: `Run ${action.label}`,
+          hint: index < 9 ? `Alt+Shift+${index + 1}` : action.command,
+          run: () => state.runWorkspaceAction(workspace.id, action.id)
+        })
+      })
 
       // Only once there are two answers to compare. One worktree pane has
       // nothing to sit beside, and the entry would open an overlay with a

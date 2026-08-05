@@ -2,11 +2,11 @@ import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as nodePty from '@lydell/node-pty'
 import type { IPty } from '@lydell/node-pty'
-import { commandName } from '@shared/remote'
+import { commandName, quote } from '@shared/remote'
 import type { EnsureResult, PaneSpec, PaneStatus } from '@shared/types'
-import { shellCommandLine } from './profiles'
+import { shellCommandLine, shellFlavour, type ShellFlavour } from './profiles'
 import type { ScrollbackStore } from './scrollback'
-import { shellEnv } from './shell-env'
+import { defaultShell, shellEnv } from './shell-env'
 
 /** How much output we keep per pane so a reloaded window can be repainted. */
 const REPLAY_LIMIT = 512 * 1024
@@ -402,12 +402,96 @@ export class PtyManager {
   }
 }
 
+/** Launchers whose argv was built to carry the process to another machine. */
+const ELSEWHERE = ['wsl', 'ssh', 'docker']
+
 function resolveCommand(spec: PaneSpec): { command: string; args: string[] } {
-  if (spec.viaShell) {
-    const cmdline = [spec.command, ...spec.args].join(' ').trim()
-    return shellCommandLine(cmdline)
+  const setup = spec.setup?.trim() ?? ''
+  // A remote pane's argv is assembled upstream (profiles.ts, shared/remote.ts)
+  // and arrives here as `ssh …` — this machine's ssh. A setup line in front of
+  // it would install onto this machine rather than the one the agent is on, so
+  // wave A leaves those panes alone: a worktree pane is by construction a
+  // folder on this machine that this app created. The match is structural, not
+  // general: it holds because those launchers' argv is built upstream with
+  // `command` set to exactly `ssh`/`docker`/`…\wsl.exe`. A `viaShell` pane
+  // carries its whole line in `command`, so a hand-typed `ssh box claude`
+  // sails past — PaneDialog hiding "Run first" on non-local panes is what
+  // keeps that combination out of reach.
+  const here = !ELSEWHERE.includes(commandName(spec.command))
+
+  if (setup && here) {
+    const shell = defaultShell()
+    const flavour = shellFlavour(shell)
+    // A pane spawned straight off an absolute path has no shell to run the `&&`
+    // in, so a setup command promotes it to the shell path — and its argv is
+    // quoted back into a command line on the way. A `viaShell` pane's line is
+    // what the user typed, quotes and all, and re-quoting it would hand the
+    // whole thing over as one filename.
+    const promoted = !spec.viaShell
+    const cmdline = promoted ? quotedLine(spec, flavour) : plainLine(spec)
+    return shellCommandLine(withSetup(setup, cmdline, flavour, promoted), { exits: true, shell })
   }
+  if (spec.viaShell) return shellCommandLine(plainLine(spec))
   return { command: spec.command, args: spec.args }
+}
+
+const plainLine = (spec: PaneSpec): string => [spec.command, ...spec.args].join(' ').trim()
+
+function quotedLine(spec: PaneSpec, flavour: ShellFlavour): string {
+  const line = [spec.command, ...spec.args].map((part) => quoteArg(part, flavour)).join(' ')
+  // PowerShell reads a quoted first word as a string to print rather than a
+  // program to run; the call operator is what makes it a command again.
+  return flavour === 'powershell' ? `& ${line}` : line
+}
+
+function quoteArg(value: string, flavour: ShellFlavour): string {
+  if (flavour === 'posix') return quote(value)
+  // Single quotes are PowerShell's literal string — no `$` expansion, no
+  // backticks, an embedded quote doubles. Double quotes are its *expanding*
+  // form, and would rewrite an arg like `--prompt=$env:USER` before the agent
+  // ever saw it.
+  if (flavour === 'powershell') return `'${value.split("'").join("''")}'`
+  // cmd has no literal form; a doubled double quote is the closest it reads.
+  // Paths with quotes in them do not exist, spaces in them always do.
+  return `"${value.split('"').join('""')}"`
+}
+
+/**
+ * `<setup> && <command>` in each shell's own words. The `&&` is the design: a
+ * setup that fails leaves an exited pane with the failure still on screen,
+ * never a silent fall-through to an agent loose in a half-built tree.
+ *
+ * `promoted` marks a cmdline that is a single fully-quoted argv — a pane that
+ * had no shell until the setup put one there. That is the only shape `exec`
+ * may bind to: a `viaShell` line is the user's own, `&&`s and `;`s included,
+ * and `exec` binds to the first simple command only — everything after it
+ * would silently never run.
+ */
+function withSetup(
+  setup: string,
+  cmdline: string,
+  flavour: ShellFlavour,
+  promoted: boolean
+): string {
+  switch (flavour) {
+    // cmd.exe has no `exec`; the shell stays as the parent either way.
+    case 'cmd':
+      return `${setup} && ${cmdline}`
+    // PowerShell before 7 has no `&&` at all. $LASTEXITCODE starts the session
+    // as $null and only native executables ever set it, so it is primed to 0
+    // and read alongside $?: a setup ending in a cmdlet (Copy-Item …) must
+    // still start the agent, and a failing one — cmdlet or native — must still
+    // stop with the failure as the pane's exit code. $? is captured before the
+    // first `if` can overwrite it, and the exit code is consulted first: a
+    // failed native command sets both, and `exit 1` would throw the real code
+    // away. (Verified against powershell.exe 5.1 — see PR #23.)
+    case 'powershell':
+      return `$LASTEXITCODE = 0; ${setup}; $ok = $?; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if (-not $ok) { exit 1 }; ${cmdline}`
+    // `exec` so the process on the end of the pane is the agent and not a shell
+    // holding it — the exit code, a SIGHUP and a restart all want the real one.
+    default:
+      return promoted ? `${setup} && exec ${cmdline}` : `${setup} && ${cmdline}`
+  }
 }
 
 function resolveCwd(cwd: string): string {

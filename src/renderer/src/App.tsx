@@ -264,6 +264,17 @@ export function App(): React.JSX.Element {
           state.setActivePane(workspace.id, pane.id)
           getTerminal(pane.id)?.term.focus()
         }
+      },
+      // Unlike the other digit shortcuts this one is not idempotent — every
+      // firing opens a pane with a real process in it — so key autorepeat must
+      // not count as pressing it again.
+      'run-action-by-digit': ({ event, state, workspace, take }) => {
+        if (!workspace || event.repeat) return
+        const action = workspace.actions?.[Number(digitOf(event)) - 1]
+        if (action) {
+          take()
+          state.runWorkspaceAction(workspace.id, action.id)
+        }
       }
     }
 

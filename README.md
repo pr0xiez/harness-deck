@@ -197,6 +197,7 @@ pane, and `Cmd+Alt+I` for developer tools.
 | `Ctrl+1` … `Ctrl+9` | Switch workspace |
 | `Ctrl+Shift+N` | New workspace |
 | `Ctrl+Page Up/Down` | Previous / next workspace |
+| `Alt+Shift+1` … `Alt+Shift+9` | Run the workspace action at that position |
 | `Ctrl+Shift+T` | New pane (harness picker) |
 | `Ctrl+Shift+W` | Close focused pane |
 | `Ctrl+Shift+R` | Restart the process in the focused pane |

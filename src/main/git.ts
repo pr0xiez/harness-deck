@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, posix, resolve, win32 } from 'node:path'
 import type {
   DiffRequest,
   DiffResult,
@@ -8,6 +8,7 @@ import type {
   WorktreeRequest,
   WorktreeResult
 } from '@shared/types'
+import { WORKTREE_DIR } from '@shared/worktree'
 import { shellEnv } from './shell-env'
 
 /**
@@ -205,9 +206,34 @@ async function freeSlot(req: WorktreeRequest): Promise<{ branch: string; path: s
   return { branch: req.branch, path: req.path }
 }
 
+/**
+ * Whether `target` is a place this app would ever put a worktree: strictly
+ * inside the `.harness-deck` folder beside the repo. The request comes over IPC
+ * verbatim, and `worktree add` will write a checkout wherever it is pointed —
+ * an autostart directory included — so the main process re-derives the rule
+ * from the repo rather than trusting the renderer's arithmetic. The base dir
+ * itself does not count as inside: a worktree is always some folder within it,
+ * and `freeSlot`'s `-2` suffixes only ever move between siblings there.
+ *
+ * Exported for the tests, which want the decision without spawning git.
+ */
+export function worktreePathAllowed(repo: string, target: string): boolean {
+  // Judged with Windows semantics when the repo path is Windows-shaped — git
+  // there reports either slash, and case is not a difference. `win32.relative`
+  // handles both. Going by the path rather than the platform keeps the rule
+  // testable everywhere, the same trade `worktreePath` makes.
+  const p = /^[a-zA-Z]:[\\/]/.test(repo) || repo.includes('\\') ? win32 : posix
+  const base = p.resolve(p.dirname(p.resolve(repo)), WORKTREE_DIR)
+  const rel = p.relative(base, p.resolve(target))
+  return rel !== '' && !rel.startsWith('..') && !p.isAbsolute(rel)
+}
+
 export async function addWorktree(req: WorktreeRequest): Promise<WorktreeResult> {
   if (!isDir(req.repo)) return { ok: false, error: `${req.repo} is not a folder.` }
   if (!req.branch || !req.path) return { ok: false, error: 'A worktree needs a branch and a path.' }
+  if (!worktreePathAllowed(req.repo, req.path)) {
+    return { ok: false, error: `${req.path} is outside the ${WORKTREE_DIR} folder beside the repo.` }
+  }
 
   const slot = await freeSlot(req)
   // `worktree add` creates the leading directories itself, and the path lives

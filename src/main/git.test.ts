@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { addWorktree, diffRange, diffStat, info, removeWorktree } from './git'
+import { worktreePath } from '@shared/worktree'
+import { addWorktree, diffRange, diffStat, info, removeWorktree, worktreePathAllowed } from './git'
 
 /**
  * These drive a real git against real repositories under the system temp
@@ -163,6 +164,103 @@ describeGit('addWorktree', () => {
 
     expect(result.ok).toBe(false)
     expect(result.error).toBeTruthy()
+  })
+
+  /** The IPC request names the destination, and only one destination is legal. */
+  it('refuses to check out anywhere but the .harness-deck beside the repo', async () => {
+    const outside = join(base, 'autostart', 'evil')
+    const result = await addWorktree({ repo: root, branch: 'hd/evil', path: outside })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('.harness-deck')
+    expect(existsSync(outside)).toBe(false)
+  })
+})
+
+/**
+ * The containment rule behind addWorktree, asked directly — no git, no
+ * filesystem. The request arrives over IPC verbatim, so the interesting cases
+ * are the ones no honest renderer would ever send.
+ */
+describe('worktreePathAllowed', () => {
+  const repo = '/home/dev/projects/deck'
+
+  it('allows exactly what worktreePath computes', () => {
+    expect(worktreePathAllowed(repo, worktreePath(repo, 'hd/claude-code'))).toBe(true)
+  })
+
+  it('allows the numbered variants freeSlot falls back to', () => {
+    const first = worktreePath(repo, 'hd/claude-code')
+    expect(worktreePathAllowed(repo, `${first}-2`)).toBe(true)
+    expect(worktreePathAllowed(repo, `${first}-19`)).toBe(true)
+  })
+
+  it('is not fooled by a trailing slash on the repo', () => {
+    expect(worktreePathAllowed(`${repo}/`, worktreePath(repo, 'hd/a'))).toBe(true)
+  })
+
+  it('works for a repo checked out at the root of the filesystem', () => {
+    expect(worktreePathAllowed('/deck', '/.harness-deck/deck/hd/a')).toBe(true)
+  })
+
+  it('rejects a path that climbs back out with ..', () => {
+    expect(worktreePathAllowed(repo, '/home/dev/projects/.harness-deck/../../evil')).toBe(false)
+    expect(worktreePathAllowed(repo, '../../../.config/autostart/x')).toBe(false)
+  })
+
+  it('rejects an absolute path somewhere else entirely', () => {
+    expect(worktreePathAllowed(repo, '/home/user/.config/autostart/x.desktop')).toBe(false)
+    expect(worktreePathAllowed(repo, '/etc/cron.d/job')).toBe(false)
+  })
+
+  it('rejects a path inside the repo itself', () => {
+    expect(worktreePathAllowed(repo, `${repo}/nested/worktree`)).toBe(false)
+  })
+
+  it('rejects the base directory itself — a worktree is a folder within it', () => {
+    expect(worktreePathAllowed(repo, '/home/dev/projects/.harness-deck')).toBe(false)
+    expect(worktreePathAllowed(repo, '/home/dev/projects/.harness-deck/')).toBe(false)
+  })
+
+  it('rejects a sibling whose name merely starts with the base name', () => {
+    expect(worktreePathAllowed('/src/deck', '/src/.harness-deck-evil/x')).toBe(false)
+    expect(worktreePathAllowed('/src/deck', '/src/.harness-deckother/deck/hd/a')).toBe(false)
+  })
+
+  it("rejects a .harness-deck beside somebody else's repo", () => {
+    expect(worktreePathAllowed(repo, '/tmp/.harness-deck/deck/hd/a')).toBe(false)
+  })
+
+  describe('windows paths', () => {
+    const winRepo = 'C:\\Users\\dev\\deck'
+
+    it('allows what worktreePath computes for a backslash root', () => {
+      expect(worktreePathAllowed(winRepo, worktreePath(winRepo, 'hd/claude-code'))).toBe(true)
+    })
+
+    /** git on Windows reports forward slashes; Explorer hands out backslashes. */
+    it('does not care which slash either side arrived with', () => {
+      expect(
+        worktreePathAllowed('C:/Users/dev/deck', 'C:\\Users\\dev\\.harness-deck\\deck\\hd\\a')
+      ).toBe(true)
+      expect(worktreePathAllowed(winRepo, 'C:/Users/dev/.harness-deck/deck/hd/a')).toBe(true)
+    })
+
+    it('does not care about case either', () => {
+      expect(worktreePathAllowed(winRepo, 'c:\\users\\DEV\\.harness-deck\\deck\\hd\\a')).toBe(true)
+    })
+
+    it('still rejects traversal and elsewhere, whatever the slashes', () => {
+      expect(worktreePathAllowed(winRepo, 'C:\\Users\\dev\\.harness-deck\\..\\..\\evil')).toBe(false)
+      expect(
+        worktreePathAllowed(
+          winRepo,
+          'C:\\Users\\dev\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\x'
+        )
+      ).toBe(false)
+      expect(worktreePathAllowed(winRepo, 'D:\\.harness-deck\\deck\\hd\\a')).toBe(false)
+      expect(worktreePathAllowed(winRepo, 'C:\\Users\\dev\\.harness-deck')).toBe(false)
+    })
   })
 })
 

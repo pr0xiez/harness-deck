@@ -44,12 +44,13 @@ pane says what Claude is doing, not just "claude").
 
 **Attention routing** — A running pane that stops producing output has hit a
 prompt, an approval gate, or finished, so it turns amber and the workspace it
-lives in shows a waiting count. `Ctrl+Shift+J` jumps to the next one, the dock
-badge counts them, and a background window notifies once as each goes quiet.
-How long the silence has to last, and whether it notifies or badges at all, are
-in Settings.
+lives in shows a waiting count. `Ctrl+Shift+J` jumps to the next one, an amber
+**Waiting** button appears in the title bar, the dock badge counts them, and a
+background window notifies once as each goes quiet. How long the silence has to
+last, and whether it notifies or badges at all, are in Settings.
 
-**The waiting queue** — `Ctrl+Shift+U` lists every waiting pane across every
+**The waiting queue** — `Ctrl+Shift+U`, the title bar's **Waiting** button, or
+the amber count on a sidebar workspace lists every waiting pane across every
 workspace, oldest first, each with the last three lines it printed: for an agent
 at an approval gate, that tail is the question. Three reversible verbs on each
 row — `A` acknowledge (seen it, until it stops again), `S` snooze (until it next

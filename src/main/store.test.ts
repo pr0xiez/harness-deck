@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -139,6 +139,22 @@ describe('writeJsonAtomic', () => {
     writeJsonAtomic(file, { generation: 1 })
 
     expect(existsSync(`${file}.bak`)).toBe(false)
+  })
+
+  /**
+   * These files carry pane env vars in plain text, so nobody else on the
+   * machine gets to read them. The mode rides the temp file through the
+   * rename — even over an older copy left wide open by a previous version.
+   * Windows has no POSIX modes to assert on, so this stays off there.
+   */
+  it.skipIf(process.platform === 'win32')('leaves the file readable by its owner alone', () => {
+    const file = join(dir, 'thing.json')
+    put(file, JSON.stringify({ generation: 0 }))
+    // A previous version wrote this with default permissions.
+
+    writeJsonAtomic(file, { generation: 1 })
+
+    expect(statSync(file).mode & 0o777).toBe(0o600)
   })
 
   it('leaves no half-written temp file behind', () => {

@@ -39,13 +39,20 @@ export function loadState(baseDir: string = userData()): PersistedState | null {
   return null
 }
 
-/** Writes via a temp file + rename so a crash mid-write can't corrupt state. */
+/**
+ * Writes via a temp file + rename so a crash mid-write can't corrupt state.
+ *
+ * The files this writes carry pane env vars in plain text, so the temp file is
+ * created owner-only (0o600) and the rename carries that mode onto the target —
+ * even over an older copy left with looser permissions. Mode is a no-op on
+ * Windows, same as voice.ts's key store.
+ */
 export function writeJsonAtomic(file: string, value: unknown): void {
   try {
     mkdirSync(dirname(file), { recursive: true })
     if (existsSync(file)) copyFileSync(file, `${file}.bak`)
     const tmp = `${file}.tmp`
-    writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8')
+    writeFileSync(tmp, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 })
     renameSync(tmp, file)
   } catch (err) {
     console.error(`[store] failed to write ${file}:`, err)

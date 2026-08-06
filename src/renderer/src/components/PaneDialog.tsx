@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { buildRemote, parseRemote, type RemoteKind } from '@shared/remote'
 import type { SavedProfile } from '@shared/types'
-import { useDeck } from '../store'
+import { findPane, useDeck } from '../store'
 import { RESTART_CAP } from '../restart'
 import { Field, Modal, Toggle } from './ui'
 import { Icon } from './Icon'
@@ -73,9 +73,7 @@ function sameEnv(a: Record<string, string> = {}, b: Record<string, string> = {})
  */
 export function PaneDialog({ workspaceId, paneId, where: opensOn, onClose }: Props): React.JSX.Element {
   const workspace = useDeck((s) => s.workspaces.find((w) => w.id === workspaceId))
-  const pane = useDeck((s) =>
-    s.workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId)
-  )
+  const pane = useDeck((s) => findPane(s.workspaces, paneId))
   const profiles = useDeck((s) => s.profiles)
   const addPane = useDeck((s) => s.addPane)
   const updatePane = useDeck((s) => s.updatePane)
@@ -400,9 +398,9 @@ export function PaneDialog({ workspaceId, paneId, where: opensOn, onClose }: Pro
         </button>
 
         <span className="field-hint">
-          Set for this pane's process only, on top of your login-shell environment. A saved launcher
-          keeps them in <code>custom-profiles.json</code> in plain text — there is no keychain behind
-          this box.
+          Set for this pane's process only, on top of your login-shell environment. Every pane keeps
+          them in <code>workspaces.json</code> in plain text — a saved launcher also in{' '}
+          <code>custom-profiles.json</code> — there is no keychain behind this box.
         </span>
       </div>
 

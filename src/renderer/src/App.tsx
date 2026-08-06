@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { isActionable, useDeck, type DeckWorkspace } from './store'
+import { findPane, findPaneWorkspace, isActionable, useDeck, type DeckWorkspace } from './store'
 import { digitOf, matchShortcut, type ShortcutId } from './shortcuts'
 import { getTerminal, refitAll } from './terminals'
 import { TitleBar } from './components/TitleBar'
@@ -48,9 +48,9 @@ export function App(): React.JSX.Element {
     const offData = api.pty.onData(({ id, data }) => {
       getTerminal(id)?.write(data)
       const state = useDeck.getState()
-      const workspace = state.workspaces.find((w) => w.panes.some((p) => p.id === id))
+      const workspace = findPaneWorkspace(state.workspaces, id)
       if (!workspace) return
-      const pane = workspace.panes.find((p) => p.id === id)
+      const pane = findPane(state.workspaces, id)
       if (!pane || pane.activity) return
       const focused = workspace.id === state.activeWorkspaceId && workspace.activePaneId === id
       if (!focused) state.updatePane(id, { activity: true })

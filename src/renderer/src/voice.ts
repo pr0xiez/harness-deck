@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { VoiceSettings } from '@shared/types'
 import { voiceBaseUrl, voiceModel, voiceProvider } from '@shared/voice'
 import { createSpeechGate, type SpeechGate } from './speech'
-import { isLive, useDeck } from './store'
+import { findPane, isLive, useDeck } from './store'
 import { getTerminal } from './terminals'
 
 const api = window.harness
@@ -259,7 +259,7 @@ function resolveTarget(): VoiceTarget | null {
   }
   const state = useDeck.getState()
   const workspace = state.workspaces.find((w) => w.id === state.activeWorkspaceId)
-  const pane = workspace?.panes.find((p) => p.id === workspace.activePaneId)
+  const pane = findPane(state.workspaces, workspace?.activePaneId)
   if (!pane) return null
   const profile = state.profiles.find((p) => p.id === pane.profileId)
   return {
@@ -519,10 +519,7 @@ function deliver(target: VoiceTarget, raw: string): void {
     sink.insert(text)
     if (voice.submit) sink.submit?.()
   } else {
-    const pane = useDeck
-      .getState()
-      .workspaces.flatMap((w) => w.panes)
-      .find((p) => p.id === target.paneId)
+    const pane = findPane(useDeck.getState().workspaces, target.paneId)
     if (!pane) return copyInstead(text, 'That pane is gone')
     if (!isLive(pane)) return copyInstead(text, 'That pane is not running')
     // Dictating into a build you locked is the same accident as typing into it,

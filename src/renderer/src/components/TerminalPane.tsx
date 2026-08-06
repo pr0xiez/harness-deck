@@ -6,7 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { Profile } from '@shared/types'
-import { useDeck, type PaneView } from '../store'
+import { findPane, useDeck, type PaneView } from '../store'
 import { isReservedShortcut } from '../shortcuts'
 import { decideRestart, RESTART_CAP, type RestartDecision } from '../restart'
 import { registerTerminal, unregisterTerminal, type TerminalHandle } from '../terminals'
@@ -178,7 +178,7 @@ export function TerminalPane({
         // store is where a raised hand outranks a snooze someone put on it.
         state.ringBell(paneId)
         if (state.settings.bellNotifications && !document.hasFocus()) {
-          const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId)
+          const pane = findPane(state.workspaces, paneId)
           new Notification('Harness Deck', {
             body: `${pane?.name || pane?.processTitle || pane?.command} wants your attention`
           })
@@ -241,10 +241,7 @@ export function TerminalPane({
       handle.attach()
       // A process can die before the spawn reply gets back here, and that exit
       // event is the newer truth — never report it as running again.
-      const current = useDeck
-        .getState()
-        .workspaces.flatMap((w) => w.panes)
-        .find((p) => p.id === paneId)
+      const current = findPane(useDeck.getState().workspaces, paneId)
       if (!(current?.status === 'exited' && result.status === 'running')) {
         setPaneStatus(paneId, result.status, result.exitCode ?? null)
       }

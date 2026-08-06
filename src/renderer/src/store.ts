@@ -860,8 +860,9 @@ export function isSnoozed(pane: PaneView, now: number = Date.now()): boolean {
 /**
  * The one question every aggregate is really asking: does this pane want you,
  * *and* have you not already said otherwise? The dock badge, the sidebar counts,
- * the palette hint and Ctrl+Shift+J all run on this, so muting a pane, snoozing
- * it or acknowledging it takes it out of all four at once.
+ * the title-bar Waiting button, the palette hint and Ctrl+Shift+J all run on
+ * this, so muting a pane, snoozing it or acknowledging it takes it out of all
+ * five at once.
  *
  * The waiting queue itself is deliberately looser — it still shows what you
  * acknowledged, dimmed — and a pane's own amber header dot is looser still: that

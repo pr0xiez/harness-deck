@@ -183,7 +183,7 @@ export function WaitingQueue(): React.JSX.Element {
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="queue-head">
-          <Icon name="broadcast" />
+          <Icon name="bell" />
           <span className="queue-title">Waiting for you</span>
           <span className="queue-count">{rows.length}</span>
           <span className="queue-legend">

@@ -43,7 +43,11 @@ interface ReleaseManifest {
   version: string
   /** Absolute native path to the installer this release wants us to run. Empty until a remote one is fetched. */
   installer: string
-  /** Base64 sha512 of the installer, matching electron-builder's convention. */
+  /**
+   * Base64 sha512 of the installer, matching electron-builder's convention.
+   * Optional in shape because a manifest on disk may omit it, but evaluation
+   * refuses one that does and install() will not spawn without it.
+   */
   sha512?: string
   size?: number
   notes?: string
@@ -171,6 +175,17 @@ function evaluateLocal(): UpdateState {
     }
   }
 
+  // The hash is the only check standing between the manifest and spawning the
+  // installer, so a manifest without one is refused rather than trusted.
+  if (!manifest.sha512) {
+    pending = null
+    return {
+      ...base,
+      stage: 'error',
+      error: `${manifest.version} was released without a sha512, so its installer cannot be verified.`
+    }
+  }
+
   // A build still writing to disk would otherwise be offered as installable.
   if (manifest.size && statSync(manifest.installer).size !== manifest.size) {
     pending = null
@@ -215,13 +230,15 @@ async function evaluateFeed(): Promise<UpdateState> {
     return base
   }
 
+  // Also null when the feed names no sha512 for its installer: a hash-less
+  // release is one we could never verify, so it is never offered.
   const file = pickInstaller(yml, process.platform)
   if (!file) {
     pending = null
     return {
       ...base,
       stage: 'error',
-      error: `Release ${yml.version} carries no installer for ${process.platform}.`
+      error: `Release ${yml.version} carries no verifiable installer for ${process.platform}.`
     }
   }
 
@@ -374,6 +391,15 @@ export async function install(): Promise<InstallResult> {
   }
 
   const manifest = pending
+  // Both channels refuse a hash-less release at evaluation time, so nothing
+  // unverifiable should ever get this far — but if one does, it must not be
+  // spawned. This check fails closed where trusting the manifest would not.
+  if (!manifest.sha512) {
+    return {
+      ok: false,
+      error: `The installer for ${manifest.version} cannot be verified — its release names no sha512.`
+    }
+  }
   installing = true
   try {
     if (manifest.url) {
@@ -383,22 +409,32 @@ export async function install(): Promise<InstallResult> {
         installing = false
         return { ok: false, error: `Could not download ${manifest.version} — ${reason(err)}` }
       }
-    }
 
-    if (manifest.sha512) {
-      const actual = await sha512(manifest.installer)
-      if (actual !== manifest.sha512) {
+      // A truncated body that still ended cleanly would fail the hash below
+      // anyway; checking the size first just names the likelier cause.
+      if (manifest.size && statSync(manifest.installer).size !== manifest.size) {
         installing = false
-        // A downloaded file that fails here is ours to throw away, and it has to
-        // go — leaving it would hand the next attempt the same bad bytes.
-        if (manifest.url) {
-          rmSync(manifest.installer, { force: true })
-          manifest.installer = ''
-        }
+        rmSync(manifest.installer, { force: true })
+        manifest.installer = ''
         return {
           ok: false,
-          error: `The installer for ${manifest.version} failed its checksum — the build may still be running.`
+          error: `The download for ${manifest.version} is not the size its release promised.`
         }
+      }
+    }
+
+    const actual = await sha512(manifest.installer)
+    if (actual !== manifest.sha512) {
+      installing = false
+      // A downloaded file that fails here is ours to throw away, and it has to
+      // go — leaving it would hand the next attempt the same bad bytes.
+      if (manifest.url) {
+        rmSync(manifest.installer, { force: true })
+        manifest.installer = ''
+      }
+      return {
+        ok: false,
+        error: `The installer for ${manifest.version} failed its checksum — the build may still be running.`
       }
     }
 

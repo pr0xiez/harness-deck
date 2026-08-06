@@ -113,6 +113,21 @@ describe('pickInstaller', () => {
     )
     expect(pickInstaller({ version: '1.0.0', files: [] }, 'win32')).toBeNull()
   })
+
+  it('falls back to the top-level sha512 when the file entry names none', () => {
+    const yml = parseLatestYml('version: 1.0.0\nfiles:\n  - url: app-1.0.0.exe\nsha512: xyz==\n')
+    expect(pickInstaller(yml, 'win32')).toEqual({
+      url: 'app-1.0.0.exe',
+      sha512: 'xyz==',
+      size: undefined
+    })
+  })
+
+  it('refuses an installer the feed carries no sha512 for', () => {
+    const yml = parseLatestYml('version: 1.0.0\nfiles:\n  - url: app-1.0.0.exe\n    size: 100\n')
+    expect(pickInstaller(yml, 'win32')).toBeNull()
+    expect(pickInstaller({ version: '1.0.0', files: [{ url: 'app.exe' }] }, 'win32')).toBeNull()
+  })
 })
 
 describe('updateInfoFile', () => {

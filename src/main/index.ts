@@ -28,6 +28,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import { navigationAllowed } from './nav-guard'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -265,7 +266,7 @@ function createWindow(): BrowserWindow {
     title: 'Harness Deck',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       spellcheck: false
     }
@@ -297,6 +298,23 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // The window only ever shows the app's own page — the dev server in
+  // development, the bundled file otherwise. Navigating anywhere else would
+  // swap the document out while `window.harness` stays exposed to whatever
+  // loads next, so it is denied; http(s) links go to the browser instead,
+  // mirroring the window-open handler above.
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  const devOrigin = devUrl ? new URL(devUrl).origin : null
+  win.webContents.on('will-navigate', (event, url) => {
+    if (navigationAllowed(url, devOrigin)) return
+    event.preventDefault()
+    if (/^https?:/.test(url)) shell.openExternal(url)
+  })
+  // A redirect is never user-initiated, so nothing opens externally here.
+  win.webContents.on('will-redirect', (event, url) => {
+    if (!navigationAllowed(url, devOrigin)) event.preventDefault()
+  })
+
   // DevTools without an application menu. macOS has one (see installMenu), and
   // its View item owns Cmd+Alt+I — handling it here too would toggle twice.
   win.webContents.on('before-input-event', (_event, input) => {
@@ -306,7 +324,6 @@ function createWindow(): BrowserWindow {
     if (input.type === 'keyDown' && devtools) win.webContents.toggleDevTools()
   })
 
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
     win.loadURL(devUrl)
   } else {

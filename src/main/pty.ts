@@ -2,6 +2,7 @@ import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as nodePty from '@lydell/node-pty'
 import type { IPty } from '@lydell/node-pty'
+import { IPC, type IpcChannel } from '@shared/ipc'
 import { commandName, quote } from '@shared/remote'
 import type { EnsureResult, PaneSpec, PaneStatus } from '@shared/types'
 import { shellCommandLine, shellFlavour, type ShellFlavour } from './profiles'
@@ -44,7 +45,7 @@ interface Session {
   persistTimer: NodeJS.Timeout | null
 }
 
-type Sender = (channel: string, payload: unknown) => void
+type Sender = (channel: IpcChannel, payload: unknown) => void
 
 /** Injectable so tests can drive a session's lifecycle without a real process. */
 export type Spawn = typeof nodePty.spawn
@@ -147,7 +148,7 @@ export class PtyManager {
           session,
           dim(`\r\n[process exited${signal ? ` on signal ${signal}` : ` with code ${exitCode}`}]\r\n`)
         )
-        this.send('pty:exit', { id: session.id, exitCode, signal })
+        this.send(IPC.ptyExit, { id: session.id, exitCode, signal })
       })
 
       return {
@@ -309,7 +310,7 @@ export class PtyManager {
     session.lastDataAt = Date.now()
     if (session.quiet) {
       session.quiet = false
-      this.send('pty:quiet', { id: session.id, quiet: false })
+      this.send(IPC.ptyQuiet, { id: session.id, quiet: false })
     }
     this.armQuiet(session)
     this.armPersist(session)
@@ -331,7 +332,7 @@ export class PtyManager {
         session.quietTimer = null
         if (!this.isCurrent(session) || session.status !== 'running' || session.quiet) return
         session.quiet = true
-        this.send('pty:quiet', { id: session.id, quiet: true })
+        this.send(IPC.ptyQuiet, { id: session.id, quiet: true })
       },
       Math.max(MIN_QUIET_MS, this.quietMs())
     )
@@ -379,14 +380,14 @@ export class PtyManager {
     if (!session.pending.length || !this.isCurrent(session)) return
     const data = session.pending.join('')
     session.pending = []
-    this.send('pty:data', { id: session.id, data })
+    this.send(IPC.ptyData, { id: session.id, data })
   }
 
   /** Writes a message that came from us (not the child) into the pane. */
   private appendLocal(session: Session, text: string): void {
     if (!this.isCurrent(session)) return
     this.record(session, text)
-    this.send('pty:data', { id: session.id, data: text })
+    this.send(IPC.ptyData, { id: session.id, data: text })
   }
 
   private record(session: Session, data: string): void {

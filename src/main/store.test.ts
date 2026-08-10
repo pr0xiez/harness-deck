@@ -21,6 +21,8 @@ import { loadState, saveState, stateLocation, STATE_VERSION, writeJsonAtomic } f
 let dir = ''
 /** What `loadState` said about the files it refused, so tests can assert on it. */
 let complaints: string[] = []
+/** And what it said about the worktrees it scrubbed — warnings, not errors. */
+let warnings: string[] = []
 
 /** Shaped like a state file, which is all either side of this ever requires. */
 const state = (over: Partial<PersistedState> = {}): PersistedState =>
@@ -40,6 +42,10 @@ beforeEach(() => {
   complaints = []
   vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
     complaints.push(args.map(String).join(' '))
+  })
+  warnings = []
+  vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '))
   })
 })
 
@@ -100,6 +106,41 @@ describe('loadState', () => {
     expect(loadState(dir)).toBeNull()
     expect(complaints).toHaveLength(1)
     expect(complaints[0]).toContain(stateFile())
+  })
+
+  /**
+   * `pane.worktree` is the path the delete-confirm flow offers to force-delete,
+   * and a worktree the app created always lives under a `.harness-deck`
+   * segment — so a state file claiming otherwise has been edited, and the
+   * claim is dropped rather than believed. See issue #48.
+   */
+  it('drops a pane worktree pointing outside any .harness-deck directory', () => {
+    const saved = state({
+      workspaces: [
+        { id: 'w1', panes: [{ id: 'p1', cwd: '/src/deck', worktree: '/home/dev/other-project' }] }
+      ]
+    } as unknown as Partial<PersistedState>)
+    put(stateFile(), JSON.stringify(saved))
+
+    const pane = loadState(dir)?.workspaces[0]?.panes[0]
+    expect(pane).toEqual({ id: 'p1', cwd: '/src/deck' })
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('/home/dev/other-project')
+  })
+
+  it('keeps a worktree that lives where the app puts them', () => {
+    const saved = state({
+      workspaces: [
+        {
+          id: 'w1',
+          panes: [{ id: 'p1', cwd: '/src/deck', worktree: '/src/.harness-deck/deck/hd/api' }]
+        }
+      ]
+    } as unknown as Partial<PersistedState>)
+    put(stateFile(), JSON.stringify(saved))
+
+    expect(loadState(dir)).toEqual(saved)
+    expect(warnings).toHaveLength(0)
   })
 
   it('reads the directory it was handed, not one it went looking for', () => {

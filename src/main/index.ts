@@ -30,6 +30,7 @@ import type {
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
+import { isAppWorktree, isOpenDir, openDir, seedRegistry } from './repo-registry'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
 import { ScrollbackStore } from './scrollback'
 import { loadState, saveState, stateLocation } from './store'
@@ -467,11 +468,56 @@ function registerIpc(): void {
     return detectProfiles()
   })
 
-  ipcMain.handle('git:info', (_e, dir: string) => repoInfo(dir))
-  ipcMain.handle('git:addWorktree', (_e, req: WorktreeRequest) => addWorktree(req))
-  ipcMain.handle('git:removeWorktree', (_e, path: string) => removeWorktree(path))
-  ipcMain.handle('git:diffStat', (_e, dir: string) => diffStat(dir))
-  ipcMain.handle('git:diffRange', (_e, req: DiffRequest) => diffRange(req))
+  // The trust boundary for git (issues #48/#49): git only ever runs against a
+  // directory the app opened through a main-process path — hydrated startup
+  // state, the directory dialog, a pane actually spawning there, or a worktree
+  // the app created. A renderer naming any other folder gets the same answer
+  // as a folder git knows nothing about.
+  ipcMain.handle('git:info', async (_e, dir: string) => {
+    if (!isOpenDir(dir)) return null
+    const repo = await repoInfo(dir)
+    if (repo) {
+      // Widening to git's own roots is safe — git just said the allowed dir is
+      // inside them — and it is what lets addWorktree receive repo.root later.
+      openDir(repo.root)
+      openDir(repo.worktreeOf)
+    }
+    return repo
+  })
+  ipcMain.handle('git:addWorktree', async (_e, req: WorktreeRequest) => {
+    if (!isOpenDir(req?.repo ?? '')) {
+      return { ok: false, error: `${req?.repo ?? ''} is not open in Harness Deck.` }
+    }
+    const result = await addWorktree(req)
+    if (result.ok && result.path) openDir(result.path)
+    return result
+  })
+  ipcMain.handle('git:removeWorktree', (_e, path: string) => {
+    if (!isOpenDir(path) || !isAppWorktree(path)) {
+      return { ok: false, error: `${path} is not a worktree Harness Deck created.` }
+    }
+    return removeWorktree(path)
+  })
+  ipcMain.handle('git:diffStat', (_e, dir: string) => (isOpenDir(dir) ? diffStat(dir) : ''))
+  ipcMain.handle('git:diffRange', (_e, req: DiffRequest) => {
+    const dir = req?.dir ?? ''
+    if (!isOpenDir(dir)) {
+      return {
+        dir,
+        root: '',
+        branch: '',
+        base: '',
+        baseRef: '',
+        stat: '',
+        patch: '',
+        patchLines: 0,
+        truncated: false,
+        untracked: 0,
+        error: `${dir || 'That folder'} is not open in Harness Deck.`
+      }
+    }
+    return diffRange(req)
+  })
   ipcMain.handle('git:forge', () => detectForge())
   // Stubs the later items replace — registered now so four parallel branches
   // build on a settled surface instead of each adding its own. See HD-14.
@@ -486,9 +532,11 @@ function registerIpc(): void {
   ipcMain.handle('update:setChannel', (_e, channel: UpdateChannel) => setChannel(channel))
   ipcMain.handle('update:install', () => install())
 
-  ipcMain.handle('pty:ensure', (_e, spec: PaneSpec, cols: number, rows: number) =>
-    ptys!.ensure(spec, cols, rows)
-  )
+  ipcMain.handle('pty:ensure', (_e, spec: PaneSpec, cols: number, rows: number) => {
+    // A pane actually spawning in a folder is the app opening it.
+    openDir(spec?.cwd)
+    return ptys!.ensure(spec, cols, rows)
+  })
   ipcMain.on('pty:write', (_e, id: string, data: string) => ptys!.write(id, data))
   ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>
     ptys!.resize(id, cols, rows)
@@ -526,7 +574,10 @@ function registerIpc(): void {
       defaultPath: current || homedir(),
       properties: ['openDirectory', 'createDirectory']
     })
-    return result.canceled ? null : result.filePaths[0]
+    const picked = result.canceled ? null : result.filePaths[0]
+    // A user gesture through a main-process dialog is the strongest open there is.
+    openDir(picked)
+    return picked
   })
 
   ipcMain.handle('dialog:confirm', async (_e, options: { title: string; message: string; detail?: string; confirmLabel?: string }) => {
@@ -640,6 +691,10 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc()
     // Before the window, so the renderer hydrates a state file it did not write.
     if (smoke) seedSmokeState()
+    // Seeded once, before any renderer code runs: a renderer writing state
+    // later cannot enlarge the registry through state:save/state:load.
+    seedRegistry(loadState())
+    openDir(process.env.HD_DEFAULT_CWD || homedir())
     mainWindow = createWindow()
 
     initUpdater({

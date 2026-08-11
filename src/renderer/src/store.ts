@@ -147,6 +147,12 @@ interface UiState {
   shipFor: string | null
 }
 
+/** A background failure the user was never going to see in a console. */
+export interface DeckNotice {
+  title: string
+  body: string
+}
+
 interface DeckState {
   hydrated: boolean
   info: AppInfo | null
@@ -167,6 +173,8 @@ interface DeckState {
   /** Why the last install attempt did not get off the ground. */
   updateError: string | null
   updateInstalling: boolean
+  /** Shown bottom-right until waved off. Never saved. */
+  notice: DeckNotice | null
 
   hydrate: () => Promise<void>
   refreshProfiles: () => Promise<void>
@@ -239,6 +247,7 @@ interface DeckState {
   /** Files a sent prompt at the front of the broadcast history. */
   rememberBroadcast: (prompt: string) => void
   setUi: (patch: Partial<UiState>) => void
+  setNotice: (notice: DeckNotice | null) => void
 }
 
 let idCounter = 0
@@ -319,6 +328,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   updateDismissed: null,
   updateError: null,
   updateInstalling: false,
+  notice: null,
 
   hydrate: async () => {
     const [info, profiles, saved] = await Promise.all([
@@ -662,7 +672,15 @@ export const useDeck = create<DeckState>((set, get) => ({
     // already on its way out before git tries to take the directory away.
     if (remove && pane.worktree) {
       const result = await api.git.removeWorktree(pane.worktree)
-      if (!result.ok) console.warn(`[worktree] ${result.error}`)
+      if (!result.ok) {
+        console.warn(`[worktree] ${result.error}`)
+        set({
+          notice: {
+            title: 'Worktree not removed',
+            body: `${pane.worktree} is still on disk: ${result.error}`
+          }
+        })
+      }
     }
   },
 
@@ -835,7 +853,9 @@ export const useDeck = create<DeckState>((set, get) => ({
     set({ settings: { ...settings, broadcastHistory: broadcastHistory.slice(0, BROADCAST_HISTORY) } })
   },
 
-  setUi: (patch) => set({ ui: { ...get().ui, ...patch } })
+  setUi: (patch) => set({ ui: { ...get().ui, ...patch } }),
+
+  setNotice: (notice) => set({ notice })
 }))
 
 /**

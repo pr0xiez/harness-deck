@@ -13,7 +13,7 @@ import {
 import type { NativeImage } from 'electron'
 import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import type {
   DiffRequest,
   PaneSpec,
@@ -307,7 +307,7 @@ function createWindow(): BrowserWindow {
   })
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (devUrl) {
+  if (!app.isPackaged && devUrl) {
     win.loadURL(devUrl)
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
@@ -547,9 +547,11 @@ function registerIpc(): void {
   ipcMain.handle('dialog:saveText', async (_e, req: SaveTextRequest): Promise<SaveTextResult> => {
     if (!mainWindow) return { ok: false, error: 'No window to hang the dialog off.' }
     try {
+      const safeName = basename(req.defaultName ?? '')
+      const fileName = safeName && safeName !== '.' && safeName !== '..' ? safeName : 'transcript.txt'
       const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
         title: 'Save transcript',
-        defaultPath: join(saveDir(), req.defaultName),
+        defaultPath: join(saveDir(), fileName),
         filters: [
           { name: 'Text', extensions: ['txt'] },
           { name: 'All files', extensions: ['*'] }

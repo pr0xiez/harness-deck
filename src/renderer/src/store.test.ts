@@ -647,6 +647,122 @@ describe('closePane', () => {
   })
 })
 
+/**
+ * Pane events land many times a second, so the workspaces that do not hold the
+ * pane must come through with their identity intact — a fresh object per
+ * workspace here is an app-wide re-render per event (issue #57).
+ */
+describe('updatePane', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'idle'), pane('b', 'idle')]),
+        workspace('two', [pane('c', 'idle')])
+      ]
+    })
+  })
+
+  it('patches the pane it was aimed at and no other', () => {
+    deck().updatePane('c', { status: 'running' })
+
+    expect(deck().workspaces[1].panes[0]).toMatchObject({ id: 'c', status: 'running' })
+    expect(deck().workspaces[0].panes.map((p) => p.status)).toEqual(['idle', 'idle'])
+  })
+
+  it('leaves the workspaces that do not hold the pane referentially untouched', () => {
+    const [, two] = deck().workspaces
+    deck().updatePane('a', { status: 'running' })
+
+    expect(deck().workspaces[1]).toBe(two)
+  })
+
+  it('does nothing at all for a pane no workspace holds', () => {
+    const before = deck().workspaces
+    deck().updatePane('closed', { status: 'running' })
+
+    expect(deck().workspaces).toBe(before)
+  })
+})
+
+describe('setPaneStatus', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'running')]),
+        workspace('two', [pane('b', 'idle')])
+      ]
+    })
+  })
+
+  it('moves the pane to its new status, exit code and all', () => {
+    deck().setPaneStatus('a', 'exited', 137)
+
+    expect(deck().workspaces[0].panes[0]).toMatchObject({ status: 'exited', exitCode: 137 })
+  })
+
+  it('leaves the workspace next door referentially untouched', () => {
+    const [, two] = deck().workspaces
+    deck().setPaneStatus('a', 'waiting')
+
+    expect(deck().workspaces[1]).toBe(two)
+  })
+
+  it('does nothing at all for a pane no workspace holds', () => {
+    const before = deck().workspaces
+    deck().setPaneStatus('closed', 'running')
+
+    expect(deck().workspaces).toBe(before)
+  })
+})
+
+describe('restartPane', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [
+          pane('a', 'exited', {
+            exitCode: 1,
+            epoch: 2,
+            activity: true,
+            bell: true,
+            crashRestarts: 3
+          })
+        ]),
+        workspace('two', [pane('b', 'idle')])
+      ]
+    })
+  })
+
+  it('disposes the old process and hands the pane a fresh epoch', () => {
+    deck().restartPane('a')
+
+    expect(harness.pty.dispose).toHaveBeenCalledWith('a')
+    expect(deck().workspaces[0].panes[0]).toMatchObject({
+      epoch: 3,
+      status: 'idle',
+      exitCode: null,
+      autostart: true,
+      activity: false,
+      bell: false,
+      crashRestarts: 0
+    })
+  })
+
+  it('leaves the workspace next door referentially untouched', () => {
+    const [, two] = deck().workspaces
+    deck().restartPane('a')
+
+    expect(deck().workspaces[1]).toBe(two)
+  })
+
+  it('does nothing to the deck for a pane no workspace holds', () => {
+    const before = deck().workspaces
+    deck().restartPane('closed')
+
+    expect(deck().workspaces).toBe(before)
+  })
+})
+
 describe('removeWorkspace', () => {
   beforeEach(() => {
     useDeck.setState({

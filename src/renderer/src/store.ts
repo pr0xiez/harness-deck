@@ -668,38 +668,53 @@ export const useDeck = create<DeckState>((set, get) => ({
 
   restartPane: (paneId) => {
     api.pty.dispose(paneId)
+    const { workspaces } = get()
+    const owner = workspaces.find((w) => w.panes.some((p) => p.id === paneId))
+    if (!owner) return
     set({
-      workspaces: get().workspaces.map((w) => ({
-        ...w,
-        panes: w.panes.map((p) =>
-          p.id === paneId
-            ? {
-                ...p,
-                epoch: p.epoch + 1,
-                status: 'idle' as PaneStatus,
-                exitCode: null,
-                autostart: true,
-                activity: false,
-                bell: false,
-                // A person starting the pane by hand is not the crash loop
-                // continuing, whatever auto-restart had already spent on it.
-                crashRestarts: 0
-              }
-            : p
-        )
-      }))
+      workspaces: workspaces.map((w) =>
+        w === owner
+          ? {
+              ...w,
+              panes: w.panes.map((p) =>
+                p.id === paneId
+                  ? {
+                      ...p,
+                      epoch: p.epoch + 1,
+                      status: 'idle' as PaneStatus,
+                      exitCode: null,
+                      autostart: true,
+                      activity: false,
+                      bell: false,
+                      // A person starting the pane by hand is not the crash loop
+                      // continuing, whatever auto-restart had already spent on it.
+                      crashRestarts: 0
+                    }
+                  : p
+              )
+            }
+          : w
+      )
     })
   },
 
   killPane: (paneId) => api.pty.kill(paneId),
 
-  updatePane: (paneId, patch) =>
+  // A pane lives in exactly one workspace, so only that workspace is rebuilt;
+  // every other workspace keeps its identity, which is what keeps a pane event
+  // from re-rendering the whole deck.
+  updatePane: (paneId, patch) => {
+    const { workspaces } = get()
+    const owner = workspaces.find((w) => w.panes.some((p) => p.id === paneId))
+    if (!owner) return
     set({
-      workspaces: get().workspaces.map((w) => ({
-        ...w,
-        panes: w.panes.map((p) => (p.id === paneId ? { ...p, ...patch } : p))
-      }))
-    }),
+      workspaces: workspaces.map((w) =>
+        w === owner
+          ? { ...w, panes: w.panes.map((p) => (p.id === paneId ? { ...p, ...patch } : p)) }
+          : w
+      )
+    })
+  },
 
   setPaneStatus: (paneId, status, exitCode = null) => get().updatePane(paneId, { status, exitCode }),
 

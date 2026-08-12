@@ -14,6 +14,7 @@ import type { NativeImage } from 'electron'
 import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type {
   DiffRequest,
   PaneSpec,
@@ -297,6 +298,23 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // The preload re-runs on every document load, so navigating anywhere but our
+  // own content would hand window.harness to whatever loaded — a file dropped
+  // on the window is enough to trigger it. Only the app's own URL may load;
+  // everything else is blocked. The renderer also cancels drag-and-drop at the
+  // document (see main.tsx), but this guard is the one that cannot be bypassed.
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  const appUrl = pathToFileURL(join(__dirname, '../renderer/index.html')).href
+  const isAllowedNavigation = (url: string): boolean =>
+    devUrl ? new URL(url).origin === new URL(devUrl).origin : url === appUrl
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedNavigation(url)) event.preventDefault()
+  })
+  // will-navigate only covers the main frame; this catches subframes too.
+  win.webContents.on('will-frame-navigate', (event) => {
+    if (!isAllowedNavigation(event.url)) event.preventDefault()
+  })
+
   // DevTools without an application menu. macOS has one (see installMenu), and
   // its View item owns Cmd+Alt+I — handling it here too would toggle twice.
   win.webContents.on('before-input-event', (_event, input) => {
@@ -306,7 +324,6 @@ function createWindow(): BrowserWindow {
     if (input.type === 'keyDown' && devtools) win.webContents.toggleDevTools()
   })
 
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
     win.loadURL(devUrl)
   } else {

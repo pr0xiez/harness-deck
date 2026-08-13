@@ -28,6 +28,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import { trustedSenderUrl } from './ipc-sender'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -246,6 +247,18 @@ function devIcon(): NativeImage | undefined {
   return image.isEmpty() ? undefined : image
 }
 
+/**
+ * Where the renderer legitimately loads from: the vite dev server when
+ * `ELECTRON_RENDERER_URL` is set, the bundled index.html otherwise. Both
+ * `createWindow` (to load the page) and privileged IPC (to vet its sender —
+ * see `trustedSenderUrl`) read this one value, so the check can never drift
+ * from what the window actually shows.
+ */
+const rendererSource = {
+  devUrl: process.env['ELECTRON_RENDERER_URL'],
+  appIndex: join(__dirname, '../renderer/index.html')
+}
+
 function createWindow(): BrowserWindow {
   // macOS takes its dock icon from the app, not the window; the others read it
   // off the window, so it goes in the constructor there.
@@ -307,11 +320,10 @@ function createWindow(): BrowserWindow {
     if (input.type === 'keyDown' && devtools) win.webContents.toggleDevTools()
   })
 
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (devUrl) {
-    win.loadURL(devUrl)
+  if (rendererSource.devUrl) {
+    win.loadURL(rendererSource.devUrl)
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
+    win.loadFile(rendererSource.appIndex)
   }
 
   // Boots the app, checks it actually works, and sets the exit code. The error
@@ -590,7 +602,20 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('clipboard:read', () => clipboard.readText())
-  ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
+  // Gated on the sender: this app's core loop is pasting into terminal panes,
+  // so a clipboard overwrite from a foreign document becomes a shell command
+  // the user runs by hand on the next routine paste. The main-frame check is
+  // load-bearing too — an iframe under the trusted origin has the trusted URL.
+  ipcMain.on('clipboard:write', (e, text: string) => {
+    const frame = e.senderFrame
+    if (!frame || frame !== e.sender.mainFrame || !trustedSenderUrl(frame.url, rendererSource)) {
+      console.warn(
+        `[ipc] clipboard:write dropped: untrusted sender ${frame?.url ?? '(disposed frame)'}`
+      )
+      return
+    }
+    clipboard.writeText(text)
+  })
 
   ipcMain.on('window:minimize', () => mainWindow?.minimize())
   ipcMain.on('window:toggleMaximize', () => {

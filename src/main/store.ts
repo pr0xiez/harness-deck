@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { PersistedState } from '@shared/types'
+import { sanitizeState } from './state-schema'
 
 export const STATE_VERSION = 1
 
@@ -24,14 +25,20 @@ function statePath(baseDir: string): string {
  * vitest.config.ts). Omitting it is the app's own case, and still asks
  * electron — this is the crash-recovery path, so where it reads and writes in
  * production is exactly what it was before the seam existed.
+ *
+ * Parsing is not believing: the file is plain JSON anything with a file write
+ * can shape, so both copies go through `sanitizeState` and only what survives
+ * comes back. A file that parses but does not validate falls through to the
+ * backup the same way a half-written one does. See state-schema.ts.
  */
 export function loadState(baseDir: string = userData()): PersistedState | null {
   const file = statePath(baseDir)
   for (const candidate of [file, `${file}.bak`]) {
     if (!existsSync(candidate)) continue
     try {
-      const parsed = JSON.parse(readFileSync(candidate, 'utf8')) as PersistedState
-      if (parsed && Array.isArray(parsed.workspaces)) return parsed
+      const state = sanitizeState(JSON.parse(readFileSync(candidate, 'utf8')))
+      if (state) return state
+      console.error(`[store] ignoring state that failed validation at ${candidate}`)
     } catch (err) {
       console.error(`[store] ignoring unreadable state at ${candidate}:`, err)
     }

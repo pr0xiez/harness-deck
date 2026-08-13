@@ -26,6 +26,36 @@ let complaints: string[] = []
 const state = (over: Partial<PersistedState> = {}): PersistedState =>
   ({ version: STATE_VERSION, workspaces: [], activeWorkspaceId: null, ...over }) as PersistedState
 
+/**
+ * A workspace as `serialize()` writes one. loadState validates what it reads
+ * (see state-schema.ts), so the fixtures here have to be the real shape — a
+ * bare `{ id }` is exactly what the validator exists to throw out.
+ */
+const workspace = (panes: unknown[] = []): PersistedState['workspaces'][number] =>
+  ({
+    id: 'w1',
+    name: 'deck',
+    cwd: '/repos/deck',
+    accent: '#7aa2f7',
+    panes,
+    activePaneId: null,
+    layout: 'grid',
+    columns: 2,
+    zoomedPaneId: null
+  }) as PersistedState['workspaces'][number]
+
+const pane = (over: Record<string, unknown> = {}): unknown => ({
+  id: 'p1',
+  profileId: 'agent:claude',
+  command: 'claude',
+  args: [],
+  cwd: '/repos/deck',
+  status: 'idle',
+  exitCode: null,
+  epoch: 0,
+  ...over
+})
+
 const stateFile = (): string => stateLocation(dir)
 
 /** Writes a file exactly as given — including text that is not JSON at all. */
@@ -54,10 +84,39 @@ describe('loadState', () => {
   })
 
   it('reads back the workspaces it finds', () => {
-    const saved = state({ workspaces: [{ id: 'w1' }], activeWorkspaceId: 'w1' } as Partial<PersistedState>)
+    const saved = state({ workspaces: [workspace([pane()])], activeWorkspaceId: 'w1' })
     put(stateFile(), JSON.stringify(saved))
 
     expect(loadState(dir)).toEqual(saved)
+  })
+
+  /**
+   * The state file is writable by anything with a file write into the profile
+   * directory (issue #59), so what parses is not what loads: every field goes
+   * through state-schema.ts on the way in, and a pane with a mis-typed
+   * execution field is dropped without costing the deck around it.
+   */
+  it('drops a pane whose command line is mis-typed, and keeps the rest', () => {
+    put(
+      stateFile(),
+      JSON.stringify(
+        state({
+          workspaces: [workspace([pane(), pane({ id: 'p2', args: [['-c', 'evil']] })])]
+        })
+      )
+    )
+
+    const panes = loadState(dir)?.workspaces[0].panes
+    expect(panes?.map((p) => p.id)).toEqual(['p1'])
+  })
+
+  it('does not let a planted pane smuggle extra properties through', () => {
+    put(
+      stateFile(),
+      JSON.stringify(state({ workspaces: [workspace([pane({ payload: 'x' })])] }))
+    )
+
+    expect(loadState(dir)?.workspaces[0].panes[0]).not.toHaveProperty('payload')
   })
 
   /** The crash the temp-file + rename dance in writeJsonAtomic cannot prevent. */

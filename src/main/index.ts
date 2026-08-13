@@ -32,6 +32,7 @@ import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
 import { ScrollbackStore } from './scrollback'
+import { flagUntrustedPanes, sanitizeState } from './state-schema'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
@@ -443,14 +444,27 @@ function registerIpc(): void {
     defaultCwd: process.env.HD_DEFAULT_CWD || homedir()
   }))
 
-  ipcMain.handle('state:load', () => {
+  // `loadState` has already thrown out anything mis-typed; what is left is
+  // well-formed but of unproven origin, so each pane is checked against the
+  // profile registry — the one thing a write to the state file cannot forge —
+  // and flagged when it does not re-derive. A flagged pane never autostarts;
+  // it waits at its Start overlay for a click. See state-schema.ts.
+  ipcMain.handle('state:load', async () => {
     const state = loadState()
     rememberAttention(state)
-    return state
+    return state && flagUntrustedPanes(state, await detectProfiles())
   })
   ipcMain.on('state:save', (_e, state: PersistedState) => {
-    rememberAttention(state)
-    saveState(state)
+    // The renderer only ever sends what `serialize()` built, but this channel
+    // takes whatever arrives — so it is held to the same schema the reader
+    // enforces, and a payload that fails is refused rather than written.
+    const clean = sanitizeState(state)
+    if (!clean) {
+      console.warn('[store] refusing to save a state payload that failed validation')
+      return
+    }
+    rememberAttention(clean)
+    saveState(clean)
   })
   ipcMain.handle('state:location', () => stateLocation())
 

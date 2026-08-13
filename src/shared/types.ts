@@ -64,6 +64,16 @@ export interface Pane extends PaneSpec {
    * The pane's own header dot stays: local truth survives the mute. See HD-15.
    */
   attentionMuted?: boolean
+  /**
+   * Set by the main process while loading state: this pane's command line does
+   * not re-derive from any profile it knows, so it must not start itself —
+   * workspaces.json is plain JSON, and a pane nothing in the UI would produce
+   * is how a bare file write becomes code execution (issue #59). The renderer
+   * keeps the pane, shows what it would run, and waits for a click. Recomputed
+   * on every load and never read back off disk: trust recorded in the same
+   * file the attacker writes would be no trust at all.
+   */
+  needsReview?: true
 }
 
 export interface Workspace {

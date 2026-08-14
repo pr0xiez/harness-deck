@@ -14,6 +14,7 @@ import type { NativeImage } from 'electron'
 import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type {
   DiffRequest,
   PaneSpec,
@@ -28,6 +29,7 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import { decidePermission, originOf, type TrustedPage } from './permissions'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -394,26 +396,36 @@ function createWindow(): BrowserWindow {
 }
 
 /**
- * Electron hands out every permission by default. Dictation needs the
- * microphone and the pane bell needs notifications; nothing else has a reason
- * to ask, so the rest are refused.
+ * Electron hands out every permission by default, and grants from these
+ * handlers show no Chromium consent prompt. The policy itself lives in
+ * permissions.ts: an allow-listed permission, asked for by the app's own page
+ * — the bundled index.html, or the dev server when one is loaded (mirroring
+ * createWindow). Anything else in the session is denied, so a page that
+ * arrives through navigation or a dropped file gets nothing.
  */
 function restrictPermissions(): void {
-  const allowed = new Set([
-    'media',
-    'audioCapture',
-    'notifications',
-    'clipboard-sanitized-write'
-  ])
-  const decide = (permission: string): boolean => {
-    const ok = allowed.has(permission)
-    if (!ok) console.warn(`[permissions] denied ${permission}`)
+  const trust: TrustedPage = {
+    bundledPage: pathToFileURL(join(__dirname, '../renderer/index.html')).href,
+    devOrigin: originOf(process.env['ELECTRON_RENDERER_URL'])
+  }
+  const decide = (
+    contents: Electron.WebContents | null,
+    permission: string,
+    requestingUrl: string | undefined
+  ): boolean => {
+    // The frame's own URL when Electron provides it; the top-level URL is
+    // close enough for the fallback, since the app never embeds frames.
+    const pageUrl = requestingUrl || contents?.getURL()
+    const ok = decidePermission(permission, pageUrl, trust)
+    if (!ok) console.warn(`[permissions] denied ${permission} for ${pageUrl || 'unknown page'}`)
     return ok
   }
-  session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) =>
-    callback(decide(permission))
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) =>
+    callback(decide(contents, permission, details.requestingUrl))
   )
-  session.defaultSession.setPermissionCheckHandler((_contents, permission) => decide(permission))
+  session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) =>
+    decide(contents, permission, details.requestingUrl)
+  )
 }
 
 /**

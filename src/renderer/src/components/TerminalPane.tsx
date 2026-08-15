@@ -7,7 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { Profile } from '@shared/types'
 import { useDeck, type PaneView } from '../store'
-import { isReservedShortcut } from '../shortcuts'
+import { isReservedShortcut, shortcutLabel } from '../shortcuts'
 import { decideRestart, RESTART_CAP, type RestartDecision } from '../restart'
 import { registerTerminal, unregisterTerminal, type TerminalHandle } from '../terminals'
 import { terminalTheme } from '../theme'
@@ -396,7 +396,7 @@ export function TerminalPane({
         <div className="pane-actions">
           <button
             className="icon-btn"
-            title="Find in pane (Ctrl+Shift+F)"
+            title={`Find in pane (${shortcutLabel('find-pane')})`}
             onClick={() => setSearchOpen((v) => !v)}
           >
             <Icon name="search" />
@@ -410,7 +410,7 @@ export function TerminalPane({
           </button>
           <button
             className="icon-btn"
-            title={zoomed ? 'Restore pane (Ctrl+Shift+Z)' : 'Zoom pane (Ctrl+Shift+Z)'}
+            title={`${zoomed ? 'Restore pane' : 'Zoom pane'} (${shortcutLabel('zoom-pane')})`}
             onClick={() => toggleZoom(workspaceId, paneId)}
           >
             <Icon name={zoomed ? 'minimize' : 'maximize'} />
@@ -451,14 +451,14 @@ export function TerminalPane({
           </button>
           <button
             className="icon-btn"
-            title="Restart process (Ctrl+Shift+R)"
+            title={`Restart process (${shortcutLabel('restart-pane')})`}
             onClick={() => restartPane(paneId)}
           >
             <Icon name="restart" />
           </button>
           <button
             className="icon-btn danger"
-            title="Close pane (Ctrl+Shift+W)"
+            title={`Close pane (${shortcutLabel('close-pane')})`}
             onClick={() => void requestClosePane(workspaceId, paneId)}
           >
             <Icon name="close" />

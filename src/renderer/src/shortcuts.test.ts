@@ -4,6 +4,7 @@ import {
   isReservedShortcut,
   matchShortcut,
   SHORTCUTS,
+  shortcutLabel,
   type ShortcutKeys
 } from './shortcuts'
 
@@ -25,6 +26,26 @@ describe('one table, no duplicates', () => {
   it('gives every shortcut its own id', () => {
     const ids = SHORTCUTS.map((s) => s.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('gives every shortcut display keys', () => {
+    for (const shortcut of SHORTCUTS) expect(shortcut.keys).toBeTruthy()
+  })
+})
+
+describe('display text', () => {
+  it('derives the label from the same table the matcher reads', () => {
+    expect(shortcutLabel('new-pane')).toBe('Ctrl+Shift+T')
+    expect(shortcutLabel('open-settings')).toBe('Ctrl+Shift+,')
+    expect(shortcutLabel('find-all')).toBe('Ctrl+Shift+Alt+F')
+    expect(shortcutLabel('move-pane-left')).toBe('Ctrl+Shift+←')
+    expect(shortcutLabel('next-workspace')).toBe('Ctrl+Page Down')
+  })
+
+  it('fills a digit into a digit chord, or keeps the placeholder for a range', () => {
+    expect(shortcutLabel('focus-pane-by-digit', 3)).toBe('Alt+3')
+    expect(shortcutLabel('run-action-by-digit', 1)).toBe('Alt+Shift+1')
+    expect(shortcutLabel('workspace-by-digit')).toBe('Ctrl+#')
   })
 })
 

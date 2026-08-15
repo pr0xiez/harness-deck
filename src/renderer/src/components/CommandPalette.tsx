@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { shortcutLabel } from '../shortcuts'
 import { isActionable, useDeck } from '../store'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
@@ -45,7 +46,7 @@ export function CommandPalette(): React.JSX.Element {
         id: `ws:${ws.id}`,
         group: 'Workspaces',
         label: `Switch to ${ws.name}`,
-        hint: index < 9 ? `Ctrl+${index + 1}` : undefined,
+        hint: index < 9 ? shortcutLabel('workspace-by-digit', index + 1) : undefined,
         run: () => state.setActiveWorkspace(ws.id)
       })
     })
@@ -55,7 +56,7 @@ export function CommandPalette(): React.JSX.Element {
         id: 'ws:new',
         group: 'Workspaces',
         label: 'New workspace',
-        hint: 'Ctrl+Shift+N',
+        hint: shortcutLabel('new-workspace'),
         run: () => state.addWorkspace()
       },
       {
@@ -133,14 +134,14 @@ export function CommandPalette(): React.JSX.Element {
           id: 'ws:broadcast',
           group: 'Workspace',
           label: state.ui.broadcast ? 'Hide broadcast bar' : 'Broadcast a prompt to every pane',
-          hint: 'Ctrl+Shift+B',
+          hint: shortcutLabel('toggle-broadcast'),
           run: () => state.setUi({ broadcast: !state.ui.broadcast })
         },
         {
           id: 'ws:find-all',
           group: 'Workspace',
           label: 'Find across every pane…',
-          hint: 'Ctrl+Shift+Alt+F',
+          hint: shortcutLabel('find-all'),
           run: () => state.setUi({ findAll: true })
         },
         {
@@ -165,7 +166,7 @@ export function CommandPalette(): React.JSX.Element {
           id: `ws:action:${action.id}`,
           group: 'Workspace',
           label: `Run ${action.label}`,
-          hint: index < 9 ? `Alt+Shift+${index + 1}` : action.command,
+          hint: index < 9 ? shortcutLabel('run-action-by-digit', index + 1) : action.command,
           run: () => state.runWorkspaceAction(workspace.id, action.id)
         })
       })
@@ -221,14 +222,14 @@ export function CommandPalette(): React.JSX.Element {
           label: waiting
             ? `Jump to the next waiting pane (${waiting} waiting)`
             : 'Jump to the next waiting pane',
-          hint: 'Ctrl+Shift+J',
+          hint: shortcutLabel('focus-waiting'),
           run: () => state.focusNextWaiting()
         },
         {
           id: 'pane:waiting-queue',
           group: 'Panes',
           label: 'Waiting queue',
-          hint: 'Ctrl+Shift+U',
+          hint: shortcutLabel('toggle-waiting-queue'),
           run: () => state.setUi({ waitingQueue: true })
         }
       )
@@ -239,7 +240,7 @@ export function CommandPalette(): React.JSX.Element {
           id: `pane:focus:${pane.id}`,
           group: 'Panes',
           label: `Focus ${pane.name || pane.processTitle || profile?.name || pane.command}`,
-          hint: index < 9 ? `Alt+${index + 1}` : undefined,
+          hint: index < 9 ? shortcutLabel('focus-pane-by-digit', index + 1) : undefined,
           run: () => state.setActivePane(workspace.id, pane.id)
         })
       })
@@ -271,7 +272,7 @@ export function CommandPalette(): React.JSX.Element {
             id: 'pane:restart',
             group: 'Active pane',
             label: 'Restart process',
-            hint: 'Ctrl+Shift+R',
+            hint: shortcutLabel('restart-pane'),
             run: () => state.restartPane(activePane.id)
           },
           {
@@ -320,7 +321,7 @@ export function CommandPalette(): React.JSX.Element {
             id: 'pane:send-selection',
             group: 'Active pane',
             label: 'Send the selection to the broadcast box',
-            hint: 'Ctrl+Shift+E',
+            hint: shortcutLabel('send-selection'),
             run: () => {
               const selection = getTerminal(activePane.id)?.term.getSelection() ?? ''
               if (!selection.trim()) return
@@ -352,14 +353,14 @@ export function CommandPalette(): React.JSX.Element {
             id: 'pane:zoom',
             group: 'Active pane',
             label: 'Zoom / restore pane',
-            hint: 'Ctrl+Shift+Z',
+            hint: shortcutLabel('zoom-pane'),
             run: () => state.toggleZoom(workspace.id, activePane.id)
           },
           {
             id: 'pane:close',
             group: 'Active pane',
             label: 'Close pane',
-            hint: 'Ctrl+Shift+W',
+            hint: shortcutLabel('close-pane'),
             run: () => state.closePane(workspace.id, activePane.id)
           }
         )
@@ -383,14 +384,14 @@ export function CommandPalette(): React.JSX.Element {
         id: 'app:settings',
         group: 'Application',
         label: 'Settings',
-        hint: 'Ctrl+Shift+,',
+        hint: shortcutLabel('open-settings'),
         run: () => state.setUi({ settings: true })
       },
       {
         id: 'app:help',
         group: 'Application',
         label: 'Keyboard shortcuts',
-        hint: 'Ctrl+Shift+/',
+        hint: shortcutLabel('open-help'),
         run: () => state.setUi({ help: true })
       },
       {
@@ -400,7 +401,7 @@ export function CommandPalette(): React.JSX.Element {
           useVoice.getState().status === 'listening'
             ? 'Stop dictating'
             : 'Dictate into the focused prompt',
-        hint: 'Ctrl+Shift+M',
+        hint: shortcutLabel('toggle-dictation'),
         run: () => useVoice.getState().toggle()
       },
       {

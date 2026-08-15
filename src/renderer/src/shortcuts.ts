@@ -1,12 +1,14 @@
 /**
  * The global shortcut table — the single source of truth shared by the window
- * handler in App.tsx (which walks it to dispatch) and TerminalPane.tsx (whose
+ * handler in App.tsx (which walks it to dispatch), TerminalPane.tsx (whose
  * key-event handler asks isReservedShortcut() which combos xterm must forward
- * untouched). A shortcut added here is both dispatched and reserved at once;
- * the two sides can no longer drift.
+ * untouched), and every place that *prints* a chord — the help dialog, the
+ * palette hints and the tooltips all go through shortcutLabel(). A shortcut
+ * added here is dispatched, reserved and displayed at once; the sides can no
+ * longer drift.
  *
- * Pure key matching only — no store, no DOM — so it runs under plain-Node
- * vitest. What each shortcut *does* stays in App.tsx, bound by `id`.
+ * Pure key matching and strings only — no store, no DOM — so it runs under
+ * plain-Node vitest. What each shortcut *does* stays in App.tsx, bound by `id`.
  */
 
 /** The slice of KeyboardEvent the matchers read. Tests pass plain objects. */
@@ -65,6 +67,12 @@ export interface Shortcut {
    * the flag only decides for entries outside that family.
    */
   reserved: boolean
+  /**
+   * What the UI prints for the chord, in the Windows/Linux spelling
+   * ('Ctrl+Shift+T') — HelpDialog rewrites it for macOS. Digit shortcuts carry
+   * a '#' where the digit goes; shortcutLabel() fills it in.
+   */
+  keys: string
   when: (event: ShortcutKeys) => boolean
 }
 
@@ -77,10 +85,13 @@ const ctrl = (e: ShortcutKeys): boolean => e.ctrlKey || e.metaKey
 export const digitOf = (e: ShortcutKeys): string | null =>
   /^(?:Digit|Numpad)([1-9])$/.exec(e.code)?.[1] ?? null
 
-const ctrlShift =
-  (key: string) =>
-  (e: ShortcutKeys): boolean =>
-    ctrl(e) && e.shiftKey && e.key.toLowerCase() === key
+// One argument drives both the matcher and the display, so the chord a user
+// reads is the chord the matcher answers. `shown` covers the keys whose
+// display is not their uppercased event name ('arrowleft' prints as '←').
+const ctrlShift = (key: string, shown = key.toUpperCase()): Pick<Shortcut, 'keys' | 'when'> => ({
+  keys: `Ctrl+Shift+${shown}`,
+  when: (e) => ctrl(e) && e.shiftKey && e.key.toLowerCase() === key
+})
 
 /**
  * First match wins, so order resolves the overlaps: Ctrl+Shift+Alt+F must be
@@ -95,6 +106,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     whileTyping: true,
     macOnly: true,
     reserved: true,
+    keys: 'Cmd+C',
     when: (e) =>
       e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c'
   },
@@ -102,20 +114,22 @@ export const SHORTCUTS: readonly Shortcut[] = [
     id: 'open-settings',
     whileTyping: true,
     reserved: true,
+    keys: 'Ctrl+Shift+,',
     when: (e) => ctrl(e) && e.shiftKey && (e.code === 'Comma' || e.key === ',' || e.key === '<')
   },
   {
     id: 'open-help',
     whileTyping: true,
     reserved: true,
+    keys: 'Ctrl+Shift+/',
     when: (e) => ctrl(e) && e.shiftKey && (e.code === 'Slash' || e.key === '/' || e.key === '?')
   },
-  { id: 'toggle-palette', whileTyping: true, reserved: true, when: ctrlShift('p') },
-  { id: 'toggle-broadcast', whileTyping: true, reserved: true, when: ctrlShift('b') },
-  { id: 'send-selection', whileTyping: false, reserved: true, when: ctrlShift('e') },
+  { id: 'toggle-palette', whileTyping: true, reserved: true, ...ctrlShift('p') },
+  { id: 'toggle-broadcast', whileTyping: true, reserved: true, ...ctrlShift('b') },
+  { id: 'send-selection', whileTyping: false, reserved: true, ...ctrlShift('e') },
   // Not typing-guarded, so dictation also works from a text box.
-  { id: 'toggle-dictation', whileTyping: true, reserved: true, when: ctrlShift('m') },
-  { id: 'new-workspace', whileTyping: true, reserved: true, when: ctrlShift('n') },
+  { id: 'toggle-dictation', whileTyping: true, reserved: true, ...ctrlShift('m') },
+  { id: 'new-workspace', whileTyping: true, reserved: true, ...ctrlShift('n') },
   // Alt widens the same find from one pane to the whole workspace. Matched on
   // the physical key, because Option rewrites letters on macOS the way it
   // rewrites digits.
@@ -123,27 +137,29 @@ export const SHORTCUTS: readonly Shortcut[] = [
     id: 'find-all',
     whileTyping: false,
     reserved: true,
+    keys: 'Ctrl+Shift+Alt+F',
     when: (e) => ctrl(e) && e.shiftKey && e.altKey && e.code === 'KeyF'
   },
-  { id: 'new-pane', whileTyping: false, reserved: true, when: ctrlShift('t') },
-  { id: 'close-pane', whileTyping: false, reserved: true, when: ctrlShift('w') },
-  { id: 'restart-pane', whileTyping: false, reserved: true, when: ctrlShift('r') },
-  { id: 'zoom-pane', whileTyping: false, reserved: true, when: ctrlShift('z') },
-  { id: 'find-pane', whileTyping: false, reserved: true, when: ctrlShift('f') },
-  { id: 'clear-pane', whileTyping: false, reserved: true, when: ctrlShift('k') },
-  { id: 'focus-waiting', whileTyping: false, reserved: true, when: ctrlShift('j') },
+  { id: 'new-pane', whileTyping: false, reserved: true, ...ctrlShift('t') },
+  { id: 'close-pane', whileTyping: false, reserved: true, ...ctrlShift('w') },
+  { id: 'restart-pane', whileTyping: false, reserved: true, ...ctrlShift('r') },
+  { id: 'zoom-pane', whileTyping: false, reserved: true, ...ctrlShift('z') },
+  { id: 'find-pane', whileTyping: false, reserved: true, ...ctrlShift('f') },
+  { id: 'clear-pane', whileTyping: false, reserved: true, ...ctrlShift('k') },
+  { id: 'focus-waiting', whileTyping: false, reserved: true, ...ctrlShift('j') },
   // Typing-guarded like its neighbour, and the same chord closes the overlay:
   // the queue itself is not a text box, so it still gets the key back.
-  { id: 'toggle-waiting-queue', whileTyping: false, reserved: true, when: ctrlShift('u') },
-  { id: 'copy-selection', whileTyping: false, reserved: true, when: ctrlShift('c') },
-  { id: 'paste', whileTyping: false, reserved: true, when: ctrlShift('v') },
-  { id: 'move-pane-left', whileTyping: false, reserved: true, when: ctrlShift('arrowleft') },
-  { id: 'move-pane-right', whileTyping: false, reserved: true, when: ctrlShift('arrowright') },
-  { id: 'prev-pane', whileTyping: false, reserved: true, when: ctrlShift('tab') },
+  { id: 'toggle-waiting-queue', whileTyping: false, reserved: true, ...ctrlShift('u') },
+  { id: 'copy-selection', whileTyping: false, reserved: true, ...ctrlShift('c') },
+  { id: 'paste', whileTyping: false, reserved: true, ...ctrlShift('v') },
+  { id: 'move-pane-left', whileTyping: false, reserved: true, ...ctrlShift('arrowleft', '←') },
+  { id: 'move-pane-right', whileTyping: false, reserved: true, ...ctrlShift('arrowright', '→') },
+  { id: 'prev-pane', whileTyping: false, reserved: true, ...ctrlShift('tab', 'Tab') },
   {
     id: 'next-pane',
     whileTyping: false,
     reserved: true,
+    keys: 'Ctrl+Tab',
     when: (e) => ctrl(e) && !e.shiftKey && e.key.toLowerCase() === 'tab'
   },
   // The two workspace-cycling chords were never in the reserved set: the
@@ -153,24 +169,28 @@ export const SHORTCUTS: readonly Shortcut[] = [
     id: 'next-workspace',
     whileTyping: false,
     reserved: false,
+    keys: 'Ctrl+Page Down',
     when: (e) => ctrl(e) && !e.shiftKey && e.key.toLowerCase() === 'pagedown'
   },
   {
     id: 'prev-workspace',
     whileTyping: false,
     reserved: false,
+    keys: 'Ctrl+Page Up',
     when: (e) => ctrl(e) && !e.shiftKey && e.key.toLowerCase() === 'pageup'
   },
   {
     id: 'workspace-by-digit',
     whileTyping: false,
     reserved: true,
+    keys: 'Ctrl+#',
     when: (e) => ctrl(e) && !e.shiftKey && digitOf(e) !== null
   },
   {
     id: 'font-bigger',
     whileTyping: false,
     reserved: true,
+    keys: 'Ctrl+=',
     when: (e) =>
       ctrl(e) &&
       !e.shiftKey &&
@@ -180,6 +200,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     id: 'font-smaller',
     whileTyping: false,
     reserved: true,
+    keys: 'Ctrl+-',
     when: (e) =>
       ctrl(e) &&
       !e.shiftKey &&
@@ -189,6 +210,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     id: 'font-reset',
     whileTyping: false,
     reserved: true,
+    keys: 'Ctrl+0',
     when: (e) => ctrl(e) && !e.shiftKey && e.key === '0'
   },
   // Before the pane digits, and the reason they now exclude Shift: Alt+Shift
@@ -199,15 +221,30 @@ export const SHORTCUTS: readonly Shortcut[] = [
     id: 'run-action-by-digit',
     whileTyping: false,
     reserved: true,
+    keys: 'Alt+Shift+#',
     when: (e) => e.altKey && e.shiftKey && digitOf(e) !== null
   },
   {
     id: 'focus-pane-by-digit',
     whileTyping: false,
     reserved: true,
+    keys: 'Alt+#',
     when: (e) => e.altKey && !e.shiftKey && digitOf(e) !== null
   }
 ]
+
+/**
+ * The display text for a shortcut, straight off the table the matcher reads —
+ * the help dialog, the palette hints and the tooltips all print this, so a
+ * chord on screen can no longer drift from the chord that fires. Digit
+ * shortcuts hold a '#': pass the digit to name one binding ('Alt+3'), or leave
+ * it out to keep the placeholder for a range display ('Alt+1 … Alt+9').
+ */
+export function shortcutLabel(id: ShortcutId, digit?: number): string {
+  // Every ShortcutId has exactly one row, guaranteed by the tests.
+  const keys = SHORTCUTS.find((shortcut) => shortcut.id === id)?.keys ?? id
+  return digit === undefined ? keys : keys.replace('#', String(digit))
+}
 
 /** First matching entry, or null. Order in SHORTCUTS is the tie-breaker. */
 export function matchShortcut(event: ShortcutKeys, isMac: boolean): Shortcut | null {

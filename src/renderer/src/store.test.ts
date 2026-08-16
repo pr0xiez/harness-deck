@@ -48,7 +48,7 @@ const workspace = (
   ...over
 })
 
-/** Matches BROADCAST_HISTORY in store.ts. */
+/** Matches BROADCAST_HISTORY in store/settings.ts. */
 const BROADCAST_HISTORY = 50
 /** Matches the debounce in `startPersistence`. */
 const SAVE_MS = 400

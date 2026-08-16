@@ -88,7 +88,8 @@ worktree is what stops that becoming a merge fight.
   `src/preload/index.ts`.
 - Anything shared across the process boundary is typed in `src/shared/types.ts`.
 - New persisted state goes into `PersistedState` with a default in
-  `DEFAULT_SETTINGS` / the hydrate path (`src/renderer/src/store.ts`) so an
+  `DEFAULT_SETTINGS` (`src/renderer/src/store/settings.ts`) / the hydrate path
+  (`src/renderer/src/store/app.ts`) so an
   older state file still hydrates.
 - **Keyboard shortcuts are declared in `src/renderer/src/shortcuts.ts`** — the
   `SHORTCUTS` table is the single source of truth that App.tsx dispatches and
@@ -99,7 +100,8 @@ worktree is what stops that becoming a merge fight.
 
 **Conflict hotspots.** The same four files as last time attract edits from
 nearly every item — `src/shared/types.ts`, `src/preload/index.ts`, the
-`ipcMain.handle` block in `src/main/index.ts`, `src/renderer/src/store.ts` —
+domain module under `src/main/ipc/`, the matching slice under
+`src/renderer/src/store/` —
 plus one new one: **the quiet-event subscription**. Three items (HD-15, HD-20,
 and the repo refresh that already exists in `Toolbar.tsx`) all want to react
 to `pty:onQuiet`. Whoever lands first should lift the subscription into a
@@ -117,7 +119,8 @@ Add every type, preload method and IPC registration that waves A–C need,
 wired to stub implementations that compile and behave sanely. Nothing
 user-visible ships.
 
-**Files:** `src/shared/types.ts`, `src/preload/index.ts`, `src/main/index.ts`.
+**Files:** `src/shared/types.ts`, `src/shared/ipc.ts`, `src/preload/index.ts`,
+`src/main/ipc/`.
 
 **Add to `src/shared/types.ts`:**
 
@@ -218,10 +221,10 @@ waiting** — for an agent at an approval gate, the tail *is* the question. The
 buffer is already in `PtyManager`; `stripAnsi` already lives beside it.
 
 **Files:** new `src/renderer/src/components/WaitingQueue.tsx`,
-`src/renderer/src/store.ts`, `src/renderer/src/App.tsx`,
+`src/renderer/src/store/`, `src/renderer/src/App.tsx`,
 `src/renderer/src/shortcuts.ts`, `src/renderer/src/components/Sidebar.tsx`,
 `src/renderer/src/components/TerminalPane.tsx` (mute in the pane menu),
-`src/main/pty.ts` + `src/main/index.ts` (the `pty:tail` accessor beside
+`src/main/pty.ts` + `src/main/ipc/pty.ts` (the `pty:tail` accessor beside
 `pty:transcript`).
 
 **Design.**
@@ -293,7 +296,7 @@ shell panes because nothing remembers them.
 `src/renderer/src/components/Toolbar.tsx` (action chips),
 `src/renderer/src/components/ProfileMenu.tsx` (worktree launch path),
 `src/renderer/src/components/PaneDialog.tsx` (show/edit a pane's `setup`),
-`src/renderer/src/store.ts`, `src/renderer/src/templates.ts`,
+`src/renderer/src/store/workspace.ts`, `src/renderer/src/templates.ts`,
 `src/main/pty.ts` (spawn composition), `src/renderer/src/shortcuts.ts`.
 
 **Design.**
@@ -349,7 +352,7 @@ front of the agents is select, copy, `Ctrl+Shift+B`, paste, fence it by
 hand, describe. Five steps for the single most common hand-off in the app.
 
 **Files:** `src/renderer/src/App.tsx`, `src/renderer/src/shortcuts.ts`,
-`src/renderer/src/components/BroadcastBar.tsx`, `src/renderer/src/store.ts`.
+`src/renderer/src/components/BroadcastBar.tsx`, `src/renderer/src/store/ui.ts`.
 
 **Design.** One shortcut, `Ctrl+Shift+E` ("send selection"): take the focused
 pane's selection (`getTerminal(id).term.getSelection()` — xterm hands back
@@ -393,8 +396,8 @@ pane in that worktree.** Failures arrive as scrollback, not toast mysteries.
 **Files:** new `src/renderer/src/components/ShipDialog.tsx`,
 `src/renderer/src/components/CompareView.tsx` (a Ship button per worktree
 column), `src/renderer/src/components/TerminalPane.tsx` (pane-menu entry for
-worktree panes), `src/main/index.ts` (`git:forge` via the `findExecutable`
-machinery in `src/main/profiles.ts`), `src/renderer/src/store.ts`.
+worktree panes), `src/main/ipc/git.ts` (`git:forge` via the `findExecutable`
+machinery in `src/main/profiles.ts`), `src/renderer/src/store/`.
 
 **Design.**
 
@@ -453,8 +456,8 @@ the losers are closed one confirmation at a time, their branches linger, and
 `.harness-deck/` silts up with the corpses of every experiment.
 
 **Files:** `src/renderer/src/components/CompareView.tsx`,
-`src/renderer/src/store.ts`, `src/main/git.ts` (`deleteBranch`),
-`src/main/index.ts`.
+`src/renderer/src/store/`, `src/main/git.ts` (`deleteBranch`),
+`src/main/ipc/git.ts`.
 
 **Design.** A **Resolve…** button in the compare header once two or more
 worktree columns exist. The panel lists the worktree panes: pick a winner
@@ -493,8 +496,8 @@ observation that an agent falling silent has usually just stopped writing
 files. Snapshot the tree at that same moment and the compare view can answer
 "the last burst" instead of "everything".
 
-**Files:** `src/main/git.ts`, `src/main/git.test.ts`, `src/main/index.ts`,
-`src/renderer/src/store.ts` (the shared quiet subscription — see the
+**Files:** `src/main/git.ts`, `src/main/git.test.ts`, `src/main/ipc/git.ts`,
+`src/renderer/src/store/index.ts` (the shared quiet subscription — see the
 hotspot note; rebase on HD-15), `src/renderer/src/components/CompareView.tsx`.
 
 **Design.**
@@ -553,7 +556,7 @@ process, addressed by pane id, with replay buffers** — the renderer is
 already just a client. Add a second, deliberately smaller one.
 
 **Files:** new `src/main/remote-server.ts`, new
-`src/main/remote-server.test.ts`, `src/main/index.ts`,
+`src/main/remote-server.test.ts`, `src/main/ipc/remote.ts`,
 `src/renderer/src/components/SettingsDialog.tsx`, a new tiny page —
 `src/remote/index.html` + `src/remote/main.ts` (an extra electron-vite
 renderer input, bundled into `out/` and served from disk), `src/main/smoke.ts`.

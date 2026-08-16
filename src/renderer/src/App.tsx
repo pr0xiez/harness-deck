@@ -13,6 +13,7 @@ import { WaitingQueue } from './components/WaitingQueue'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
 import { UpdateToast } from './components/UpdateToast'
+import { SaveErrorToast } from './components/SaveErrorToast'
 import { NoticeToast } from './components/NoticeToast'
 import { VoiceHud } from './components/VoiceHud'
 import { Icon } from './components/Icon'
@@ -354,6 +355,7 @@ export function App(): React.JSX.Element {
       </div>
 
       <UpdateToast />
+      <SaveErrorToast />
       <NoticeToast />
       <VoiceHud />
 

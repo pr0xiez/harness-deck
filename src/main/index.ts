@@ -31,6 +31,8 @@ import type {
 import { IPC, type IpcChannel } from '@shared/ipc'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
 import { navigationAllowed } from './nav-guard'
+import { PasteGate } from './paste-gate'
+import { resolveWithin } from './paths'
 import { decidePermission, originOf, type TrustedPage } from './permissions'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
@@ -54,6 +56,8 @@ const isMac = process.platform === 'darwin'
 
 let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
+/** Records the paste chord off real keyboard input; gates `clipboard:read`. */
+const pasteGate = new PasteGate()
 /** Set when we are quitting to hand over to an installer — skip the pane prompt. */
 let quittingForUpdate = false
 /**
@@ -333,6 +337,12 @@ function createWindow(): BrowserWindow {
     if (!navigationAllowed(url, devOrigin, appUrl)) event.preventDefault()
   })
 
+  // The renderer's paste path (Ctrl/Cmd+Shift+V, see shortcuts.ts) asks the
+  // main process for the clipboard over IPC. The chord is recorded here, off
+  // keyboard input the renderer cannot forge, and `clipboard:read` only
+  // answers within a moment of it — see registerIpc and paste-gate.ts.
+  win.webContents.on('before-input-event', (_event, input) => pasteGate.observe(input))
+
   // DevTools without an application menu. macOS has one (see installMenu), and
   // its View item owns Cmd+Alt+I — handling it here too would toggle twice.
   win.webContents.on('before-input-event', (_event, input) => {
@@ -493,9 +503,11 @@ function registerIpc(): void {
     rememberAttention(state)
     return state
   })
-  ipcMain.on(IPC.stateSave, (_e, state: PersistedState) => {
+  // handle/invoke rather than on/send, so a write that failed makes it back to
+  // the renderer instead of dying as a console line here. See issue #26.
+  ipcMain.handle(IPC.stateSave, (_e, state: PersistedState) => {
     rememberAttention(state)
-    saveState(state)
+    return saveState(state)
   })
   ipcMain.handle(IPC.stateLocation, () => stateLocation())
 
@@ -622,7 +634,11 @@ function registerIpc(): void {
     return systemPreferences.askForMediaAccess('microphone')
   })
 
-  ipcMain.handle(IPC.clipboardRead, () => clipboard.readText())
+  // Only within a moment of a real paste chord (see createWindow). The
+  // permission handler already refuses the web clipboard-read permission; a
+  // channel that answered unconditionally was a side door around it. An
+  // unprompted caller gets an empty string, not what the user last copied.
+  ipcMain.handle(IPC.clipboardRead, () => (pasteGate.allows() ? clipboard.readText() : ''))
   ipcMain.on(IPC.clipboardWrite, (_e, text: string) => clipboard.writeText(text))
 
   ipcMain.on(IPC.windowMinimize, () => mainWindow?.minimize())
@@ -642,14 +658,27 @@ function registerIpc(): void {
   ipcMain.on(IPC.appOpenPath, (_e, path: string) => shell.openPath(path))
   ipcMain.on(IPC.appSetBadge, (_e, count: number) => setBadge(count))
 
-  ipcMain.handle(IPC.appCapture, async (_e, target: string) => {
-    if (!mainWindow) return null
-    const image = await mainWindow.webContents.capturePage()
-    const file = resolve(target)
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, image.toPNG())
-    return file
-  })
+  // The channel exists solely for the --capture dev flow (see the flag table
+  // above), so in a normal run it is never registered and a renderer that
+  // calls it gets a rejection, not a file. Even in a capture run the renderer
+  // only names a file inside the directory the CLI flag already chose — its
+  // string used to be resolved and written verbatim, which let any code in
+  // the renderer overwrite whatever the OS user could (issue #29).
+  if (captureTarget) {
+    const captureDir = dirname(resolve(captureTarget))
+    ipcMain.handle(IPC.appCapture, async (_e, target: string) => {
+      if (!mainWindow) return null
+      const file = resolveWithin(captureDir, target)
+      if (!file) {
+        console.warn(`[capture] refused a path outside ${captureDir}: ${target}`)
+        return null
+      }
+      const image = await mainWindow.webContents.capturePage()
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, image.toPNG())
+      return file
+    })
+  }
 }
 
 if (!app.requestSingleInstanceLock()) {

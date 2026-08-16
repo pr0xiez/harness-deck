@@ -21,41 +21,14 @@ export interface ShortcutKeys {
   readonly altKey: boolean
 }
 
-export type ShortcutId =
-  | 'copy-selection-mac'
-  | 'open-settings'
-  | 'open-help'
-  | 'toggle-palette'
-  | 'toggle-broadcast'
-  | 'toggle-dictation'
-  | 'new-workspace'
-  | 'find-all'
-  | 'new-pane'
-  | 'close-pane'
-  | 'restart-pane'
-  | 'zoom-pane'
-  | 'find-pane'
-  | 'clear-pane'
-  | 'focus-waiting'
-  | 'copy-selection'
-  | 'paste'
-  | 'move-pane-left'
-  | 'move-pane-right'
-  | 'prev-pane'
-  | 'next-pane'
-  | 'next-workspace'
-  | 'prev-workspace'
-  | 'workspace-by-digit'
-  | 'font-bigger'
-  | 'font-smaller'
-  | 'font-reset'
-  | 'focus-pane-by-digit'
-  | 'send-selection'
-  | 'toggle-waiting-queue'
-  | 'run-action-by-digit'
-
 export interface Shortcut {
-  id: ShortcutId
+  /**
+   * A plain string here, not ShortcutId — ShortcutId is derived *from* this
+   * table below (`(typeof SHORTCUTS)[number]['id']`), so a row can't exist
+   * without contributing its id to the union, and a ShortcutId can't exist
+   * without a row backing it.
+   */
+  id: string
   /** Fires even while an input, textarea or contenteditable has focus. */
   whileTyping: boolean
   /** Only matched when the app reports darwin. isReservedShortcut ignores
@@ -96,8 +69,14 @@ const ctrlShift = (key: string, shown = key.toUpperCase()): Pick<Shortcut, 'keys
 /**
  * First match wins, so order resolves the overlaps: Ctrl+Shift+Alt+F must be
  * seen before Ctrl+Shift+F, and Ctrl+(Alt+)digit before Alt+digit.
+ *
+ * `as const satisfies` rather than a `: readonly Shortcut[]` annotation: the
+ * annotation would widen every `id` to `Shortcut['id']` (plain `string`)
+ * before ShortcutId gets a chance to read it below, so a row deleted here
+ * would silently vanish from the union instead of breaking whoever still
+ * dispatches on it.
  */
-export const SHORTCUTS: readonly Shortcut[] = [
+export const SHORTCUTS = [
   // macOS: the Edit menu owns Cmd+V, which xterm receives as a real paste
   // event. Cmd+C has to be ours — a pane's selection belongs to xterm and
   // never lands in the DOM where webContents.copy() would find it.
@@ -231,25 +210,59 @@ export const SHORTCUTS: readonly Shortcut[] = [
     keys: 'Alt+#',
     when: (e) => e.altKey && !e.shiftKey && digitOf(e) !== null
   }
-]
+] as const satisfies readonly Shortcut[]
+
+/**
+ * Every id a row in SHORTCUTS carries — derived *from* the table above, not
+ * hand-maintained beside it. A row can't be deleted or renamed without every
+ * caller of that id (App.tsx's dispatch Record, shortcutLabel callers, this
+ * type's other readers) failing to typecheck: there is no way for a
+ * ShortcutId to exist without a row backing it.
+ */
+export type ShortcutId = (typeof SHORTCUTS)[number]['id']
+
+/** The three ids whose `keys` carries a '#' digit placeholder. */
+export type DigitShortcutId = 'workspace-by-digit' | 'run-action-by-digit' | 'focus-pane-by-digit'
 
 /**
  * The display text for a shortcut, straight off the table the matcher reads —
  * the help dialog, the palette hints and the tooltips all print this, so a
  * chord on screen can no longer drift from the chord that fires. Digit
  * shortcuts hold a '#': pass the digit to name one binding ('Alt+3'), or leave
- * it out to keep the placeholder for a range display ('Alt+1 … Alt+9').
+ * it out to keep the placeholder for a range display ('Alt+1 … Alt+9'). The
+ * overloads make both a stray digit on an ordinary shortcut and a missing
+ * digit on a range display a compile error rather than a silent no-op.
  */
+export function shortcutLabel(id: DigitShortcutId, digit?: number): string
+export function shortcutLabel(id: Exclude<ShortcutId, DigitShortcutId>, digit?: undefined): string
 export function shortcutLabel(id: ShortcutId, digit?: number): string {
-  // Every ShortcutId has exactly one row, guaranteed by the tests.
-  const keys = SHORTCUTS.find((shortcut) => shortcut.id === id)?.keys ?? id
+  // Every ShortcutId has exactly one row — guaranteed by construction, since
+  // ShortcutId is derived from SHORTCUTS itself, not maintained beside it.
+  const keys = SHORTCUTS.find((shortcut) => shortcut.id === id)!.keys
   return digit === undefined ? keys : keys.replace('#', String(digit))
 }
 
-/** First matching entry, or null. Order in SHORTCUTS is the tie-breaker. */
-export function matchShortcut(event: ShortcutKeys, isMac: boolean): Shortcut | null {
+/**
+ * Whether a row is macOS-only. Routed through the wider `Shortcut` interface
+ * rather than read straight off the union `SHORTCUTS` produces: most rows
+ * never set `macOnly` at all, so the inferred literal type of each row omits
+ * the property entirely rather than typing it `undefined`, and a union where
+ * only one member has a given key can't have that key read off it directly.
+ */
+const isMacOnly = (shortcut: Shortcut): boolean => Boolean(shortcut.macOnly)
+
+/**
+ * First matching entry, or null. Order in SHORTCUTS is the tie-breaker.
+ * Returns `(typeof SHORTCUTS)[number]` rather than the wider `Shortcut` so
+ * `.id` on the result stays a ShortcutId literal for callers like App.tsx's
+ * `Record<ShortcutId, …>` dispatch, instead of widening to `string`.
+ */
+export function matchShortcut(
+  event: ShortcutKeys,
+  isMac: boolean
+): (typeof SHORTCUTS)[number] | null {
   for (const shortcut of SHORTCUTS) {
-    if (shortcut.macOnly && !isMac) continue
+    if (isMacOnly(shortcut) && !isMac) continue
     if (shortcut.when(event)) return shortcut
   }
   return null

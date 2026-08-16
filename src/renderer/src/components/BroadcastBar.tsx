@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { paneLabel } from '../paneLabel'
+import { shortcutLabel } from '../shortcuts'
 import { isLive, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { registerVoiceSink } from '../voice'
 import { Icon } from './Icon'
@@ -258,7 +259,11 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
           press enter
         </label>
         <MicButton variant="inline" />
-        <button className="icon-btn" title="Hide broadcast (Ctrl+Shift+B)" onClick={() => setUi({ broadcast: false })}>
+        <button
+          className="icon-btn"
+          title={`Hide broadcast (${shortcutLabel('toggle-broadcast')})`}
+          onClick={() => setUi({ broadcast: false })}
+        >
           <Icon name="close" />
         </button>
       </div>

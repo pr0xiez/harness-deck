@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { WorkspaceAction } from '@shared/types'
+import { shortcutLabel } from '../shortcuts'
 import { useDeck } from '../store'
 import { Field, Modal } from './ui'
 import { Icon } from './Icon'
@@ -147,7 +148,11 @@ export function WorkspaceDialog({
         <span className="field-hint">
           Each one is a chip in the toolbar and a command in the palette. Clicking it opens an
           ordinary shell pane in <code>{workspace.cwd}</code> — restartable, closable,
-          transcript-able. The first nine also answer <code>Alt+Shift+1…9</code>.
+          transcript-able. The first nine also answer{' '}
+          <code>
+            {shortcutLabel('run-action-by-digit', 1)}…{shortcutLabel('run-action-by-digit', 9)}
+          </code>
+          .
         </span>
       </div>
     </Modal>

@@ -1,12 +1,15 @@
-import { shortcutLabel } from '../shortcuts'
+import { shortcutLabel, type DigitShortcutId } from '../shortcuts'
 import { useDeck } from '../store'
 import { Kbd, Modal } from './ui'
 
 const chord = shortcutLabel
 
-/** A digit chord shown as its whole range: 'Alt+1 … Alt+9'. */
-const range = (id: Parameters<typeof shortcutLabel>[0]): string =>
-  `${chord(id, 1)} … ${chord(id, 9)}`
+/**
+ * A digit chord shown as its whole range: 'Alt+1 … Alt+9'. Typed to
+ * DigitShortcutId rather than the wider ShortcutId so a non-digit id can't
+ * be passed here and silently print the same chord twice.
+ */
+const range = (id: DigitShortcutId): string => `${chord(id, 1)} … ${chord(id, 9)}`
 
 /**
  * Grouping, order and prose are display concerns and stay here; every chord

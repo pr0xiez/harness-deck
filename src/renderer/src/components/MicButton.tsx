@@ -1,3 +1,4 @@
+import { shortcutLabel } from '../shortcuts'
 import { useVoice } from '../voice'
 import { Icon } from './Icon'
 
@@ -6,12 +7,14 @@ interface Props {
   variant?: 'toolbar' | 'inline'
 }
 
+const DICTATE_KEY = shortcutLabel('toggle-dictation')
+
 const TITLES: Record<string, string> = {
-  idle: 'Dictate into the focused prompt (Ctrl+Shift+M)',
+  idle: `Dictate into the focused prompt (${DICTATE_KEY})`,
   starting: 'Opening the microphone…',
-  listening: 'Listening — click or press Ctrl+Shift+M to stop',
+  listening: `Listening — click or press ${DICTATE_KEY} to stop`,
   transcribing: 'Transcribing…',
-  error: 'Dictate into the focused prompt (Ctrl+Shift+M)'
+  error: `Dictate into the focused prompt (${DICTATE_KEY})`
 }
 
 export function MicButton({ variant = 'toolbar' }: Props): React.JSX.Element {

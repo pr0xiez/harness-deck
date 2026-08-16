@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { paneLabel } from '../paneLabel'
 import { isSnoozed, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { getTerminal } from '../terminals'
 import { Icon } from './Icon'
@@ -214,7 +215,7 @@ export function WaitingQueue(): React.JSX.Element {
                   {profile?.icon ?? '»'}
                 </span>
                 <span className="queue-name">
-                  {pane.name || pane.processTitle || profile?.name || pane.command}
+                  {paneLabel(pane, profile)}
                   <span className="queue-ws">{workspace.name}</span>
                 </span>
                 {/* The bell outranked a snooze to put this row back — say so,

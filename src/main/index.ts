@@ -13,7 +13,8 @@ import {
 import type { NativeImage } from 'electron'
 import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type {
   DiffRequest,
   PaneSpec,
@@ -27,8 +28,10 @@ import type {
   VoiceProvider,
   WorktreeRequest
 } from '@shared/types'
+import { IPC, type IpcChannel } from '@shared/ipc'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
 import { trustedSenderUrl } from './ipc-sender'
+import { decidePermission, originOf, type TrustedPage } from './permissions'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -203,7 +206,7 @@ function saveDir(): string {
   }
 }
 
-function send(channel: string, payload: unknown): void {
+function send(channel: IpcChannel, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload)
   }
@@ -249,13 +252,14 @@ function devIcon(): NativeImage | undefined {
 
 /**
  * Where the renderer legitimately loads from: the vite dev server when
- * `ELECTRON_RENDERER_URL` is set, the bundled index.html otherwise. Both
- * `createWindow` (to load the page) and privileged IPC (to vet its sender —
- * see `trustedSenderUrl`) read this one value, so the check can never drift
- * from what the window actually shows.
+ * `ELECTRON_RENDERER_URL` is set, the bundled index.html otherwise. A packaged
+ * build never follows the dev-server variable (#51) — gated here once so every
+ * consumer (`createWindow`'s load and navigation guard, and privileged IPC's
+ * sender check — see `trustedSenderUrl`) reads the same fail-closed value and
+ * the checks can never drift from what the window actually shows.
  */
 const rendererSource = {
-  devUrl: process.env['ELECTRON_RENDERER_URL'],
+  devUrl: app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'],
   appIndex: join(__dirname, '../renderer/index.html')
 }
 
@@ -299,16 +303,32 @@ function createWindow(): BrowserWindow {
       win.close()
     }
   })
-  win.on('maximize', () => send('window:maximized', true))
-  win.on('unmaximize', () => send('window:maximized', false))
-  win.on('enter-full-screen', () => send('window:fullscreen', true))
-  win.on('leave-full-screen', () => send('window:fullscreen', false))
-  win.on('focus', () => send('window:focus', true))
-  win.on('blur', () => send('window:focus', false))
+  win.on('maximize', () => send(IPC.windowMaximized, true))
+  win.on('unmaximize', () => send(IPC.windowMaximized, false))
+  win.on('enter-full-screen', () => send(IPC.windowFullscreen, true))
+  win.on('leave-full-screen', () => send(IPC.windowFullscreen, false))
+  win.on('focus', () => send(IPC.windowFocus, true))
+  win.on('blur', () => send(IPC.windowFocus, false))
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  // The preload re-runs on every document load, so navigating anywhere but our
+  // own content would hand window.harness to whatever loaded — a file dropped
+  // on the window is enough to trigger it. Only the app's own URL may load;
+  // everything else is blocked. The renderer also cancels drag-and-drop at the
+  // document (see main.tsx), but this guard is the one that cannot be bypassed.
+  // Reuses `trustedSenderUrl` against the same gated `rendererSource` the
+  // window loads and the clipboard IPC gate vets against, so the checks cannot
+  // drift apart.
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!trustedSenderUrl(url, rendererSource)) event.preventDefault()
+  })
+  // will-navigate only covers the main frame; this catches subframes too.
+  win.webContents.on('will-frame-navigate', (event) => {
+    if (!trustedSenderUrl(event.url, rendererSource)) event.preventDefault()
   })
 
   // DevTools without an application menu. macOS has one (see installMenu), and
@@ -407,26 +427,36 @@ function createWindow(): BrowserWindow {
 }
 
 /**
- * Electron hands out every permission by default. Dictation needs the
- * microphone and the pane bell needs notifications; nothing else has a reason
- * to ask, so the rest are refused.
+ * Electron hands out every permission by default, and grants from these
+ * handlers show no Chromium consent prompt. The policy itself lives in
+ * permissions.ts: an allow-listed permission, asked for by the app's own page
+ * — the bundled index.html, or the dev server when one is loaded (mirroring
+ * createWindow). Anything else in the session is denied, so a page that
+ * arrives through navigation or a dropped file gets nothing.
  */
 function restrictPermissions(): void {
-  const allowed = new Set([
-    'media',
-    'audioCapture',
-    'notifications',
-    'clipboard-sanitized-write'
-  ])
-  const decide = (permission: string): boolean => {
-    const ok = allowed.has(permission)
-    if (!ok) console.warn(`[permissions] denied ${permission}`)
+  const trust: TrustedPage = {
+    bundledPage: pathToFileURL(join(__dirname, '../renderer/index.html')).href,
+    devOrigin: originOf(process.env['ELECTRON_RENDERER_URL'])
+  }
+  const decide = (
+    contents: Electron.WebContents | null,
+    permission: string,
+    requestingUrl: string | undefined
+  ): boolean => {
+    // The frame's own URL when Electron provides it; the top-level URL is
+    // close enough for the fallback, since the app never embeds frames.
+    const pageUrl = requestingUrl || contents?.getURL()
+    const ok = decidePermission(permission, pageUrl, trust)
+    if (!ok) console.warn(`[permissions] denied ${permission} for ${pageUrl || 'unknown page'}`)
     return ok
   }
-  session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) =>
-    callback(decide(permission))
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) =>
+    callback(decide(contents, permission, details.requestingUrl))
   )
-  session.defaultSession.setPermissionCheckHandler((_contents, permission) => decide(permission))
+  session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) =>
+    decide(contents, permission, details.requestingUrl)
+  )
 }
 
 /**
@@ -443,7 +473,7 @@ const REMOTE_OFF: RemoteStatus = {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('app:info', () => ({
+  ipcMain.handle(IPC.appInfo, () => ({
     platform: process.platform,
     versions: {
       electron: process.versions.electron,
@@ -461,12 +491,12 @@ function registerIpc(): void {
   // profile registry — the one thing a write to the state file cannot forge —
   // and flagged when it does not re-derive. A flagged pane never autostarts;
   // it waits at its Start overlay for a click. See state-schema.ts.
-  ipcMain.handle('state:load', async () => {
+  ipcMain.handle(IPC.stateLoad, async () => {
     const state = loadState()
     rememberAttention(state)
     return state && flagUntrustedPanes(state, await detectProfiles())
   })
-  ipcMain.on('state:save', (_e, state: PersistedState) => {
+  ipcMain.on(IPC.stateSave, (_e, state: PersistedState) => {
     // The renderer only ever sends what `serialize()` built, but this channel
     // takes whatever arrives — so it is held to the same schema the reader
     // enforces, and a payload that fails is refused rather than written.
@@ -478,63 +508,63 @@ function registerIpc(): void {
     rememberAttention(clean)
     saveState(clean)
   })
-  ipcMain.handle('state:location', () => stateLocation())
+  ipcMain.handle(IPC.stateLocation, () => stateLocation())
 
-  ipcMain.handle('profiles:list', () => detectProfiles())
+  ipcMain.handle(IPC.profilesList, () => detectProfiles())
   // Both hand back the whole merged list: the renderer keeps one array of
   // profiles, so a save that returned only the saved ones would leave it to
   // re-merge what detectProfiles() has already done.
-  ipcMain.handle('profiles:saveCustom', (_e, profile: SavedProfile) => {
+  ipcMain.handle(IPC.profilesSaveCustom, (_e, profile: SavedProfile) => {
     saveCustomProfile(profile)
     return detectProfiles()
   })
-  ipcMain.handle('profiles:removeCustom', (_e, id: string) => {
+  ipcMain.handle(IPC.profilesRemoveCustom, (_e, id: string) => {
     removeCustomProfile(id)
     return detectProfiles()
   })
 
-  ipcMain.handle('git:info', (_e, dir: string) => repoInfo(dir))
-  ipcMain.handle('git:addWorktree', (_e, req: WorktreeRequest) => addWorktree(req))
-  ipcMain.handle('git:removeWorktree', (_e, path: string) => removeWorktree(path))
-  ipcMain.handle('git:diffStat', (_e, dir: string) => diffStat(dir))
-  ipcMain.handle('git:diffRange', (_e, req: DiffRequest) => diffRange(req))
-  ipcMain.handle('git:forge', () => detectForge())
+  ipcMain.handle(IPC.gitInfo, (_e, dir: string) => repoInfo(dir))
+  ipcMain.handle(IPC.gitAddWorktree, (_e, req: WorktreeRequest) => addWorktree(req))
+  ipcMain.handle(IPC.gitRemoveWorktree, (_e, path: string) => removeWorktree(path))
+  ipcMain.handle(IPC.gitDiffStat, (_e, dir: string) => diffStat(dir))
+  ipcMain.handle(IPC.gitDiffRange, (_e, req: DiffRequest) => diffRange(req))
+  ipcMain.handle(IPC.gitForge, () => detectForge())
   // Stubs the later items replace — registered now so four parallel branches
   // build on a settled surface instead of each adding its own. See HD-14.
-  ipcMain.handle('git:checkpoint', () => undefined)
-  ipcMain.handle('git:checkpoints', () => [])
-  ipcMain.handle('git:restoreCheckpoint', () => ({ ok: false, error: 'not implemented' }))
-  ipcMain.handle('git:dropCheckpoints', () => undefined)
-  ipcMain.handle('git:deleteBranch', () => ({ ok: false, error: 'not implemented' }))
+  ipcMain.handle(IPC.gitCheckpoint, () => undefined)
+  ipcMain.handle(IPC.gitCheckpoints, () => [])
+  ipcMain.handle(IPC.gitRestoreCheckpoint, () => ({ ok: false, error: 'not implemented' }))
+  ipcMain.handle(IPC.gitDropCheckpoints, () => undefined)
+  ipcMain.handle(IPC.gitDeleteBranch, () => ({ ok: false, error: 'not implemented' }))
 
-  ipcMain.handle('update:state', () => currentState())
-  ipcMain.handle('update:check', () => checkNow())
-  ipcMain.handle('update:setChannel', (_e, channel: UpdateChannel) => setChannel(channel))
-  ipcMain.handle('update:install', () => install())
+  ipcMain.handle(IPC.updateState, () => currentState())
+  ipcMain.handle(IPC.updateCheck, () => checkNow())
+  ipcMain.handle(IPC.updateSetChannel, (_e, channel: UpdateChannel) => setChannel(channel))
+  ipcMain.handle(IPC.updateInstall, () => install())
 
-  ipcMain.handle('pty:ensure', (_e, spec: PaneSpec, cols: number, rows: number) =>
+  ipcMain.handle(IPC.ptyEnsure, (_e, spec: PaneSpec, cols: number, rows: number) =>
     ptys!.ensure(spec, cols, rows)
   )
-  ipcMain.on('pty:write', (_e, id: string, data: string) => ptys!.write(id, data))
-  ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>
+  ipcMain.on(IPC.ptyWrite, (_e, id: string, data: string) => ptys!.write(id, data))
+  ipcMain.on(IPC.ptyResize, (_e, id: string, cols: number, rows: number) =>
     ptys!.resize(id, cols, rows)
   )
-  ipcMain.on('pty:kill', (_e, id: string) => ptys!.kill(id))
-  ipcMain.on('pty:dispose', (_e, id: string) => ptys!.dispose(id))
-  ipcMain.handle('pty:status', (_e, id: string) => ptys!.status(id))
-  ipcMain.handle('pty:running', () => ptys!.runningIds())
-  ipcMain.handle('pty:transcript', (_e, id: string, strip?: boolean) => {
+  ipcMain.on(IPC.ptyKill, (_e, id: string) => ptys!.kill(id))
+  ipcMain.on(IPC.ptyDispose, (_e, id: string) => ptys!.dispose(id))
+  ipcMain.handle(IPC.ptyStatus, (_e, id: string) => ptys!.status(id))
+  ipcMain.handle(IPC.ptyRunning, () => ptys!.runningIds())
+  ipcMain.handle(IPC.ptyTranscript, (_e, id: string, strip?: boolean) => {
     const text = ptys!.transcript(id)
     return strip ? stripAnsi(text) : text
   })
-  ipcMain.handle('pty:tail', (_e, id: string, lines: number) => ptys!.tail(id, lines))
+  ipcMain.handle(IPC.ptyTail, (_e, id: string, lines: number) => ptys!.tail(id, lines))
 
-  ipcMain.handle('remote:status', () => REMOTE_OFF)
-  ipcMain.handle('remote:setEnabled', () => REMOTE_OFF)
-  ipcMain.handle('remote:setLan', () => REMOTE_OFF)
-  ipcMain.handle('remote:setAllowTyping', () => REMOTE_OFF)
+  ipcMain.handle(IPC.remoteStatus, () => REMOTE_OFF)
+  ipcMain.handle(IPC.remoteSetEnabled, () => REMOTE_OFF)
+  ipcMain.handle(IPC.remoteSetLan, () => REMOTE_OFF)
+  ipcMain.handle(IPC.remoteSetAllowTyping, () => REMOTE_OFF)
 
-  ipcMain.handle('fs:missingDirs', (_e, paths: string[]) =>
+  ipcMain.handle(IPC.fsMissingDirs, (_e, paths: string[]) =>
     (paths ?? []).filter((path) => {
       try {
         return !path || !statSync(path).isDirectory()
@@ -545,7 +575,7 @@ function registerIpc(): void {
     })
   )
 
-  ipcMain.handle('dialog:pickDirectory', async (_e, current?: string) => {
+  ipcMain.handle(IPC.dialogPickDirectory, async (_e, current?: string) => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Choose a working directory',
@@ -555,7 +585,7 @@ function registerIpc(): void {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle('dialog:confirm', async (_e, options: { title: string; message: string; detail?: string; confirmLabel?: string }) => {
+  ipcMain.handle(IPC.dialogConfirm, async (_e, options: { title: string; message: string; detail?: string; confirmLabel?: string }) => {
     if (!mainWindow) return false
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'question',
@@ -570,12 +600,14 @@ function registerIpc(): void {
     return response === 0
   })
 
-  ipcMain.handle('dialog:saveText', async (_e, req: SaveTextRequest): Promise<SaveTextResult> => {
+  ipcMain.handle(IPC.dialogSaveText, async (_e, req: SaveTextRequest): Promise<SaveTextResult> => {
     if (!mainWindow) return { ok: false, error: 'No window to hang the dialog off.' }
     try {
+      const safeName = basename(req.defaultName ?? '')
+      const fileName = safeName && safeName !== '.' && safeName !== '..' ? safeName : 'transcript.txt'
       const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
         title: 'Save transcript',
-        defaultPath: join(saveDir(), req.defaultName),
+        defaultPath: join(saveDir(), fileName),
         filters: [
           { name: 'Text', extensions: ['txt'] },
           { name: 'All files', extensions: ['*'] }
@@ -590,23 +622,23 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('voice:keyState', (_e, provider: VoiceProvider) => keyState(provider))
-  ipcMain.handle('voice:setKey', (_e, provider: VoiceProvider, key: string | null) =>
+  ipcMain.handle(IPC.voiceKeyState, (_e, provider: VoiceProvider) => keyState(provider))
+  ipcMain.handle(IPC.voiceSetKey, (_e, provider: VoiceProvider, key: string | null) =>
     setKey(provider, key)
   )
-  ipcMain.handle('voice:transcribe', (_e, req: TranscribeRequest) => transcribe(req))
-  ipcMain.handle('voice:micAccess', async () => {
+  ipcMain.handle(IPC.voiceTranscribe, (_e, req: TranscribeRequest) => transcribe(req))
+  ipcMain.handle(IPC.voiceMicAccess, async () => {
     if (process.platform !== 'darwin') return true
     if (systemPreferences.getMediaAccessStatus('microphone') === 'granted') return true
     return systemPreferences.askForMediaAccess('microphone')
   })
 
-  ipcMain.handle('clipboard:read', () => clipboard.readText())
+  ipcMain.handle(IPC.clipboardRead, () => clipboard.readText())
   // Gated on the sender: this app's core loop is pasting into terminal panes,
   // so a clipboard overwrite from a foreign document becomes a shell command
   // the user runs by hand on the next routine paste. The main-frame check is
   // load-bearing too — an iframe under the trusted origin has the trusted URL.
-  ipcMain.on('clipboard:write', (e, text: string) => {
+  ipcMain.on(IPC.clipboardWrite, (e, text: string) => {
     const frame = e.senderFrame
     if (!frame || frame !== e.sender.mainFrame || !trustedSenderUrl(frame.url, rendererSource)) {
       console.warn(
@@ -617,24 +649,24 @@ function registerIpc(): void {
     clipboard.writeText(text)
   })
 
-  ipcMain.on('window:minimize', () => mainWindow?.minimize())
-  ipcMain.on('window:toggleMaximize', () => {
+  ipcMain.on(IPC.windowMinimize, () => mainWindow?.minimize())
+  ipcMain.on(IPC.windowToggleMaximize, () => {
     if (!mainWindow) return
     if (mainWindow.isMaximized()) mainWindow.unmaximize()
     else mainWindow.maximize()
   })
-  ipcMain.on('window:close', () => mainWindow?.close())
-  ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
+  ipcMain.on(IPC.windowClose, () => mainWindow?.close())
+  ipcMain.handle(IPC.windowIsMaximized, () => mainWindow?.isMaximized() ?? false)
 
   // `ms-settings:` is allowed so the app can send the user to the Windows
   // microphone privacy page when capture is blocked there.
-  ipcMain.on('app:openExternal', (_e, url: string) => {
+  ipcMain.on(IPC.appOpenExternal, (_e, url: string) => {
     if (/^(https?|ms-settings):/.test(url)) shell.openExternal(url)
   })
-  ipcMain.on('app:openPath', (_e, path: string) => shell.openPath(path))
-  ipcMain.on('app:setBadge', (_e, count: number) => setBadge(count))
+  ipcMain.on(IPC.appOpenPath, (_e, path: string) => shell.openPath(path))
+  ipcMain.on(IPC.appSetBadge, (_e, count: number) => setBadge(count))
 
-  ipcMain.handle('app:capture', async (_e, target: string) => {
+  ipcMain.handle(IPC.appCapture, async (_e, target: string) => {
     if (!mainWindow) return null
     const image = await mainWindow.webContents.capturePage()
     const file = resolve(target)
@@ -682,7 +714,7 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow = createWindow()
 
     initUpdater({
-      publish: (state) => send('update:changed', state),
+      publish: (state) => send(IPC.updateChanged, state),
       beforeInstallQuit: () => {
         quittingForUpdate = true
       }

@@ -271,6 +271,50 @@ describe('ShipDialog', () => {
     expect(preview()).not.toContain('&&')
   })
 
+  // cmd expands `%VAR%` inside double quotes, before git ever runs, and a /c
+  // line has no escape for `%` — so a message carrying one would commit the
+  // variable's value (a secret, perhaps) under a preview that showed the name.
+  // The one honest move is refusing to run.
+  it('refuses to run a chain cmd.exe would rewrite behind the preview', async () => {
+    const user = userEvent.setup()
+    useDeck.setState({
+      info: {
+        platform: 'win32',
+        versions: { electron: '', chrome: '', node: '', app: '' },
+        homeDir: 'C:\\Users\\t',
+        defaultShell: 'C:\\Windows\\System32\\cmd.exe',
+        defaultCwd: 'C:\\Users\\t'
+      }
+    })
+    render(<ShipDialog workspaceId="ws_1" pane={shipPane} diff={diff()} onClose={vi.fn()} />)
+    await screen.findByText(/gh pr create/)
+
+    await user.type(screen.getByRole('textbox'), 'fix %USERNAME% handling')
+
+    expect(screen.getByRole('button', { name: 'Run in a pane' })).toHaveProperty('disabled', true)
+    // Said twice, once per pattern the dialog already has: the message field's
+    // hint and the footer where errors go.
+    expect(screen.getAllByText(/remove the % or use PowerShell/).length).toBeGreaterThan(0)
+
+    // Deleting the % is the fix the hint asks for, and it is enough.
+    await user.clear(screen.getByRole('textbox'))
+    await user.type(screen.getByRole('textbox'), 'fix username handling')
+    expect(screen.getByRole('button', { name: 'Run in a pane' })).toHaveProperty('disabled', false)
+    expect(shipped()).toBeUndefined()
+  })
+
+  // The same % is fine in every other shell — the guard is cmd's alone.
+  it('lets a % through when the shell is not cmd.exe', async () => {
+    const user = userEvent.setup()
+    render(<ShipDialog workspaceId="ws_1" pane={shipPane} diff={diff()} onClose={vi.fn()} />)
+    await screen.findByText(/gh pr create/)
+
+    await user.type(screen.getByRole('textbox'), '100% coverage')
+
+    expect(screen.getByRole('button', { name: 'Run in a pane' })).toHaveProperty('disabled', false)
+    expect(preview()).toContain("git commit -m '100% coverage'")
+  })
+
   it('runs nothing when the dialog is closed', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()

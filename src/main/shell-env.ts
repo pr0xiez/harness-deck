@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
+import { runProcess } from './process'
 
 /**
  * A GUI-launched Electron app inherits a bare environment: none of the PATH
@@ -154,19 +154,15 @@ export function shellEnv(): NodeJS.ProcessEnv {
   return cached ?? withUserBins({ ...process.env })
 }
 
-function run(cmd: string, args: string[], timeout: number): Promise<string | null> {
-  return new Promise((resolve) => {
-    const child = execFile(
-      cmd,
-      args,
-      { timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
-      (err, stdout) => {
-        if (stdout && stdout.includes(MARKER)) return resolve(stdout)
-        resolve(err ? null : stdout || null)
-      }
-    )
-    child.on('error', () => resolve(null))
-  })
+/**
+ * A probe that got both markers out has answered, whatever its exit status — a
+ * .zshrc that ends in a failing command fails the whole `-c` line after `env`
+ * has already printed. Anything else that errored is no answer at all.
+ */
+async function run(cmd: string, args: string[], timeout: number): Promise<string | null> {
+  const ran = await runProcess(cmd, args, { timeout, maxBuffer: 4 * 1024 * 1024 })
+  if (ran.stdout.includes(MARKER)) return ran.stdout
+  return ran.error ? null : ran.stdout || null
 }
 
 function parseEnv(output: string): NodeJS.ProcessEnv | null {

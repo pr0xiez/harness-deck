@@ -500,10 +500,11 @@ function registerIpc(): void {
   })
 
   // The trust boundary for git (issues #48/#49): git only ever runs against a
-  // directory the app opened through a main-process path — hydrated startup
-  // state, the directory dialog, a pane actually spawning there, or a worktree
-  // the app created. A renderer naming any other folder gets the same answer
-  // as a folder git knows nothing about.
+  // directory the app itself opened through a main-owned path — see the
+  // header comment in repo-registry.ts for the exact list of sources, and
+  // note what is deliberately NOT one: pty:ensure spawns wherever
+  // PaneSpec.cwd says but never registers it. A renderer naming any other
+  // folder gets the same answer as a folder git knows nothing about.
   ipcMain.handle(IPC.gitInfo, async (_e, dir: string) => {
     if (!isOpenDir(dir)) return null
     const repo = await repoInfo(dir)
@@ -563,11 +564,16 @@ function registerIpc(): void {
   ipcMain.handle(IPC.updateSetChannel, (_e, channel: UpdateChannel) => setChannel(channel))
   ipcMain.handle(IPC.updateInstall, () => install())
 
-  ipcMain.handle(IPC.ptyEnsure, (_e, spec: PaneSpec, cols: number, rows: number) => {
-    // A pane actually spawning in a folder is the app opening it.
-    openDir(spec?.cwd)
-    return ptys!.ensure(spec, cols, rows)
-  })
+  // pty:ensure intentionally does NOT openDir(spec.cwd) — PaneSpec is
+  // renderer-controlled, so registering it here would let the renderer grant
+  // itself git access to any directory on disk (the #49 hole). A pane may
+  // still spawn wherever the renderer asks; it just doesn't widen the git
+  // trust registry by doing so. Registration only happens from main-owned
+  // sources: seedRegistry() at startup, dialog:pickDirectory, and the paths
+  // git:info/git:addWorktree themselves produce.
+  ipcMain.handle(IPC.ptyEnsure, (_e, spec: PaneSpec, cols: number, rows: number) =>
+    ptys!.ensure(spec, cols, rows)
+  )
   ipcMain.on(IPC.ptyWrite, (_e, id: string, data: string) => ptys!.write(id, data))
   ipcMain.on(IPC.ptyResize, (_e, id: string, cols: number, rows: number) =>
     ptys!.resize(id, cols, rows)

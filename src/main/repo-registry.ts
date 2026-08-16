@@ -6,8 +6,13 @@ import { WORKTREE_DIR } from '@shared/worktree'
  * Which directories git may be asked about. The renderer names folders in every
  * git call, and nothing stops a compromised one from naming folders the user
  * never opened — so the main process keeps its own list, fed only by things the
- * main process saw happen: state hydrated at startup, a directory dialog, a
- * pane spawning, a worktree the app created. See issues #48/#49.
+ * main process itself decided, never by a bare renderer-supplied path. That
+ * means: state hydrated at startup, a directory the OS picker returned, a root
+ * git itself resolved from an already-open directory, and a worktree
+ * `git:addWorktree` created. Notably NOT a source: `pty:ensure`'s
+ * `PaneSpec.cwd` — a pane may spawn wherever the renderer asks, but that alone
+ * never widens this registry, or the renderer could grant itself git access to
+ * any folder on disk by spawning a pane in it. See issues #48/#49.
  *
  * Membership is exact. An open repo does not open its parents or its
  * subdirectories — git itself walks up from whatever folder it is handed, so

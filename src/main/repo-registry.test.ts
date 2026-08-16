@@ -47,6 +47,24 @@ describe('openDir and isOpenDir', () => {
     expect(isOpenDir(process.cwd())).toBe(false)
     expect(isOpenDir('')).toBe(false)
   })
+
+  /**
+   * The scenario the review flagged on #49: `pty:ensure` receives a
+   * renderer-controlled `PaneSpec.cwd` and spawns a process there, but must
+   * not treat that as the app "opening" the folder — the fix in
+   * `src/main/index.ts` is that its handler never calls `openDir` on
+   * `spec.cwd` at all. This pins the module-level half of that guarantee:
+   * merely being a directory something would spawn in — as opposed to one
+   * `openDir` was actually called with — is not enough to grant it, no matter
+   * what else is legitimately open at the same time.
+   */
+  it('a directory that only ever appears as a pane cwd stays refused, even once other directories are legitimately open', () => {
+    openDir('/home/dev/my-open-repo')
+
+    // Stands in for `pty:ensure({ cwd: '/home/dev/other-client-repo' })`: a
+    // pane may spawn there, but nothing here was ever told to open it.
+    expect(isOpenDir('/home/dev/other-client-repo')).toBe(false)
+  })
 })
 
 describe('isAppWorktree', () => {

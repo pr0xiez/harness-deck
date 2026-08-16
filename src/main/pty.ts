@@ -2,11 +2,13 @@ import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as nodePty from '@lydell/node-pty'
 import type { IPty } from '@lydell/node-pty'
+import { IPC, type IpcChannel } from '@shared/ipc'
 import { commandName } from '@shared/remote'
+import { cmdExpansionHazard, quoteFor } from '@shared/shell'
 import type { EnsureResult, PaneSpec, PaneStatus } from '@shared/types'
-import { shellCommandLine } from './profiles'
+import { shellCommandLine, shellFlavour, type ShellFlavour } from './profiles'
 import type { ScrollbackStore } from './scrollback'
-import { shellEnv } from './shell-env'
+import { defaultShell, shellEnv } from './shell-env'
 
 /** How much output we keep per pane so a reloaded window can be repainted. */
 const REPLAY_LIMIT = 512 * 1024
@@ -44,7 +46,7 @@ interface Session {
   persistTimer: NodeJS.Timeout | null
 }
 
-type Sender = (channel: string, payload: unknown) => void
+type Sender = (channel: IpcChannel, payload: unknown) => void
 
 /** Injectable so tests can drive a session's lifecycle without a real process. */
 export type Spawn = typeof nodePty.spawn
@@ -113,7 +115,6 @@ export class PtyManager {
     this.sessions.set(spec.id, session)
     this.seed(session)
 
-    const { command, args } = resolveCommand(spec)
     const cwd = resolveCwd(spec.cwd)
     const env = buildEnv(spec, cwd)
 
@@ -122,6 +123,12 @@ export class PtyManager {
     }
 
     try {
+      // Inside the try on purpose: composing the command line can refuse —
+      // `quoteArg` throws rather than build a cmd.exe line that would diverge
+      // from the pane's spec — and a refusal must land the same way a bad
+      // path does: an exited pane with the reason on screen, never a throw
+      // across IPC.
+      const { command, args } = resolveCommand(spec)
       const proc = this.spawn(command, args, {
         name: 'xterm-256color',
         cols: session.cols,
@@ -147,7 +154,7 @@ export class PtyManager {
           session,
           dim(`\r\n[process exited${signal ? ` on signal ${signal}` : ` with code ${exitCode}`}]\r\n`)
         )
-        this.send('pty:exit', { id: session.id, exitCode, signal })
+        this.send(IPC.ptyExit, { id: session.id, exitCode, signal })
       })
 
       return {
@@ -162,7 +169,7 @@ export class PtyManager {
       const message = err instanceof Error ? err.message : String(err)
       session.status = 'exited'
       session.exitCode = -1
-      this.appendLocal(session, red(`Failed to start: ${command}\r\n${message}\r\n`))
+      this.appendLocal(session, red(`Failed to start: ${spec.command}\r\n${message}\r\n`))
       return {
         created: true,
         status: 'exited',
@@ -258,6 +265,25 @@ export class PtyManager {
     return this.sessions.get(id)?.chunks.join('') ?? ''
   }
 
+  /**
+   * The last `lines` non-empty lines the pane produced, stripped of escapes.
+   *
+   * The cutting happens here rather than in the renderer because the buffer is
+   * half a megabyte and the answer is three lines of it: shipping the rest
+   * across IPC so the other side could throw it away would cost a thousand
+   * times what the question is worth. Blank lines are dropped before the count,
+   * so a TUI that pads its frame still yields three lines that say something.
+   */
+  tail(id: string, lines: number): string[] {
+    const session = this.sessions.get(id)
+    if (!session || lines <= 0) return []
+    return stripAnsi(session.chunks.join(''))
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .slice(-lines)
+  }
+
   /** Ids of every live process, used to warn before quitting. */
   runningIds(): string[] {
     return [...this.sessions.values()].filter((s) => s.status === 'running').map((s) => s.id)
@@ -290,7 +316,7 @@ export class PtyManager {
     session.lastDataAt = Date.now()
     if (session.quiet) {
       session.quiet = false
-      this.send('pty:quiet', { id: session.id, quiet: false })
+      this.send(IPC.ptyQuiet, { id: session.id, quiet: false })
     }
     this.armQuiet(session)
     this.armPersist(session)
@@ -312,7 +338,7 @@ export class PtyManager {
         session.quietTimer = null
         if (!this.isCurrent(session) || session.status !== 'running' || session.quiet) return
         session.quiet = true
-        this.send('pty:quiet', { id: session.id, quiet: true })
+        this.send(IPC.ptyQuiet, { id: session.id, quiet: true })
       },
       Math.max(MIN_QUIET_MS, this.quietMs())
     )
@@ -360,14 +386,14 @@ export class PtyManager {
     if (!session.pending.length || !this.isCurrent(session)) return
     const data = session.pending.join('')
     session.pending = []
-    this.send('pty:data', { id: session.id, data })
+    this.send(IPC.ptyData, { id: session.id, data })
   }
 
   /** Writes a message that came from us (not the child) into the pane. */
   private appendLocal(session: Session, text: string): void {
     if (!this.isCurrent(session)) return
     this.record(session, text)
-    this.send('pty:data', { id: session.id, data: text })
+    this.send(IPC.ptyData, { id: session.id, data: text })
   }
 
   private record(session: Session, data: string): void {
@@ -383,12 +409,103 @@ export class PtyManager {
   }
 }
 
+/** Launchers whose argv was built to carry the process to another machine. */
+const ELSEWHERE = ['wsl', 'ssh', 'docker']
+
 function resolveCommand(spec: PaneSpec): { command: string; args: string[] } {
-  if (spec.viaShell) {
-    const cmdline = [spec.command, ...spec.args].join(' ').trim()
-    return shellCommandLine(cmdline)
+  const setup = spec.setup?.trim() ?? ''
+  // A remote pane's argv is assembled upstream (profiles.ts, shared/remote.ts)
+  // and arrives here as `ssh …` — this machine's ssh. A setup line in front of
+  // it would install onto this machine rather than the one the agent is on, so
+  // wave A leaves those panes alone: a worktree pane is by construction a
+  // folder on this machine that this app created. The match is structural, not
+  // general: it holds because those launchers' argv is built upstream with
+  // `command` set to exactly `ssh`/`docker`/`…\wsl.exe`. A `viaShell` pane
+  // carries its whole line in `command`, so a hand-typed `ssh box claude`
+  // sails past — PaneDialog hiding "Run first" on non-local panes is what
+  // keeps that combination out of reach.
+  const here = !ELSEWHERE.includes(commandName(spec.command))
+
+  if (setup && here) {
+    const shell = defaultShell()
+    const flavour = shellFlavour(shell)
+    // A pane spawned straight off an absolute path has no shell to run the `&&`
+    // in, so a setup command promotes it to the shell path — and its argv is
+    // quoted back into a command line on the way. A `viaShell` pane's line is
+    // what the user typed, quotes and all, and re-quoting it would hand the
+    // whole thing over as one filename.
+    const promoted = !spec.viaShell
+    const cmdline = promoted ? quotedLine(spec, flavour) : plainLine(spec)
+    return shellCommandLine(withSetup(setup, cmdline, flavour, promoted), { exits: true, shell })
   }
+  if (spec.viaShell) return shellCommandLine(plainLine(spec))
   return { command: spec.command, args: spec.args }
+}
+
+const plainLine = (spec: PaneSpec): string => [spec.command, ...spec.args].join(' ').trim()
+
+function quotedLine(spec: PaneSpec, flavour: ShellFlavour): string {
+  const line = [spec.command, ...spec.args].map((part) => quoteArg(part, flavour)).join(' ')
+  // PowerShell reads a quoted first word as a string to print rather than a
+  // program to run; the call operator is what makes it a command again.
+  return flavour === 'powershell' ? `& ${line}` : line
+}
+
+/**
+ * One argv entry back into a word on the shell's command line — the shared
+ * `quoteFor`, plus the one refusal quoting cannot make for us: cmd.exe expands
+ * `%VAR%` during tokenization, quotes or no quotes, and a `/c` line has no
+ * faithful escape for `%` (see `cmdExpansionHazard`). Spawning anyway would
+ * hand the agent an argv that quietly differs from the pane's spec, so this
+ * throws instead — `ensure()` catches it and the pane opens exited with the
+ * reason on screen, the same shape a bad path lands in.
+ */
+function quoteArg(value: string, flavour: ShellFlavour): string {
+  if (flavour === 'cmd' && cmdExpansionHazard(value)) {
+    throw new Error(
+      `cmd.exe would expand the %...% in ${JSON.stringify(value)} before the program saw it, ` +
+        'and a /c command line has no way to escape it. Remove the % or use PowerShell.'
+    )
+  }
+  return quoteFor(value, flavour)
+}
+
+/**
+ * `<setup> && <command>` in each shell's own words. The `&&` is the design: a
+ * setup that fails leaves an exited pane with the failure still on screen,
+ * never a silent fall-through to an agent loose in a half-built tree.
+ *
+ * `promoted` marks a cmdline that is a single fully-quoted argv — a pane that
+ * had no shell until the setup put one there. That is the only shape `exec`
+ * may bind to: a `viaShell` line is the user's own, `&&`s and `;`s included,
+ * and `exec` binds to the first simple command only — everything after it
+ * would silently never run.
+ */
+function withSetup(
+  setup: string,
+  cmdline: string,
+  flavour: ShellFlavour,
+  promoted: boolean
+): string {
+  switch (flavour) {
+    // cmd.exe has no `exec`; the shell stays as the parent either way.
+    case 'cmd':
+      return `${setup} && ${cmdline}`
+    // PowerShell before 7 has no `&&` at all. $LASTEXITCODE starts the session
+    // as $null and only native executables ever set it, so it is primed to 0
+    // and read alongside $?: a setup ending in a cmdlet (Copy-Item …) must
+    // still start the agent, and a failing one — cmdlet or native — must still
+    // stop with the failure as the pane's exit code. $? is captured before the
+    // first `if` can overwrite it, and the exit code is consulted first: a
+    // failed native command sets both, and `exit 1` would throw the real code
+    // away. (Verified against powershell.exe 5.1 — see PR #23.)
+    case 'powershell':
+      return `$LASTEXITCODE = 0; ${setup}; $ok = $?; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if (-not $ok) { exit 1 }; ${cmdline}`
+    // `exec` so the process on the end of the pane is the agent and not a shell
+    // holding it — the exit code, a SIGHUP and a restart all want the real one.
+    default:
+      return promoted ? `${setup} && exec ${cmdline}` : `${setup} && ${cmdline}`
+  }
 }
 
 function resolveCwd(cwd: string): string {

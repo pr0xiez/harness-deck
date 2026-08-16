@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { PaneStatus, PersistedState } from '@shared/types'
+import type { PaneStatus, PersistedState, PtyQuietEvent } from '@shared/types'
 import { harness } from './test/harness'
 import {
   activeWorkspace,
   DEFAULT_SETTINGS,
+  isActionable,
   isLive,
+  onQuietPane,
   serialize,
+  startAttention,
   useDeck,
   type DeckWorkspace,
   type PaneView
@@ -179,6 +182,30 @@ describe('serialize', () => {
    * that owns it will ever offer to remove it. Forget it on quit and the
    * checkout is orphaned on disk with nothing left that knows it is ours.
    */
+  /**
+   * The ship pane runs a commit-and-push chain the user approved once. A
+   * persisted copy would autostart on relaunch and run it again — against
+   * whatever the tree holds by then, under the old message.
+   */
+  it('leaves a transient pane out entirely, and repoints the active id past it', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace(
+          'one',
+          [
+            pane('a', 'waiting'),
+            pane('ship', 'running', { command: 'git add -A', transient: true })
+          ],
+          { activePaneId: 'ship' }
+        )
+      ]
+    })
+
+    const ws = saved().workspaces[0]
+    expect(ws.panes.map((p) => p.id)).toEqual(['a'])
+    expect(ws.activePaneId).toBe('a')
+  })
+
   it('keeps the worktree a pane owns even while stripping the rest of its state', () => {
     useDeck.setState({
       workspaces: [
@@ -208,9 +235,16 @@ describe('serialize', () => {
             worktree: '/repos/.harness-deck/deck/hd/reviewer',
             autoRestart: true,
             readOnly: true,
+            attentionMuted: true,
             status: 'waiting',
             exitCode: 0,
-            epoch: 7
+            epoch: 7,
+            // Transient attention state, which must not survive the restart the
+            // rest of this pane is about to make.
+            waitingSince: 1_700_000_000_000,
+            acknowledged: true,
+            snooze: 'quiet',
+            woke: true
           }
         ])
       ]
@@ -230,6 +264,7 @@ describe('serialize', () => {
       worktree: '/repos/.harness-deck/deck/hd/reviewer',
       autoRestart: true,
       readOnly: true,
+      attentionMuted: true,
       status: 'idle',
       exitCode: null,
       epoch: 0
@@ -684,6 +719,164 @@ describe('closePane', () => {
   })
 })
 
+describe('requestClosePane', () => {
+  const tree = '/repos/.harness-deck/deck/hd/agent-a'
+
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [workspace('one', [pane('a', 'exited', { worktree: tree })])],
+      activeWorkspaceId: 'one',
+      notice: null
+    })
+    harness.git.info.mockResolvedValue({
+      root: tree,
+      branch: 'hd/agent-a',
+      dirty: 0,
+      worktreeOf: '/repos/deck'
+    })
+    harness.confirm.mockResolvedValue(true)
+  })
+
+  /**
+   * The pane is already gone by the time git answers, so a refusal the user
+   * agreed to has nowhere visible left to land except a notice.
+   */
+  it('raises a notice when the worktree the user agreed to delete survives', async () => {
+    harness.git.removeWorktree.mockResolvedValue({ ok: false, error: 'worktree is locked' })
+
+    await deck().requestClosePane('one', 'a')
+
+    expect(paneIds('one')).toEqual([])
+    expect(deck().notice?.body).toContain(tree)
+    expect(deck().notice?.body).toContain('worktree is locked')
+  })
+
+  it('says nothing when the removal goes through', async () => {
+    harness.git.removeWorktree.mockResolvedValue({ ok: true })
+
+    await deck().requestClosePane('one', 'a')
+
+    expect(harness.git.removeWorktree).toHaveBeenCalledWith(tree)
+    expect(deck().notice).toBeNull()
+  })
+})
+
+/**
+ * Pane events land many times a second, so the workspaces that do not hold the
+ * pane must come through with their identity intact — a fresh object per
+ * workspace here is an app-wide re-render per event (issue #57).
+ */
+describe('updatePane', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'idle'), pane('b', 'idle')]),
+        workspace('two', [pane('c', 'idle')])
+      ]
+    })
+  })
+
+  it('patches the pane it was aimed at and no other', () => {
+    deck().updatePane('c', { status: 'running' })
+
+    expect(deck().workspaces[1].panes[0]).toMatchObject({ id: 'c', status: 'running' })
+    expect(deck().workspaces[0].panes.map((p) => p.status)).toEqual(['idle', 'idle'])
+  })
+
+  it('leaves the workspaces that do not hold the pane referentially untouched', () => {
+    const [, two] = deck().workspaces
+    deck().updatePane('a', { status: 'running' })
+
+    expect(deck().workspaces[1]).toBe(two)
+  })
+
+  it('does nothing at all for a pane no workspace holds', () => {
+    const before = deck().workspaces
+    deck().updatePane('closed', { status: 'running' })
+
+    expect(deck().workspaces).toBe(before)
+  })
+})
+
+describe('setPaneStatus', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'running')]),
+        workspace('two', [pane('b', 'idle')])
+      ]
+    })
+  })
+
+  it('moves the pane to its new status, exit code and all', () => {
+    deck().setPaneStatus('a', 'exited', 137)
+
+    expect(deck().workspaces[0].panes[0]).toMatchObject({ status: 'exited', exitCode: 137 })
+  })
+
+  it('leaves the workspace next door referentially untouched', () => {
+    const [, two] = deck().workspaces
+    deck().setPaneStatus('a', 'waiting')
+
+    expect(deck().workspaces[1]).toBe(two)
+  })
+
+  it('does nothing at all for a pane no workspace holds', () => {
+    const before = deck().workspaces
+    deck().setPaneStatus('closed', 'running')
+
+    expect(deck().workspaces).toBe(before)
+  })
+})
+
+describe('restartPane', () => {
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [
+          pane('a', 'exited', {
+            exitCode: 1,
+            epoch: 2,
+            activity: true,
+            bell: true,
+            crashRestarts: 3
+          })
+        ]),
+        workspace('two', [pane('b', 'idle')])
+      ]
+    })
+  })
+
+  it('disposes the old process and hands the pane a fresh epoch', () => {
+    deck().restartPane('a')
+
+    expect(harness.pty.dispose).toHaveBeenCalledWith('a')
+    expect(deck().workspaces[0].panes[0]).toMatchObject({
+      epoch: 3,
+      status: 'idle',
+      exitCode: null,
+      autostart: true,
+      activity: false,
+      bell: false,
+      crashRestarts: 0
+    })
+  })
+
+  it('leaves the workspace next door referentially untouched', () => {
+    const [, two] = deck().workspaces
+    deck().restartPane('a')
+
+    expect(deck().workspaces[1]).toBe(two)
+  })
+
+  it('does nothing to the deck for a pane no workspace holds', () => {
+    const before = deck().workspaces
+    deck().restartPane('closed')
+
+    expect(deck().workspaces).toBe(before)
+  })
+})
+
 describe('removeWorkspace', () => {
   beforeEach(() => {
     useDeck.setState({
@@ -724,16 +917,31 @@ describe('removeWorkspace', () => {
 
 /**
  * The point of the shortcut is to work through everything that is waiting, so
- * the ordering is the feature: landing on the same pane twice would leave the
- * other agents sitting at their prompts unnoticed.
+ * the ordering is the feature twice over: oldest first, because the agent that
+ * has been at its prompt longest is the one keeping you waiting — and never the
+ * pane already in front, because landing on the same one twice would leave the
+ * others sitting at their prompts unnoticed.
  */
 describe('focusNextWaiting', () => {
-  it('starts after the focused pane, so pressing it again walks the queue', () => {
+  /** Waiting since `t` seconds ago. */
+  const since = (id: string, seconds: number, over: Partial<PaneView> = {}): PaneView =>
+    pane(id, 'waiting', { waitingSince: Date.now() - seconds * 1000, ...over })
+
+  it('goes to whichever pane has been waiting longest, wherever it sits in the deck', () => {
     useDeck.setState({
       workspaces: [
-        workspace('one', [pane('a', 'waiting'), pane('b', 'waiting'), pane('c', 'waiting')], {
-          activePaneId: 'a'
-        })
+        workspace('one', [since('a', 10), since('b', 90), since('c', 40)], { activePaneId: null })
+      ],
+      activeWorkspaceId: 'one'
+    })
+
+    expect(deck().focusNextWaiting()).toBe('b')
+  })
+
+  it('starts after the pane in front, so pressing it again walks the queue', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [since('a', 90), since('b', 60), since('c', 30)], { activePaneId: 'a' })
       ],
       activeWorkspaceId: 'one'
     })
@@ -746,7 +954,7 @@ describe('focusNextWaiting', () => {
   it('wraps round to a waiting pane sitting before the focused one', () => {
     useDeck.setState({
       workspaces: [
-        workspace('one', [pane('a', 'waiting'), pane('b', 'idle'), pane('c', 'idle')], {
+        workspace('one', [since('a', 90), pane('b', 'idle'), pane('c', 'idle')], {
           activePaneId: 'c'
         })
       ],
@@ -759,7 +967,7 @@ describe('focusNextWaiting', () => {
   it('passes over panes that are still producing output', () => {
     useDeck.setState({
       workspaces: [
-        workspace('one', [pane('a', 'idle'), pane('b', 'running'), pane('c', 'waiting')], {
+        workspace('one', [pane('a', 'idle'), pane('b', 'running'), since('c', 5)], {
           activePaneId: 'a'
         })
       ],
@@ -769,9 +977,42 @@ describe('focusNextWaiting', () => {
     expect(deck().focusNextWaiting()).toBe('c')
   })
 
+  /** The three verbs, each one taking a pane out of the walk. */
+  it('passes over the panes you muted, snoozed or already looked at', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [
+          since('muted', 90, { attentionMuted: true }),
+          since('snoozed', 80, { snooze: 'quiet' }),
+          since('later', 70, { snooze: Date.now() + 60_000 }),
+          since('seen', 60, { acknowledged: true }),
+          since('asking', 10)
+        ]),
+        workspace('two')
+      ],
+      activeWorkspaceId: 'two'
+    })
+
+    expect(deck().focusNextWaiting()).toBe('asking')
+  })
+
+  /** An hour is a snooze, not a life sentence. */
+  it('offers a pane again once its snooze has run out', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('here', 'idle'), since('a', 90, { snooze: Date.now() - 1000 })], {
+          activePaneId: 'here'
+        })
+      ],
+      activeWorkspaceId: 'one'
+    })
+
+    expect(deck().focusNextWaiting()).toBe('a')
+  })
+
   it('crosses into another workspace, bringing it to the front and mounting it', () => {
     useDeck.setState({
-      workspaces: [workspace('one', [pane('a', 'idle')]), workspace('two', [pane('b', 'waiting')])],
+      workspaces: [workspace('one', [pane('a', 'idle')]), workspace('two', [since('b', 20)])],
       activeWorkspaceId: 'one',
       mounted: ['one']
     })
@@ -790,6 +1031,287 @@ describe('focusNextWaiting', () => {
 
     expect(deck().focusNextWaiting()).toBeNull()
     expect(front()?.activePaneId).toBe('a')
+  })
+
+  /** The acceptance criterion: everything snoozed is a no-op, not an error. */
+  it('says so when every waiting pane has been put off', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace(
+          'one',
+          [since('a', 90, { snooze: 'quiet' }), since('b', 60, { attentionMuted: true })],
+          // Nothing in front, so the two panes are skipped for what was done to
+          // them rather than for being where you already are.
+          { activePaneId: null }
+        )
+      ],
+      activeWorkspaceId: 'one'
+    })
+
+    expect(deck().focusNextWaiting()).toBeNull()
+    expect(front()?.activePaneId).toBeNull()
+  })
+})
+
+/** Every aggregate in the app runs on this one question. */
+describe('isActionable', () => {
+  it('is a pane that is waiting for you and has not been answered', () => {
+    expect(isActionable(pane('a', 'waiting'))).toBe(true)
+    expect(isActionable(pane('a', 'running'))).toBe(false)
+    expect(isActionable(pane('a', 'exited'))).toBe(false)
+  })
+
+  /**
+   * The build pane that goes quiet twenty times an hour. It keeps its own amber
+   * dot — the local truth is never worth lying about — but it stops speaking to
+   * the badge, the sidebar, the notifications and the queue.
+   */
+  it('never counts a muted pane, however loudly it is waiting', () => {
+    expect(isActionable(pane('a', 'waiting', { attentionMuted: true }))).toBe(false)
+  })
+
+  it('does not count a pane you have already looked at', () => {
+    expect(isActionable(pane('a', 'waiting', { acknowledged: true }))).toBe(false)
+  })
+
+  it('does not count a snoozed pane until the snooze has run out', () => {
+    const now = Date.now()
+    expect(isActionable(pane('a', 'waiting', { snooze: 'quiet' }), now)).toBe(false)
+    expect(isActionable(pane('a', 'waiting', { snooze: now + 60_000 }), now)).toBe(false)
+    expect(isActionable(pane('a', 'waiting', { snooze: now - 1 }), now)).toBe(true)
+  })
+})
+
+/**
+ * The single subscription to the bridge's quiet event: the status transition,
+ * the once-per-stop notification and the attention state all hang off it, so
+ * these drive it the way the main process would.
+ */
+describe('startAttention', () => {
+  let notify: ReturnType<typeof vi.fn>
+  let focus: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    // jsdom has no Notification constructor and reports the window as
+    // unfocused, so both halves of "should this notify?" have to be said out
+    // loud here. The default is a window you are looking at, which is the case
+    // where nothing is sent.
+    notify = vi.fn()
+    vi.stubGlobal('Notification', notify)
+    focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  })
+
+  afterEach(() => {
+    focus.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  /** Subscribes, and hands back the callback the bridge was handed. */
+  const fire = (event: PtyQuietEvent): void => {
+    startAttention()
+    const handler = harness.pty.onQuiet.mock.calls.at(-1)?.[0] as (e: PtyQuietEvent) => void
+    handler(event)
+  }
+
+  const paneAt = (id: string): PaneView =>
+    deck()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === id)!
+
+  const deckWith = (...panes: PaneView[]): void => {
+    useDeck.setState({ workspaces: [workspace('one', panes)], activeWorkspaceId: 'one' })
+  }
+
+  it('turns a pane that stopped producing output into one waiting for you, and dates it', () => {
+    deckWith(pane('a', 'running'))
+    fire({ id: 'a', quiet: true })
+
+    expect(paneAt('a').status).toBe('waiting')
+    expect(paneAt('a').waitingSince).toBeGreaterThan(0)
+  })
+
+  it('puts a pane that spoke again back to running', () => {
+    deckWith(pane('a', 'waiting', { waitingSince: 1 }))
+    fire({ id: 'a', quiet: false })
+
+    expect(paneAt('a').status).toBe('running')
+  })
+
+  /** A dead pane is not waiting for you, whatever the clock in main thinks. */
+  it('ignores an event for a pane that has since exited', () => {
+    deckWith(pane('a', 'exited', { exitCode: 1 }))
+    fire({ id: 'a', quiet: true })
+
+    expect(paneAt('a').status).toBe('exited')
+  })
+
+  /** Same guard, doing its other job: one notification per stop, not per event. */
+  it('does not re-date a pane that was already waiting', () => {
+    deckWith(pane('a', 'waiting', { waitingSince: 1_000 }))
+    fire({ id: 'a', quiet: true })
+
+    expect(paneAt('a').waitingSince).toBe(1_000)
+  })
+
+  it('clears an acknowledgement when the pane stops again — a fresh stop is fresh news', () => {
+    deckWith(pane('a', 'waiting', { waitingSince: 1_000, acknowledged: true }))
+    // It said something, then stopped again.
+    fire({ id: 'a', quiet: false })
+    fire({ id: 'a', quiet: true })
+
+    expect(paneAt('a').acknowledged).toBe(false)
+    expect(isActionable(paneAt('a'))).toBe(true)
+  })
+
+  it('lifts an until-next-quiet snooze at the next quiet, and leaves an hour-long one alone', () => {
+    const hour = Date.now() + 3_600_000
+    deckWith(
+      pane('a', 'running', { snooze: 'quiet' }),
+      pane('b', 'running', { snooze: hour })
+    )
+    fire({ id: 'a', quiet: true })
+    fire({ id: 'b', quiet: true })
+
+    expect(paneAt('a').snooze).toBeUndefined()
+    expect(paneAt('b').snooze).toBe(hour)
+  })
+
+  describe('the notification', () => {
+    // A window you are looking at has already said it, on screen.
+    beforeEach(() => {
+      focus.mockReturnValue(false)
+    })
+
+    it('tells you once, for a pane that is only waiting', () => {
+      deckWith(pane('a', 'running', { name: 'Reviewer' }))
+      fire({ id: 'a', quiet: true })
+      fire({ id: 'a', quiet: true })
+
+      expect(notify).toHaveBeenCalledTimes(1)
+      expect(notify.mock.calls[0][1]).toEqual({ body: 'Reviewer is waiting for you' })
+    })
+
+    it('says nothing about a muted pane', () => {
+      deckWith(pane('a', 'running', { attentionMuted: true }))
+      fire({ id: 'a', quiet: true })
+
+      expect(notify).not.toHaveBeenCalled()
+    })
+
+    /** "Not now" has to mean not now, or the snooze is decoration. */
+    it('says nothing about a snoozed pane', () => {
+      deckWith(pane('a', 'running', { snooze: Date.now() + 3_600_000 }))
+      fire({ id: 'a', quiet: true })
+
+      expect(notify).not.toHaveBeenCalled()
+    })
+
+    it('says nothing when the window is in front of you', () => {
+      focus.mockReturnValue(true)
+      deckWith(pane('a', 'running'))
+      fire({ id: 'a', quiet: true })
+
+      expect(notify).not.toHaveBeenCalled()
+    })
+
+    it('says nothing when you turned notifications off', () => {
+      useDeck.setState({
+        settings: { ...DEFAULT_SETTINGS, attention: { ...DEFAULT_SETTINGS.attention, notify: false } }
+      })
+      deckWith(pane('a', 'running'))
+      fire({ id: 'a', quiet: true })
+
+      expect(notify).not.toHaveBeenCalled()
+    })
+  })
+
+  /** What the toolbar's git refresh — and, later, HD-20's checkpoints — ride on. */
+  it('hands the moment on to whoever else is listening', () => {
+    const heard: Array<{ id: string; quiet: boolean }> = []
+    const off = onQuietPane(({ id, quiet }) => heard.push({ id, quiet }))
+    deckWith(pane('a', 'running'))
+    fire({ id: 'a', quiet: true })
+    fire({ id: 'a', quiet: false })
+    off()
+    fire({ id: 'a', quiet: true })
+
+    expect(heard).toEqual([
+      { id: 'a', quiet: true },
+      { id: 'a', quiet: false }
+    ])
+  })
+})
+
+/**
+ * The bell is the one signal a snooze does not outrank: Claude Code rings it at
+ * a permission prompt, which is precisely the thing you did not mean to put off
+ * for an hour.
+ */
+describe('ringBell', () => {
+  const paneAt = (id: string): PaneView =>
+    deck()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === id)!
+
+  it('wakes a snoozed pane, and says the bell is why', () => {
+    useDeck.setState({
+      workspaces: [
+        workspace('one', [pane('a', 'waiting', { snooze: Date.now() + 3_600_000 })])
+      ],
+      activeWorkspaceId: 'one'
+    })
+    deck().ringBell('a')
+
+    expect(paneAt('a').snooze).toBeUndefined()
+    expect(paneAt('a').woke).toBe(true)
+    expect(paneAt('a').bell).toBe(true)
+    expect(isActionable(paneAt('a'))).toBe(true)
+  })
+
+  it('does not flag a pane nobody had put off', () => {
+    useDeck.setState({
+      workspaces: [workspace('one', [pane('a', 'waiting')])],
+      activeWorkspaceId: 'one'
+    })
+    deck().ringBell('a')
+
+    expect(paneAt('a').bell).toBe(true)
+    expect(paneAt('a').woke).toBeUndefined()
+  })
+
+  /** Snoozing again is how you disagree with it. */
+  it('is undone by the next snooze', () => {
+    useDeck.setState({
+      workspaces: [workspace('one', [pane('a', 'waiting', { woke: true })])],
+      activeWorkspaceId: 'one'
+    })
+    deck().cycleSnooze('a')
+
+    expect(paneAt('a').snooze).toBe('quiet')
+    expect(paneAt('a').woke).toBe(false)
+  })
+})
+
+/** Off → until next quiet → for an hour → off, and round again. */
+describe('cycleSnooze', () => {
+  const paneAt = (): PaneView => deck().workspaces[0].panes[0]
+
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [workspace('one', [pane('a', 'waiting')])],
+      activeWorkspaceId: 'one'
+    })
+  })
+
+  it('walks the three states and comes back to none', () => {
+    deck().cycleSnooze('a')
+    expect(paneAt().snooze).toBe('quiet')
+
+    deck().cycleSnooze('a')
+    expect(paneAt().snooze).toBeGreaterThan(Date.now())
+
+    deck().cycleSnooze('a')
+    expect(paneAt().snooze).toBeUndefined()
   })
 })
 

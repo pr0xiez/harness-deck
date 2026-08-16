@@ -1,18 +1,20 @@
 import { useEffect } from 'react'
-import { useDeck, type DeckWorkspace } from './store'
+import { isActionable, useDeck, type DeckWorkspace } from './store'
 import { digitOf, matchShortcut, type ShortcutId } from './shortcuts'
 import { getTerminal, refitAll } from './terminals'
 import { TitleBar } from './components/TitleBar'
 import { Sidebar } from './components/Sidebar'
 import { Toolbar } from './components/Toolbar'
 import { PaneArea } from './components/PaneArea'
-import { BroadcastBar } from './components/BroadcastBar'
+import { BroadcastBar, fencedBlock } from './components/BroadcastBar'
 import { DeckSearch } from './components/DeckSearch'
 import { CommandPalette } from './components/CommandPalette'
+import { WaitingQueue } from './components/WaitingQueue'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
 import { UpdateToast } from './components/UpdateToast'
 import { SaveErrorToast } from './components/SaveErrorToast'
+import { NoticeToast } from './components/NoticeToast'
 import { VoiceHud } from './components/VoiceHud'
 import { Icon } from './components/Icon'
 import { useVoice } from './voice'
@@ -32,10 +34,7 @@ export function App(): React.JSX.Element {
   const addWorkspace = useDeck((s) => s.addWorkspace)
   const badgeEnabled = useDeck((s) => s.settings.attention.badge)
   const waitingCount = useDeck((s) =>
-    s.workspaces.reduce(
-      (total, ws) => total + ws.panes.filter((p) => p.status === 'waiting').length,
-      0
-    )
+    s.workspaces.reduce((total, ws) => total + ws.panes.filter((p) => isActionable(p)).length, 0)
   )
 
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
@@ -63,26 +62,9 @@ export function App(): React.JSX.Element {
       useDeck.getState().setPaneStatus(id, 'exited', exitCode)
     })
 
-    // Output *stopping* is the signal worth having: the agent has hit a prompt,
-    // an approval gate, or finished. The main process owns the clock; all that
-    // is left here is turning it into a status the UI can route on.
-    const offQuiet = api.pty.onQuiet(({ id, quiet }) => {
-      const state = useDeck.getState()
-      const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === id)
-      // An exit is the newer truth — a dead pane is not waiting for you — and
-      // the guard doubles as the once-per-transition rule for the notification.
-      if (!pane || pane.status !== (quiet ? 'running' : 'waiting')) return
-      state.setPaneStatus(id, quiet ? 'waiting' : 'running')
-      if (!quiet || !state.settings.attention.notify || document.hasFocus()) return
-      new Notification('Harness Deck', {
-        body: `${pane.name || pane.processTitle || pane.command} is waiting for you`
-      })
-    })
-
     return () => {
       offData()
       offExit()
-      offQuiet()
     }
   }, [])
 
@@ -158,6 +140,17 @@ export function App(): React.JSX.Element {
         take()
         state.setUi({ broadcast: !state.ui.broadcast })
       },
+      // The shortest path from "the error is on screen" to "the agents have
+      // it": what xterm hands back is already plain text, so all that is left
+      // is fencing it and opening the bar over whatever you were looking at.
+      'send-selection': ({ state, paneId, take }) => {
+        take()
+        const selection = paneId ? getTerminal(paneId)?.term.getSelection() ?? '' : ''
+        // A drag across empty terminal is not a selection — it must not open
+        // the bar on an empty fence.
+        if (!selection.trim()) return
+        state.setUi({ broadcast: true, pendingInsert: fencedBlock(selection) })
+      },
       'toggle-dictation': ({ take }) => {
         take()
         useVoice.getState().toggle()
@@ -200,6 +193,10 @@ export function App(): React.JSX.Element {
         // you check whether anything is waiting at all.
         const next = state.focusNextWaiting()
         if (next) getTerminal(next)?.term.focus()
+      },
+      'toggle-waiting-queue': ({ state, take }) => {
+        take()
+        state.setUi({ waitingQueue: !state.ui.waitingQueue })
       },
       'copy-selection': ({ paneId, take }) => {
         take()
@@ -268,6 +265,17 @@ export function App(): React.JSX.Element {
           take()
           state.setActivePane(workspace.id, pane.id)
           getTerminal(pane.id)?.term.focus()
+        }
+      },
+      // Unlike the other digit shortcuts this one is not idempotent — every
+      // firing opens a pane with a real process in it — so key autorepeat must
+      // not count as pressing it again.
+      'run-action-by-digit': ({ event, state, workspace, take }) => {
+        if (!workspace || event.repeat) return
+        const action = workspace.actions?.[Number(digitOf(event)) - 1]
+        if (action) {
+          take()
+          state.runWorkspaceAction(workspace.id, action.id)
         }
       }
     }
@@ -348,8 +356,12 @@ export function App(): React.JSX.Element {
 
       <UpdateToast />
       <SaveErrorToast />
+      <NoticeToast />
       <VoiceHud />
 
+      {/* Outside the deck: it lists panes from every workspace, so it cannot
+          belong to the one on screen. */}
+      {ui.waitingQueue ? <WaitingQueue /> : null}
       {ui.palette ? <CommandPalette /> : null}
       {ui.settings ? <SettingsDialog /> : null}
       {ui.help ? <HelpDialog /> : null}

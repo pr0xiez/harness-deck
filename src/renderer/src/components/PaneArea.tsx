@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { paneLabel } from '../paneLabel'
 import { useDeck, type DeckWorkspace } from '../store'
 import { TerminalPane } from './TerminalPane'
 import { ProfileMenu } from './ProfileMenu'
 import { PaneDialog } from './PaneDialog'
+import { ShipDialog } from './ShipDialog'
 import { Icon } from './Icon'
 
 interface Props {
@@ -21,6 +23,16 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
   const dialogFor = useDeck((s) =>
     workspace.panes.some((p) => p.id === s.ui.paneDialogFor) ? s.ui.paneDialogFor : null
   )
+  // Same reasoning, plus one more: while the compare overlay is up it renders
+  // its own ship dialog for the column it owns — with that column's diff already
+  // in hand — and two of them would stack. The condition is the one the toolbar
+  // mounts the overlay on, so only ever one of the two is showing.
+  const shipFor = useDeck((s) => {
+    const worktrees = workspace.panes.filter((p) => p.worktree)
+    if (s.ui.compare && worktrees.length >= 2) return null
+    return worktrees.some((p) => p.id === s.ui.shipFor) ? s.ui.shipFor : null
+  })
+  const shipPane = workspace.panes.find((p) => p.id === shipFor)
   const [addOpen, setAddOpen] = useState(false)
 
   const zoomed = workspace.zoomedPaneId
@@ -62,9 +74,7 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
                 title={`${pane.command} ${pane.args.join(' ')}`.trim()}
               >
                 <span className="tab-badge">{profile?.icon ?? '»'}</span>
-                <span className="tab-title">
-                  {pane.name || pane.processTitle || profile?.name || pane.command}
-                </span>
+                <span className="tab-title">{paneLabel(pane, profile)}</span>
                 <span className={`pane-status ${pane.status}`} />
                 {pane.activity && pane.id !== activeId ? <span className="pane-dot" /> : null}
                 <span className="tab-index">{index + 1}</span>
@@ -98,6 +108,14 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
           workspaceId={workspace.id}
           paneId={dialogFor}
           onClose={() => setUi({ paneDialogFor: null })}
+        />
+      ) : null}
+
+      {shipPane ? (
+        <ShipDialog
+          workspaceId={workspace.id}
+          pane={shipPane}
+          onClose={() => setUi({ shipFor: null })}
         />
       ) : null}
 

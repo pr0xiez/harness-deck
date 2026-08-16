@@ -7,7 +7,8 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
     [
       ['Ctrl+1 … Ctrl+9', 'Switch to workspace by position'],
       ['Ctrl+Shift+N', 'New workspace'],
-      ['Ctrl+Page Down / Page Up', 'Next / previous workspace']
+      ['Ctrl+Page Down / Page Up', 'Next / previous workspace'],
+      ['Alt+Shift+1 … Alt+Shift+9', 'Run the workspace action at that position']
     ]
   ],
   [
@@ -18,6 +19,7 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
       ['Ctrl+Shift+R', 'Restart the process in the focused pane'],
       ['Ctrl+Shift+Z', 'Zoom / restore the focused pane'],
       ['Ctrl+Shift+J', 'Jump to the next pane waiting for you'],
+      ['Ctrl+Shift+U', 'The waiting queue — every pane waiting, and what it last said'],
       ['Alt+1 … Alt+9', 'Focus pane by position'],
       ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous pane'],
       ['Ctrl+Shift+← / →', 'Move the focused pane in the layout']
@@ -40,6 +42,7 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
       ['Ctrl+Shift+P', 'Command palette'],
       ['Ctrl+Shift+M', 'Dictate into the focused prompt (Esc discards)'],
       ['Ctrl+Shift+B', 'Broadcast a prompt to every pane'],
+      ['Ctrl+Shift+E', 'Send the pane selection to the broadcast box, fenced'],
       ['Ctrl+Shift+,', 'Settings'],
       ['Ctrl+Shift+/', 'This help'],
       ['F12', 'Developer tools']

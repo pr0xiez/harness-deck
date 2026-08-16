@@ -2,7 +2,8 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { findExecutable, shellCommandLine } from './profiles'
+import type { SavedProfile } from '@shared/types'
+import { detectProfiles, findExecutable, shellCommandLine } from './profiles'
 
 /**
  * Almost everything below is a branch nobody on a Mac ever takes — PATHEXT
@@ -259,6 +260,43 @@ describe('shellCommandLine', () => {
     })
   })
 
+  /**
+   * `exits` is what a pane with a setup command asks for: the pty's onExit is
+   * the pane's exit report, and an interactive `/k` or `-NoExit` shell would
+   * sit at a prompt in its place — running forever, auto-restart never firing.
+   * POSIX `-c` exits with the line either way, so its argv does not change.
+   */
+  it('lets the shell die with the command when asked to', () => {
+    onPlatform('win32')
+    noWindowsShells()
+    vi.stubEnv('COMSPEC', 'C:\\Windows\\System32\\cmd.exe')
+    expect(shellCommandLine('npm run dev', { exits: true }).args).toEqual(['/c', 'npm run dev'])
+
+    onPlatform('linux')
+    vi.stubEnv('SHELL', '/bin/bash')
+    expect(shellCommandLine('npm run dev', { exits: true }).args).toEqual([
+      '-l',
+      '-i',
+      '-c',
+      'npm run dev'
+    ])
+  })
+
+  it('exits PowerShell with the line, forwarding its code', () => {
+    onPlatform('win32')
+    const pwsh = join(dir, 'PowerShell', '7', 'pwsh.exe')
+    mkdirSync(join(dir, 'PowerShell', '7'), { recursive: true })
+    writeFileSync(pwsh, '')
+    noWindowsShells()
+
+    // `exit $LASTEXITCODE`, because -Command's own exit status collapses to
+    // 0-or-1 and the crash-restart backoff wants the real code.
+    expect(shellCommandLine('npm run dev', { exits: true })).toEqual({
+      command: pwsh,
+      args: ['-NoLogo', '-Command', 'npm run dev; exit $LASTEXITCODE']
+    })
+  })
+
   /** `/k` handed to PowerShell is an error dialog, so the test is the name. */
   it('reads the executable name, not the path it sits in', () => {
     onPlatform('win32')
@@ -271,5 +309,83 @@ describe('shellCommandLine', () => {
       '-Command',
       'npm run dev'
     ])
+  })
+})
+
+/**
+ * The renderer resolves a workspace action's env by looking its profile up by
+ * id, so a saved profile answering for a built-in id — the 'custom' sentinel
+ * above all — would hand its `env` to every process spawned through it. The
+ * store refuses to persist such an id; these drive the guard in
+ * `detectProfiles` itself, through the `load` seam, with exactly the lists the
+ * store would never produce.
+ */
+describe('detectProfiles', () => {
+  beforeEach(() => {
+    onPlatform('linux')
+  })
+
+  /** Shaped like a stored launcher; the id is the part under test. */
+  const saved = (id: string, over: Partial<SavedProfile> = {}): SavedProfile => ({
+    id,
+    name: id,
+    command: 'run-things',
+    args: [],
+    icon: '»»',
+    accent: '#123456',
+    ...over
+  })
+
+  it('keeps the built-in custom sentinel over a saved profile claiming its id', async () => {
+    const list = await detectProfiles(() => [
+      saved('custom', { env: { PATH: '/somewhere/else', NODE_OPTIONS: '--require x' } })
+    ])
+
+    const custom = list.filter((p) => p.id === 'custom')
+    expect(custom).toHaveLength(1)
+    expect(custom[0].command).toBe('')
+    expect(custom[0].env).toBeUndefined()
+  })
+
+  it('keeps a detected built-in over a saved profile claiming its id', async () => {
+    const list = await detectProfiles(() => [
+      saved('agent:claude', { env: { BASH_ENV: '/somewhere/else' } })
+    ])
+
+    const claude = list.filter((p) => p.id === 'agent:claude')
+    expect(claude).toHaveLength(1)
+    expect(claude[0].kind).toBe('agent')
+    expect(claude[0].env).toBeUndefined()
+  })
+
+  it('keeps the first of two saved profiles sharing an id', async () => {
+    const list = await detectProfiles(() => [
+      saved('custom:mine', { name: 'first' }),
+      saved('custom:mine', { name: 'second' })
+    ])
+
+    const mine = list.filter((p) => p.id === 'custom:mine')
+    expect(mine).toHaveLength(1)
+    expect(mine[0].name).toBe('first')
+  })
+
+  it('never returns the same id twice', async () => {
+    const list = await detectProfiles(() => [
+      saved('custom'),
+      saved('shell:default'),
+      saved('custom:mine')
+    ])
+
+    const ids = list.map((p) => p.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('still carries a namespaced saved profile through, env and all', async () => {
+    const list = await detectProfiles(() => [
+      saved('custom:mine', { env: { FOO: 'bar' }, cwd: '/somewhere' })
+    ])
+
+    const mine = list.find((p) => p.id === 'custom:mine')
+    expect(mine).toMatchObject({ kind: 'custom', env: { FOO: 'bar' }, cwd: '/somewhere' })
   })
 })

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { paneLabel } from '../paneLabel'
 import { isLive, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { registerVoiceSink } from '../voice'
 import { Icon } from './Icon'
@@ -227,7 +228,7 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
                   }
                   onClick={() => choose({ ...chosen, [pane.id]: !on })}
                 >
-                  {profile?.icon ?? '»'} {pane.name || pane.processTitle || profile?.name}
+                  {profile?.icon ?? '»'} {paneLabel(pane, profile)}
                 </button>
               )
             })

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { DiffResult } from '@shared/types'
+import { paneLabel } from '../paneLabel'
 import { useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { Icon } from './Icon'
 import { ShipDialog } from './ShipDialog'
@@ -67,7 +68,7 @@ interface ColumnProps {
 function Column({ pane, accent, diff, full }: ColumnProps): React.JSX.Element {
   const profile = useDeck((s) => s.profiles.find((p) => p.id === pane.profileId))
   const setUi = useDeck((s) => s.setUi)
-  const title = pane.name || pane.processTitle || profile?.name || pane.command
+  const title = paneLabel(pane, profile)
 
   return (
     <section className="cmp-col" style={{ ['--pane-accent' as string]: profile?.accent || accent }}>

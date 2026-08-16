@@ -17,6 +17,7 @@ import type {
   WorkspaceTemplate
 } from '@shared/types'
 import { ACCENTS, MONO_STACK } from './theme'
+import { paneLabel } from './paneLabel'
 import {
   freshPane,
   templateDirs,
@@ -147,6 +148,12 @@ interface UiState {
   shipFor: string | null
 }
 
+/** A background failure the user was never going to see in a console. */
+export interface DeckNotice {
+  title: string
+  body: string
+}
+
 interface DeckState {
   hydrated: boolean
   info: AppInfo | null
@@ -167,6 +174,8 @@ interface DeckState {
   /** Why the last install attempt did not get off the ground. */
   updateError: string | null
   updateInstalling: boolean
+  /** Shown bottom-right until waved off. Never saved. */
+  notice: DeckNotice | null
 
   hydrate: () => Promise<void>
   refreshProfiles: () => Promise<void>
@@ -239,6 +248,7 @@ interface DeckState {
   /** Files a sent prompt at the front of the broadcast history. */
   rememberBroadcast: (prompt: string) => void
   setUi: (patch: Partial<UiState>) => void
+  setNotice: (notice: DeckNotice | null) => void
 }
 
 let idCounter = 0
@@ -319,6 +329,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   updateDismissed: null,
   updateError: null,
   updateInstalling: false,
+  notice: null,
 
   hydrate: async () => {
     const [info, profiles, saved] = await Promise.all([
@@ -599,6 +610,9 @@ export const useDeck = create<DeckState>((set, get) => ({
       args: [],
       viaShell: true,
       cwd: workspace.cwd,
+      // Explicit so the pane can never inherit env from whatever profile
+      // resolved as `custom` — a chip runs in the workspace's own environment.
+      env: undefined,
       name: action.label
     })
   },
@@ -631,7 +645,7 @@ export const useDeck = create<DeckState>((set, get) => ({
       const profile = state.profiles.find((p) => p.id === pane.profileId)
       const ok = await api.confirm({
         title: 'Close pane',
-        message: `${pane.name || pane.processTitle || profile?.name || pane.command} is still running.`,
+        message: `${paneLabel(pane, profile)} is still running.`,
         detail: 'The process will be terminated.',
         confirmLabel: 'Close pane'
       })
@@ -662,44 +676,67 @@ export const useDeck = create<DeckState>((set, get) => ({
     // already on its way out before git tries to take the directory away.
     if (remove && pane.worktree) {
       const result = await api.git.removeWorktree(pane.worktree)
-      if (!result.ok) console.warn(`[worktree] ${result.error}`)
+      if (!result.ok) {
+        console.warn(`[worktree] ${result.error}`)
+        set({
+          notice: {
+            title: 'Worktree not removed',
+            body: `${pane.worktree} is still on disk: ${result.error}`
+          }
+        })
+      }
     }
   },
 
   restartPane: (paneId) => {
     api.pty.dispose(paneId)
+    const { workspaces } = get()
+    const owner = workspaces.find((w) => w.panes.some((p) => p.id === paneId))
+    if (!owner) return
     set({
-      workspaces: get().workspaces.map((w) => ({
-        ...w,
-        panes: w.panes.map((p) =>
-          p.id === paneId
-            ? {
-                ...p,
-                epoch: p.epoch + 1,
-                status: 'idle' as PaneStatus,
-                exitCode: null,
-                autostart: true,
-                activity: false,
-                bell: false,
-                // A person starting the pane by hand is not the crash loop
-                // continuing, whatever auto-restart had already spent on it.
-                crashRestarts: 0
-              }
-            : p
-        )
-      }))
+      workspaces: workspaces.map((w) =>
+        w === owner
+          ? {
+              ...w,
+              panes: w.panes.map((p) =>
+                p.id === paneId
+                  ? {
+                      ...p,
+                      epoch: p.epoch + 1,
+                      status: 'idle' as PaneStatus,
+                      exitCode: null,
+                      autostart: true,
+                      activity: false,
+                      bell: false,
+                      // A person starting the pane by hand is not the crash loop
+                      // continuing, whatever auto-restart had already spent on it.
+                      crashRestarts: 0
+                    }
+                  : p
+              )
+            }
+          : w
+      )
     })
   },
 
   killPane: (paneId) => api.pty.kill(paneId),
 
-  updatePane: (paneId, patch) =>
+  // A pane lives in exactly one workspace, so only that workspace is rebuilt;
+  // every other workspace keeps its identity, which is what keeps a pane event
+  // from re-rendering the whole deck.
+  updatePane: (paneId, patch) => {
+    const { workspaces } = get()
+    const owner = workspaces.find((w) => w.panes.some((p) => p.id === paneId))
+    if (!owner) return
     set({
-      workspaces: get().workspaces.map((w) => ({
-        ...w,
-        panes: w.panes.map((p) => (p.id === paneId ? { ...p, ...patch } : p))
-      }))
-    }),
+      workspaces: workspaces.map((w) =>
+        w === owner
+          ? { ...w, panes: w.panes.map((p) => (p.id === paneId ? { ...p, ...patch } : p)) }
+          : w
+      )
+    })
+  },
 
   setPaneStatus: (paneId, status, exitCode = null) => get().updatePane(paneId, { status, exitCode }),
 
@@ -835,7 +872,9 @@ export const useDeck = create<DeckState>((set, get) => ({
     set({ settings: { ...settings, broadcastHistory: broadcastHistory.slice(0, BROADCAST_HISTORY) } })
   },
 
-  setUi: (patch) => set({ ui: { ...get().ui, ...patch } })
+  setUi: (patch) => set({ ui: { ...get().ui, ...patch } }),
+
+  setNotice: (notice) => set({ notice })
 }))
 
 /**

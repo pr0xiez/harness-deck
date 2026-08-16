@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { paneLabel } from '../paneLabel'
 import { useDeck, type DeckWorkspace } from '../store'
 import { getTerminal } from '../terminals'
 import { scanPanes } from '../search'
@@ -162,7 +163,7 @@ export function DeckSearch({ workspace }: Props): React.JSX.Element {
         <div className="deck-search-hits">
           {hits.map(({ pane, count }) => {
             const profile = profiles.find((p) => p.id === pane.profileId)
-            const label = pane.name || pane.processTitle || profile?.name || pane.command
+            const label = paneLabel(pane, profile)
             return (
               <button
                 key={pane.id}

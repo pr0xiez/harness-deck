@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { VoiceSettings } from '@shared/types'
 import { voiceBaseUrl, voiceModel, voiceProvider } from '@shared/voice'
+import { paneLabel } from './paneLabel'
 import { createSpeechGate, type SpeechGate } from './speech'
 import { isLive, useDeck } from './store'
 import { getTerminal } from './terminals'
@@ -265,7 +266,7 @@ function resolveTarget(): VoiceTarget | null {
   return {
     kind: 'pane',
     paneId: pane.id,
-    label: pane.name || pane.processTitle || profile?.name || pane.command
+    label: paneLabel(pane, profile)
   }
 }
 

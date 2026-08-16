@@ -28,56 +28,57 @@ import type {
   WorktreeRequest,
   WorktreeResult
 } from '@shared/types'
+import { IPC, type IpcChannel } from '@shared/ipc'
 
-function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
+function subscribe<T>(channel: IpcChannel, handler: (payload: T) => void): () => void {
   const listener = (_event: Electron.IpcRendererEvent, payload: T): void => handler(payload)
   ipcRenderer.on(channel, listener)
   return () => ipcRenderer.removeListener(channel, listener)
 }
 
 const api = {
-  info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
+  info: (): Promise<AppInfo> => ipcRenderer.invoke(IPC.appInfo),
 
-  loadState: (): Promise<PersistedState | null> => ipcRenderer.invoke('state:load'),
-  saveState: (state: PersistedState): void => ipcRenderer.send('state:save', state),
-  stateLocation: (): Promise<string> => ipcRenderer.invoke('state:location'),
+  loadState: (): Promise<PersistedState | null> => ipcRenderer.invoke(IPC.stateLoad),
+  saveState: (state: PersistedState): void => ipcRenderer.send(IPC.stateSave, state),
+  stateLocation: (): Promise<string> => ipcRenderer.invoke(IPC.stateLocation),
 
   /** @deprecated Use `profiles.list`. Kept so older call sites keep compiling. */
-  listProfiles: (): Promise<Profile[]> => ipcRenderer.invoke('profiles:list'),
+  listProfiles: (): Promise<Profile[]> => ipcRenderer.invoke(IPC.profilesList),
 
   profiles: {
-    list: (): Promise<Profile[]> => ipcRenderer.invoke('profiles:list'),
+    list: (): Promise<Profile[]> => ipcRenderer.invoke(IPC.profilesList),
     /** Returns the full detected + saved list, so callers can drop the result straight into state. */
     saveCustom: (profile: SavedProfile): Promise<Profile[]> =>
-      ipcRenderer.invoke('profiles:saveCustom', profile),
+      ipcRenderer.invoke(IPC.profilesSaveCustom, profile),
     removeCustom: (id: string): Promise<Profile[]> =>
-      ipcRenderer.invoke('profiles:removeCustom', id)
+      ipcRenderer.invoke(IPC.profilesRemoveCustom, id)
   },
 
   git: {
-    info: (dir: string): Promise<RepoInfo | null> => ipcRenderer.invoke('git:info', dir),
+    info: (dir: string): Promise<RepoInfo | null> => ipcRenderer.invoke(IPC.gitInfo, dir),
     addWorktree: (req: WorktreeRequest): Promise<WorktreeResult> =>
-      ipcRenderer.invoke('git:addWorktree', req),
+      ipcRenderer.invoke(IPC.gitAddWorktree, req),
     removeWorktree: (path: string): Promise<WorktreeResult> =>
-      ipcRenderer.invoke('git:removeWorktree', path),
-    diffStat: (dir: string): Promise<string> => ipcRenderer.invoke('git:diffStat', dir),
+      ipcRenderer.invoke(IPC.gitRemoveWorktree, path),
+    diffStat: (dir: string): Promise<string> => ipcRenderer.invoke(IPC.gitDiffStat, dir),
     /** What a pane changed since its branch left the trunk, already capped. See HD-3. */
-    diffRange: (req: DiffRequest): Promise<DiffResult> => ipcRenderer.invoke('git:diffRange', req),
+    diffRange: (req: DiffRequest): Promise<DiffResult> => ipcRenderer.invoke(IPC.gitDiffRange, req),
     /** Quiet-burst snapshots of a worktree, hidden refs only. See HD-20. */
-    checkpoint: (dir: string): Promise<void> => ipcRenderer.invoke('git:checkpoint', dir),
+    checkpoint: (dir: string): Promise<void> => ipcRenderer.invoke(IPC.gitCheckpoint, dir),
     checkpoints: (dir: string): Promise<CheckpointInfo[]> =>
-      ipcRenderer.invoke('git:checkpoints', dir),
+      ipcRenderer.invoke(IPC.gitCheckpoints, dir),
     restoreCheckpoint: (dir: string, ref: string): Promise<WorktreeResult> =>
-      ipcRenderer.invoke('git:restoreCheckpoint', dir, ref),
+      ipcRenderer.invoke(IPC.gitRestoreCheckpoint, dir, ref),
     dropCheckpoints: (repoRoot: string, paneId: string): Promise<void> =>
-      ipcRenderer.invoke('git:dropCheckpoints', repoRoot, paneId),
+      ipcRenderer.invoke(IPC.gitDropCheckpoints, repoRoot, paneId),
     deleteBranch: (repoRoot: string, branch: string): Promise<WorktreeResult> =>
-      ipcRenderer.invoke('git:deleteBranch', repoRoot, branch),
-    forge: (): Promise<ForgeCli | null> => ipcRenderer.invoke('git:forge')
+      ipcRenderer.invoke(IPC.gitDeleteBranch, repoRoot, branch),
+    forge: (): Promise<ForgeCli | null> => ipcRenderer.invoke(IPC.gitForge)
   },
 
   attention: {
-    setBadge: (count: number): void => ipcRenderer.send('app:setBadge', count)
+    setBadge: (count: number): void => ipcRenderer.send(IPC.appSetBadge, count)
   },
 
   fs: {
@@ -87,104 +88,104 @@ const api = {
      * that would silently spawn in `homedir()` instead.
      */
     missingDirs: (paths: string[]): Promise<string[]> =>
-      ipcRenderer.invoke('fs:missingDirs', paths)
+      ipcRenderer.invoke(IPC.fsMissingDirs, paths)
   },
 
   update: {
-    state: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
-    check: (): Promise<UpdateState> => ipcRenderer.invoke('update:check'),
+    state: (): Promise<UpdateState> => ipcRenderer.invoke(IPC.updateState),
+    check: (): Promise<UpdateState> => ipcRenderer.invoke(IPC.updateCheck),
     /** The main process starts on `local` and only polls elsewhere once told to. */
     setChannel: (channel: UpdateChannel): Promise<UpdateState> =>
-      ipcRenderer.invoke('update:setChannel', channel),
-    install: (): Promise<InstallResult> => ipcRenderer.invoke('update:install'),
+      ipcRenderer.invoke(IPC.updateSetChannel, channel),
+    install: (): Promise<InstallResult> => ipcRenderer.invoke(IPC.updateInstall),
     onChange: (handler: (state: UpdateState) => void): (() => void) =>
-      subscribe('update:changed', handler)
+      subscribe(IPC.updateChanged, handler)
   },
 
   pty: {
     ensure: (spec: PaneSpec, cols: number, rows: number): Promise<EnsureResult> =>
-      ipcRenderer.invoke('pty:ensure', spec, cols, rows),
-    write: (id: string, data: string): void => ipcRenderer.send('pty:write', id, data),
+      ipcRenderer.invoke(IPC.ptyEnsure, spec, cols, rows),
+    write: (id: string, data: string): void => ipcRenderer.send(IPC.ptyWrite, id, data),
     resize: (id: string, cols: number, rows: number): void =>
-      ipcRenderer.send('pty:resize', id, cols, rows),
-    kill: (id: string): void => ipcRenderer.send('pty:kill', id),
-    dispose: (id: string): void => ipcRenderer.send('pty:dispose', id),
+      ipcRenderer.send(IPC.ptyResize, id, cols, rows),
+    kill: (id: string): void => ipcRenderer.send(IPC.ptyKill, id),
+    dispose: (id: string): void => ipcRenderer.send(IPC.ptyDispose, id),
     status: (id: string): Promise<{ status: PaneStatus; exitCode: number | null } | null> =>
-      ipcRenderer.invoke('pty:status', id),
-    running: (): Promise<string[]> => ipcRenderer.invoke('pty:running'),
+      ipcRenderer.invoke(IPC.ptyStatus, id),
+    running: (): Promise<string[]> => ipcRenderer.invoke(IPC.ptyRunning),
     onData: (handler: (event: PtyDataEvent) => void): (() => void) =>
-      subscribe('pty:data', handler),
-    onExit: (handler: (event: PtyExitEvent) => void): (() => void) => subscribe('pty:exit', handler),
+      subscribe(IPC.ptyData, handler),
+    onExit: (handler: (event: PtyExitEvent) => void): (() => void) => subscribe(IPC.ptyExit, handler),
     onQuiet: (handler: (event: PtyQuietEvent) => void): (() => void) =>
-      subscribe('pty:quiet', handler),
+      subscribe(IPC.ptyQuiet, handler),
     /**
      * The pane's replay buffer as one string — the last ~512 KB it produced.
      * `strip` takes the escape sequences out, for somewhere that is not a
      * terminal; leave it off to get a stream that replays.
      */
     transcript: (id: string, strip = false): Promise<string> =>
-      ipcRenderer.invoke('pty:transcript', id, strip),
+      ipcRenderer.invoke(IPC.ptyTranscript, id, strip),
     /** Last `lines` non-empty lines, ANSI-stripped in main (`stripAnsi` lives there). */
     tail: (id: string, lines: number): Promise<string[]> =>
-      ipcRenderer.invoke('pty:tail', id, lines)
+      ipcRenderer.invoke(IPC.ptyTail, id, lines)
   },
 
   pickDirectory: (current?: string): Promise<string | null> =>
-    ipcRenderer.invoke('dialog:pickDirectory', current),
+    ipcRenderer.invoke(IPC.dialogPickDirectory, current),
   confirm: (options: {
     title: string
     message: string
     detail?: string
     confirmLabel?: string
-  }): Promise<boolean> => ipcRenderer.invoke('dialog:confirm', options),
+  }): Promise<boolean> => ipcRenderer.invoke(IPC.dialogConfirm, options),
   /** Save-as dialog and the write behind it, so the renderer never holds a handle. */
   saveText: (req: SaveTextRequest): Promise<SaveTextResult> =>
-    ipcRenderer.invoke('dialog:saveText', req),
+    ipcRenderer.invoke(IPC.dialogSaveText, req),
 
   clipboard: {
-    read: (): Promise<string> => ipcRenderer.invoke('clipboard:read'),
-    write: (text: string): void => ipcRenderer.send('clipboard:write', text)
+    read: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardRead),
+    write: (text: string): void => ipcRenderer.send(IPC.clipboardWrite, text)
   },
 
   voice: {
     keyState: (provider: VoiceProvider): Promise<VoiceKeyState> =>
-      ipcRenderer.invoke('voice:keyState', provider),
+      ipcRenderer.invoke(IPC.voiceKeyState, provider),
     /** Pass null to forget the stored key. */
     setKey: (provider: VoiceProvider, key: string | null): Promise<VoiceKeyState> =>
-      ipcRenderer.invoke('voice:setKey', provider, key),
+      ipcRenderer.invoke(IPC.voiceSetKey, provider, key),
     transcribe: (req: TranscribeRequest): Promise<TranscribeResult> =>
-      ipcRenderer.invoke('voice:transcribe', req),
+      ipcRenderer.invoke(IPC.voiceTranscribe, req),
     /** macOS only; elsewhere the OS has no per-app microphone gate. */
-    requestMicAccess: (): Promise<boolean> => ipcRenderer.invoke('voice:micAccess')
+    requestMicAccess: (): Promise<boolean> => ipcRenderer.invoke(IPC.voiceMicAccess)
   },
 
   /** Deck Remote — the watch-from-elsewhere page. All stubs until HD-21. */
   remote: {
-    status: (): Promise<RemoteStatus> => ipcRenderer.invoke('remote:status'),
-    setEnabled: (on: boolean): Promise<RemoteStatus> => ipcRenderer.invoke('remote:setEnabled', on),
-    setLan: (on: boolean): Promise<RemoteStatus> => ipcRenderer.invoke('remote:setLan', on),
+    status: (): Promise<RemoteStatus> => ipcRenderer.invoke(IPC.remoteStatus),
+    setEnabled: (on: boolean): Promise<RemoteStatus> => ipcRenderer.invoke(IPC.remoteSetEnabled, on),
+    setLan: (on: boolean): Promise<RemoteStatus> => ipcRenderer.invoke(IPC.remoteSetLan, on),
     setAllowTyping: (on: boolean): Promise<RemoteStatus> =>
-      ipcRenderer.invoke('remote:setAllowTyping', on),
+      ipcRenderer.invoke(IPC.remoteSetAllowTyping, on),
     onStatus: (handler: (status: RemoteStatus) => void): (() => void) =>
-      subscribe('remote:status', handler)
+      subscribe(IPC.remoteStatus, handler)
   },
 
   window: {
-    minimize: (): void => ipcRenderer.send('window:minimize'),
-    toggleMaximize: (): void => ipcRenderer.send('window:toggleMaximize'),
-    close: (): void => ipcRenderer.send('window:close'),
-    isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
+    minimize: (): void => ipcRenderer.send(IPC.windowMinimize),
+    toggleMaximize: (): void => ipcRenderer.send(IPC.windowToggleMaximize),
+    close: (): void => ipcRenderer.send(IPC.windowClose),
+    isMaximized: (): Promise<boolean> => ipcRenderer.invoke(IPC.windowIsMaximized),
     onMaximizedChange: (handler: (maximized: boolean) => void): (() => void) =>
-      subscribe('window:maximized', handler),
+      subscribe(IPC.windowMaximized, handler),
     onFullscreenChange: (handler: (fullscreen: boolean) => void): (() => void) =>
-      subscribe('window:fullscreen', handler),
+      subscribe(IPC.windowFullscreen, handler),
     onFocusChange: (handler: (focused: boolean) => void): (() => void) =>
-      subscribe('window:focus', handler)
+      subscribe(IPC.windowFocus, handler)
   },
 
-  openExternal: (url: string): void => ipcRenderer.send('app:openExternal', url),
-  openPath: (path: string): void => ipcRenderer.send('app:openPath', path),
-  capture: (target: string): Promise<string | null> => ipcRenderer.invoke('app:capture', target)
+  openExternal: (url: string): void => ipcRenderer.send(IPC.appOpenExternal, url),
+  openPath: (path: string): void => ipcRenderer.send(IPC.appOpenPath, path),
+  capture: (target: string): Promise<string | null> => ipcRenderer.invoke(IPC.appCapture, target)
 }
 
 export type HarnessApi = typeof api

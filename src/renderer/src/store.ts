@@ -17,6 +17,7 @@ import type {
   WorkspaceTemplate
 } from '@shared/types'
 import { ACCENTS, MONO_STACK } from './theme'
+import { paneLabel } from './paneLabel'
 import {
   freshPane,
   templateDirs,
@@ -599,6 +600,9 @@ export const useDeck = create<DeckState>((set, get) => ({
       args: [],
       viaShell: true,
       cwd: workspace.cwd,
+      // Explicit so the pane can never inherit env from whatever profile
+      // resolved as `custom` — a chip runs in the workspace's own environment.
+      env: undefined,
       name: action.label
     })
   },
@@ -631,7 +635,7 @@ export const useDeck = create<DeckState>((set, get) => ({
       const profile = state.profiles.find((p) => p.id === pane.profileId)
       const ok = await api.confirm({
         title: 'Close pane',
-        message: `${pane.name || pane.processTitle || profile?.name || pane.command} is still running.`,
+        message: `${paneLabel(pane, profile)} is still running.`,
         detail: 'The process will be terminated.',
         confirmLabel: 'Close pane'
       })

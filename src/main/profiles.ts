@@ -1,9 +1,9 @@
-import { execFile } from 'node:child_process'
 import { accessSync, constants, existsSync } from 'node:fs'
 import { basename, delimiter, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
-import type { ForgeCli, Profile } from '@shared/types'
+import type { ForgeCli, Profile, SavedProfile } from '@shared/types'
 import { flavourOf, type ShellFlavour } from '@shared/shell'
+import { runProcess } from './process'
 import { loadCustomProfiles } from './profiles-store'
 import { defaultShell, shellEnv } from './shell-env'
 
@@ -107,16 +107,14 @@ export function findExecutable(command: string, env = shellEnv()): string | null
   return null
 }
 
-function exec(cmd: string, args: string[], timeout: number): Promise<Buffer | null> {
-  return new Promise((resolve) => {
-    const child = execFile(
-      cmd,
-      args,
-      { timeout, windowsHide: true, encoding: 'buffer', maxBuffer: 1024 * 1024 },
-      (err, stdout) => resolve(err && !stdout?.length ? null : stdout)
-    )
-    child.on('error', () => resolve(null))
-  })
+/**
+ * Bytes rather than text, because the caller has to sniff the encoding (see
+ * `decodeWsl`). Output that arrived before an error is still an answer — a WSL
+ * that listed its distros and then dawdled past the timeout did list them.
+ */
+async function exec(cmd: string, args: string[], timeout: number): Promise<Buffer | null> {
+  const ran = await runProcess(cmd, args, { timeout, maxBuffer: 1024 * 1024, encoding: 'buffer' })
+  return ran.error && !ran.stdout.length ? null : ran.stdout
 }
 
 /** wsl.exe still speaks UTF-16LE for some subcommands. */
@@ -204,8 +202,15 @@ async function probeWsl(): Promise<WslInfo> {
 /**
  * Builds the launcher list for the current machine. Unavailable harnesses are
  * still returned (flagged, with an install hint) so they stay discoverable.
+ *
+ * `load` is injectable for the same reason `resolveShellEnv` takes its probe:
+ * the id guard below exists for lists the real store refuses to persist, and
+ * the unit tests can only ask about one by handing it over. Omitting it is the
+ * app's own case, and reads custom-profiles.json as ever.
  */
-export async function detectProfiles(): Promise<Profile[]> {
+export async function detectProfiles(
+  load: () => SavedProfile[] = loadCustomProfiles
+): Promise<Profile[]> {
   const env = shellEnv()
   const win = process.platform === 'win32'
   const profiles: Profile[] = []
@@ -311,7 +316,16 @@ export async function detectProfiles(): Promise<Profile[]> {
   // menu, the palette and the quick picks pick them up without knowing they
   // came from disk. A command line's first word decides availability, the same
   // question `findExecutable` answers for everything else here.
-  for (const saved of loadCustomProfiles()) {
+  //
+  // Ids are how the renderer looks a profile up, so no saved id may repeat one
+  // already in the list — nor claim 'custom', whose sentinel below is where
+  // every "run this command line" action takes its env from. The store keeps
+  // saved ids in their own `custom:` namespace; this holds even for a list
+  // that reached here some other way.
+  const taken = new Set(profiles.map((p) => p.id)).add('custom')
+  for (const saved of load()) {
+    if (taken.has(saved.id)) continue
+    taken.add(saved.id)
     const first = saved.command.trim().split(/\s+/)[0] ?? ''
     const found = findExecutable(first, env)
     const cmdline = [saved.command, ...saved.args].join(' ').trim()

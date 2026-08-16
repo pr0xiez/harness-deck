@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { paneLabel } from '../paneLabel'
 import { useDeck, type DeckWorkspace } from '../store'
 import { TerminalPane } from './TerminalPane'
 import { ProfileMenu } from './ProfileMenu'
@@ -73,9 +74,7 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
                 title={`${pane.command} ${pane.args.join(' ')}`.trim()}
               >
                 <span className="tab-badge">{profile?.icon ?? '»'}</span>
-                <span className="tab-title">
-                  {pane.name || pane.processTitle || profile?.name || pane.command}
-                </span>
+                <span className="tab-title">{paneLabel(pane, profile)}</span>
                 <span className={`pane-status ${pane.status}`} />
                 {pane.activity && pane.id !== activeId ? <span className="pane-dot" /> : null}
                 <span className="tab-index">{index + 1}</span>

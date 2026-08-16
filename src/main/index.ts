@@ -30,6 +30,7 @@ import type {
 } from '@shared/types'
 import { IPC, type IpcChannel } from '@shared/ipc'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import { resolveOpenPath } from './open-path'
 import { PasteGate } from './paste-gate'
 import { resolveWithin } from './paths'
 import { decidePermission, originOf, type TrustedPage } from './permissions'
@@ -40,7 +41,15 @@ import { ScrollbackStore } from './scrollback'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
-import { checkNow, currentState, disposeUpdater, initUpdater, install, setChannel } from './updater'
+import {
+  checkNow,
+  currentState,
+  disposeUpdater,
+  initUpdater,
+  install,
+  manifestPath,
+  setChannel
+} from './updater'
 import {
   formatReport,
   runSmoke,
@@ -641,7 +650,23 @@ function registerIpc(): void {
   ipcMain.on(IPC.appOpenExternal, (_e, url: string) => {
     if (/^(https?|ms-settings):/.test(url)) shell.openExternal(url)
   })
-  ipcMain.on(IPC.appOpenPath, (_e, path: string) => shell.openPath(path))
+  // `openPath` on a file hands it to the OS, which will execute it, so files
+  // are held to the app's own data; a directory is only ever revealed, never
+  // opened, so a macOS bundle passed off as a folder can't be launched this
+  // way either. Same posture as `app:openExternal` above: fail closed. See
+  // open-path.ts for the decision itself and why it is async.
+  ipcMain.on(IPC.appOpenPath, (_e, path: string) => {
+    void resolveOpenPath(path, { userData: app.getPath('userData'), manifestPath: manifestPath() }).then(
+      (decision) => {
+        if (!decision.ok) {
+          console.warn(`[main] blocked app:openPath for ${path}`)
+          return
+        }
+        if (decision.reveal) shell.showItemInFolder(decision.target)
+        else shell.openPath(decision.target)
+      }
+    )
+  })
   ipcMain.on(IPC.appSetBadge, (_e, count: number) => setBadge(count))
 
   // The channel exists solely for the --capture dev flow (see the flag table

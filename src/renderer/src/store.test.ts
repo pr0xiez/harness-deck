@@ -647,6 +647,48 @@ describe('closePane', () => {
   })
 })
 
+describe('requestClosePane', () => {
+  const tree = '/repos/.harness-deck/deck/hd/agent-a'
+
+  beforeEach(() => {
+    useDeck.setState({
+      workspaces: [workspace('one', [pane('a', 'exited', { worktree: tree })])],
+      activeWorkspaceId: 'one',
+      notice: null
+    })
+    harness.git.info.mockResolvedValue({
+      root: tree,
+      branch: 'hd/agent-a',
+      dirty: 0,
+      worktreeOf: '/repos/deck'
+    })
+    harness.confirm.mockResolvedValue(true)
+  })
+
+  /**
+   * The pane is already gone by the time git answers, so a refusal the user
+   * agreed to has nowhere visible left to land except a notice.
+   */
+  it('raises a notice when the worktree the user agreed to delete survives', async () => {
+    harness.git.removeWorktree.mockResolvedValue({ ok: false, error: 'worktree is locked' })
+
+    await deck().requestClosePane('one', 'a')
+
+    expect(paneIds('one')).toEqual([])
+    expect(deck().notice?.body).toContain(tree)
+    expect(deck().notice?.body).toContain('worktree is locked')
+  })
+
+  it('says nothing when the removal goes through', async () => {
+    harness.git.removeWorktree.mockResolvedValue({ ok: true })
+
+    await deck().requestClosePane('one', 'a')
+
+    expect(harness.git.removeWorktree).toHaveBeenCalledWith(tree)
+    expect(deck().notice).toBeNull()
+  })
+})
+
 /**
  * Pane events land many times a second, so the workspaces that do not hold the
  * pane must come through with their identity intact — a fresh object per

@@ -151,9 +151,27 @@ interface WslInfo {
 }
 
 let wslCache: WslInfo | null = null
+/**
+ * `state:load` and `profiles:list` both call `detectProfiles()` at startup
+ * (see index.ts) and run concurrently in the renderer's own `Promise.all`, so
+ * without this the whole probe runs twice side by side — two `wsl.exe -l -q`
+ * spawns (8s timeout) and two detect scripts (12s) — because `wslCache` above
+ * is only assigned once the first call's awaits resolve. Sharing the in-flight
+ * promise closes that gap; once it settles, `wslCache` takes over as before.
+ */
+let wslInFlight: Promise<WslInfo> | null = null
 
-async function probeWsl(): Promise<WslInfo> {
-  if (wslCache) return wslCache
+function probeWsl(): Promise<WslInfo> {
+  if (wslCache) return Promise.resolve(wslCache)
+  if (!wslInFlight) {
+    wslInFlight = probeWslUncached().finally(() => {
+      wslInFlight = null
+    })
+  }
+  return wslInFlight
+}
+
+async function probeWslUncached(): Promise<WslInfo> {
   const info: WslInfo = { available: false, exe: 'wsl.exe', distros: [], agents: new Set() }
   if (process.platform !== 'win32') {
     wslCache = info

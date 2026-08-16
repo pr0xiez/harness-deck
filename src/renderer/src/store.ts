@@ -373,7 +373,10 @@ export const useDeck = create<DeckState>((set, get) => ({
         epoch: 0,
         activity: false,
         bell: false,
-        autostart: settings.autoStartPanes
+        // `autoStartPanes` travels in the same file as the panes, so it can
+        // never outrank main's flag: a pane the profile registry would not
+        // vouch for waits at its Start overlay, command in view, for a click.
+        autostart: pane.needsReview ? false : settings.autoStartPanes
       }))
     }))
 

@@ -21,6 +21,7 @@ import type {
   PersistedState,
   RemoteStatus,
   SavedProfile,
+  SaveStateResult,
   SaveTextRequest,
   SaveTextResult,
   TranscribeRequest,
@@ -30,6 +31,7 @@ import type {
 } from '@shared/types'
 import { IPC, type IpcChannel } from '@shared/ipc'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import { trustedSenderUrl } from './ipc-sender'
 import { PasteGate } from './paste-gate'
 import { resolveWithin } from './paths'
 import { decidePermission, originOf, type TrustedPage } from './permissions'
@@ -37,6 +39,7 @@ import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
 import { ScrollbackStore } from './scrollback'
+import { flagUntrustedPanes, sanitizeState } from './state-schema'
 import { loadState, saveState, stateLocation } from './store'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
@@ -252,6 +255,19 @@ function devIcon(): NativeImage | undefined {
   return image.isEmpty() ? undefined : image
 }
 
+/**
+ * Where the renderer legitimately loads from: the vite dev server when
+ * `ELECTRON_RENDERER_URL` is set, the bundled index.html otherwise. A packaged
+ * build never follows the dev-server variable (#51) — gated here once so every
+ * consumer (`createWindow`'s load and navigation guard, and privileged IPC's
+ * sender check — see `trustedSenderUrl`) reads the same fail-closed value and
+ * the checks can never drift from what the window actually shows.
+ */
+const rendererSource = {
+  devUrl: app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'],
+  appIndex: join(__dirname, '../renderer/index.html')
+}
+
 function createWindow(): BrowserWindow {
   // macOS takes its dock icon from the app, not the window; the others read it
   // off the window, so it goes in the constructor there.
@@ -309,18 +325,15 @@ function createWindow(): BrowserWindow {
   // on the window is enough to trigger it. Only the app's own URL may load;
   // everything else is blocked. The renderer also cancels drag-and-drop at the
   // document (see main.tsx), but this guard is the one that cannot be bypassed.
-  // A packaged build never follows the dev-server variable (#51), so the guard
-  // and the load below read the same gated value.
-  const devUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL']
-  const appUrl = pathToFileURL(join(__dirname, '../renderer/index.html')).href
-  const isAllowedNavigation = (url: string): boolean =>
-    devUrl ? new URL(url).origin === new URL(devUrl).origin : url === appUrl
+  // Reuses `trustedSenderUrl` against the same gated `rendererSource` the
+  // window loads and the clipboard IPC gate vets against, so the checks cannot
+  // drift apart.
   win.webContents.on('will-navigate', (event, url) => {
-    if (!isAllowedNavigation(url)) event.preventDefault()
+    if (!trustedSenderUrl(url, rendererSource)) event.preventDefault()
   })
   // will-navigate only covers the main frame; this catches subframes too.
   win.webContents.on('will-frame-navigate', (event) => {
-    if (!isAllowedNavigation(event.url)) event.preventDefault()
+    if (!trustedSenderUrl(event.url, rendererSource)) event.preventDefault()
   })
 
   // The renderer's paste path (Ctrl/Cmd+Shift+V, see shortcuts.ts) asks the
@@ -338,10 +351,10 @@ function createWindow(): BrowserWindow {
     if (input.type === 'keyDown' && devtools) win.webContents.toggleDevTools()
   })
 
-  if (devUrl) {
-    win.loadURL(devUrl)
+  if (rendererSource.devUrl) {
+    win.loadURL(rendererSource.devUrl)
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
+    win.loadFile(rendererSource.appIndex)
   }
 
   // Boots the app, checks it actually works, and sets the exit code. The error
@@ -484,16 +497,30 @@ function registerIpc(): void {
     defaultCwd: process.env.HD_DEFAULT_CWD || homedir()
   }))
 
-  ipcMain.handle(IPC.stateLoad, () => {
+  // `loadState` has already thrown out anything mis-typed; what is left is
+  // well-formed but of unproven origin, so each pane is checked against the
+  // profile registry — the one thing a write to the state file cannot forge —
+  // and flagged when it does not re-derive. A flagged pane never autostarts;
+  // it waits at its Start overlay for a click. See state-schema.ts.
+  ipcMain.handle(IPC.stateLoad, async () => {
     const state = loadState()
     rememberAttention(state)
-    return state
+    return state && flagUntrustedPanes(state, await detectProfiles())
   })
-  // handle/invoke rather than on/send, so a write that failed makes it back to
-  // the renderer instead of dying as a console line here. See issue #26.
-  ipcMain.handle(IPC.stateSave, (_e, state: PersistedState) => {
-    rememberAttention(state)
-    return saveState(state)
+  // The renderer only ever sends what `serialize()` built, but this channel
+  // takes whatever arrives — so it is held to the same schema the reader
+  // enforces. `handle`/`invoke` rather than `on`/`send`, so a write that
+  // failed — whether the disk refused it (#26) or validation did — makes it
+  // back to the renderer instead of dying as a console line here.
+  ipcMain.handle(IPC.stateSave, (_e, state: PersistedState): SaveStateResult => {
+    const clean = sanitizeState(state)
+    if (!clean) {
+      const error = 'refusing to save a state payload that failed validation'
+      console.warn(`[store] ${error}`)
+      return { ok: false, error }
+    }
+    rememberAttention(clean)
+    return saveState(clean)
   })
   ipcMain.handle(IPC.stateLocation, () => stateLocation())
 
@@ -625,7 +652,20 @@ function registerIpc(): void {
   // channel that answered unconditionally was a side door around it. An
   // unprompted caller gets an empty string, not what the user last copied.
   ipcMain.handle(IPC.clipboardRead, () => (pasteGate.allows() ? clipboard.readText() : ''))
-  ipcMain.on(IPC.clipboardWrite, (_e, text: string) => clipboard.writeText(text))
+  // Gated on the sender: this app's core loop is pasting into terminal panes,
+  // so a clipboard overwrite from a foreign document becomes a shell command
+  // the user runs by hand on the next routine paste. The main-frame check is
+  // load-bearing too — an iframe under the trusted origin has the trusted URL.
+  ipcMain.on(IPC.clipboardWrite, (e, text: string) => {
+    const frame = e.senderFrame
+    if (!frame || frame !== e.sender.mainFrame || !trustedSenderUrl(frame.url, rendererSource)) {
+      console.warn(
+        `[ipc] clipboard:write dropped: untrusted sender ${frame?.url ?? '(disposed frame)'}`
+      )
+      return
+    }
+    clipboard.writeText(text)
+  })
 
   ipcMain.on(IPC.windowMinimize, () => mainWindow?.minimize())
   ipcMain.on(IPC.windowToggleMaximize, () => {

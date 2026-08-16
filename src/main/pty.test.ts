@@ -1032,6 +1032,32 @@ describe('a pane with a setup command', () => {
   })
 
   /**
+   * cmd.exe expands `%VAR%` during tokenization — inside double quotes too —
+   * and a `/c` line has no escape for `%`, so a promoted argv carrying one
+   * cannot be quoted faithfully. Spawning anyway would run a line that
+   * quietly differs from the pane's spec; the manager refuses instead, in the
+   * same in-band shape a bad path lands in.
+   */
+  it('refuses to promote an argv cmd.exe would rewrite, rather than spawn a lie', () => {
+    onPlatform('win32')
+    windowsShellsIn(dir)
+    vi.stubEnv('COMSPEC', 'C:\\Windows\\System32\\cmd.exe')
+
+    const { mgr, calls } = harness()
+    const result = mgr.ensure(
+      spec('a', { setup: 'npm ci', args: ['--prompt=%USERPROFILE%'] }),
+      80,
+      24
+    )
+
+    expect(calls).toHaveLength(0)
+    expect(result).toMatchObject({ created: true, status: 'exited', exitCode: -1 })
+    expect(result.error).toContain('%...%')
+    expect(result.replay).toContain('Failed to start: fake-agent')
+    expect(mgr.status('a')).toEqual({ status: 'exited', exitCode: -1 })
+  })
+
+  /**
    * The PowerShell preamble carries three findings at once: $LASTEXITCODE is
    * $null until a *native* executable sets it, so it is primed to 0 or a
    * cmdlet-only setup would never start the agent; $? is what a failing cmdlet

@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import type { PersistedState } from '@shared/types'
 import { WORKTREE_DIR } from '@shared/worktree'
 
@@ -50,6 +50,21 @@ export function isOpenDir(dir: string): boolean {
 export function isAppWorktree(path: string): boolean {
   if (typeof path !== 'string' || !path) return false
   return normalize(path).split('/').includes(WORKTREE_DIR)
+}
+
+/**
+ * Whether `path` sits inside the `.harness-deck` folder beside `repo` — the
+ * only destination `worktreePath()` (shared/worktree.ts) ever computes for a
+ * legitimate `git:addWorktree` request. Without this, one legitimately open
+ * repo is enough for a caller to check out a full copy of tracked content to
+ * any writable path of its choosing, which `git:addWorktree` then
+ * self-registers via `openDir`. See #33 — PR #34 (unmerged) carries the
+ * fuller cross-platform version of this check; this is the minimal form.
+ */
+export function isWorktreeDestination(repo: string, path: string): boolean {
+  if (typeof repo !== 'string' || !repo || typeof path !== 'string' || !path) return false
+  const base = normalize(`${dirname(resolve(repo))}/${WORKTREE_DIR}`)
+  return normalize(path).startsWith(`${base}/`)
 }
 
 /**

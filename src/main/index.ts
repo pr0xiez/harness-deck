@@ -29,11 +29,18 @@ import type {
   WorktreeRequest
 } from '@shared/types'
 import { IPC, type IpcChannel } from '@shared/ipc'
+import { WORKTREE_DIR } from '@shared/worktree'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
 import { decidePermission, originOf, type TrustedPage } from './permissions'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
-import { isAppWorktree, isOpenDir, openDir, seedRegistry } from './repo-registry'
+import {
+  isAppWorktree,
+  isOpenDir,
+  isWorktreeDestination,
+  openDir,
+  seedRegistry
+} from './repo-registry'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
 import { ScrollbackStore } from './scrollback'
 import { loadState, saveState, stateLocation } from './store'
@@ -519,6 +526,17 @@ function registerIpc(): void {
   ipcMain.handle(IPC.gitAddWorktree, async (_e, req: WorktreeRequest) => {
     if (!isOpenDir(req?.repo ?? '')) {
       return { ok: false, error: `${req?.repo ?? ''} is not open in Harness Deck.` }
+    }
+    // worktreePath() in shared/worktree.ts is the only thing that ever
+    // produces req.path for a legitimate request, and everything it produces
+    // lands under `.harness-deck` beside the repo — cheap insurance against a
+    // caller that skipped it and named a checkout destination of its own. See
+    // #33 (PR #34, unmerged, has the fuller cross-platform version).
+    if (!isWorktreeDestination(req.repo, req?.path ?? '')) {
+      return {
+        ok: false,
+        error: `${req?.path ?? ''} is outside the ${WORKTREE_DIR} folder beside the repo.`
+      }
     }
     const result = await addWorktree(req)
     if (result.ok && result.path) openDir(result.path)

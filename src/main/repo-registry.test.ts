@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { PersistedState } from '@shared/types'
-import { isAppWorktree, isOpenDir, openDir, resetRegistry, seedRegistry } from './repo-registry'
+import {
+  isAppWorktree,
+  isOpenDir,
+  isWorktreeDestination,
+  openDir,
+  resetRegistry,
+  seedRegistry
+} from './repo-registry'
 
 /**
  * The registry is what stands between a renderer-supplied path and a git
@@ -92,6 +99,47 @@ describe('isAppWorktree', () => {
 
     expect(isAppWorktree(symlinkName)).toBe(true)
     expect(isAppWorktree(resolvedRoot)).toBe(false)
+  })
+})
+
+describe('isWorktreeDestination', () => {
+  const repo = '/home/dev/projects/deck'
+
+  it('allows a path inside .harness-deck beside the repo', () => {
+    expect(isWorktreeDestination(repo, '/home/dev/projects/.harness-deck/deck/hd/api')).toBe(true)
+  })
+
+  it('allows the numbered variants freeSlot falls back to', () => {
+    expect(isWorktreeDestination(repo, '/home/dev/projects/.harness-deck/deck/hd/api-2')).toBe(
+      true
+    )
+  })
+
+  it('rejects a path outside .harness-deck entirely', () => {
+    expect(isWorktreeDestination(repo, '/home/dev/autostart/evil')).toBe(false)
+  })
+
+  it('rejects the .harness-deck folder itself — a worktree is always something inside it', () => {
+    expect(isWorktreeDestination(repo, '/home/dev/projects/.harness-deck')).toBe(false)
+  })
+
+  it('rejects a sibling whose name merely starts with .harness-deck', () => {
+    expect(isWorktreeDestination(repo, '/home/dev/projects/.harness-deck-evil/x')).toBe(false)
+  })
+
+  it("rejects a .harness-deck beside somebody else's repo", () => {
+    expect(isWorktreeDestination(repo, '/tmp/.harness-deck/deck/hd/api')).toBe(false)
+  })
+
+  it('rejects a path that climbs back out with ..', () => {
+    expect(isWorktreeDestination(repo, '/home/dev/projects/.harness-deck/../../etc/evil')).toBe(
+      false
+    )
+  })
+
+  it('rejects empty or missing input', () => {
+    expect(isWorktreeDestination(repo, '')).toBe(false)
+    expect(isWorktreeDestination('', '/home/dev/projects/.harness-deck/deck/hd/api')).toBe(false)
   })
 })
 

@@ -809,9 +809,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   },
 
   ringBell: (paneId) => {
-    const pane = get()
-      .workspaces.flatMap((w) => w.panes)
-      .find((p) => p.id === paneId)
+    const pane = findPane(get().workspaces, paneId)
     // `woke` is only news when there was a snooze to cut short; setting it on
     // every bell would flag panes nobody had put off in the first place.
     get().updatePane(paneId, {
@@ -821,16 +819,12 @@ export const useDeck = create<DeckState>((set, get) => ({
   },
 
   toggleAcknowledged: (paneId) => {
-    const pane = get()
-      .workspaces.flatMap((w) => w.panes)
-      .find((p) => p.id === paneId)
+    const pane = findPane(get().workspaces, paneId)
     if (pane) get().updatePane(paneId, { acknowledged: !pane.acknowledged })
   },
 
   cycleSnooze: (paneId) => {
-    const pane = get()
-      .workspaces.flatMap((w) => w.panes)
-      .find((p) => p.id === paneId)
+    const pane = findPane(get().workspaces, paneId)
     if (!pane) return
     const next =
       pane.snooze === undefined ? 'quiet' : pane.snooze === 'quiet' ? Date.now() + SNOOZE_MS : undefined
@@ -839,9 +833,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   },
 
   toggleMuted: (paneId) => {
-    const pane = get()
-      .workspaces.flatMap((w) => w.panes)
-      .find((p) => p.id === paneId)
+    const pane = findPane(get().workspaces, paneId)
     if (pane) get().updatePane(paneId, { attentionMuted: !pane.attentionMuted })
   },
 
@@ -941,6 +933,18 @@ export function isActionable(pane: PaneView, now: number = Date.now()): boolean 
 export const activeWorkspace = (state: DeckState): DeckWorkspace | undefined =>
   state.workspaces.find((w) => w.id === state.activeWorkspaceId)
 
+/** The pane with this id, wherever in the deck it lives. */
+export const findPane = (
+  workspaces: DeckWorkspace[],
+  paneId: string | null | undefined
+): PaneView | undefined => workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId)
+
+/** The workspace holding the pane with this id. */
+export const findPaneWorkspace = (
+  workspaces: DeckWorkspace[],
+  paneId: string
+): DeckWorkspace | undefined => workspaces.find((w) => w.panes.some((p) => p.id === paneId))
+
 export const useActiveWorkspace = (): DeckWorkspace | undefined => useDeck(activeWorkspace)
 
 /** Strips transient fields and hands the result to the main process. */
@@ -1037,7 +1041,7 @@ export function onQuietPane(handler: (event: QuietPaneEvent) => void): () => voi
 export function startAttention(): () => void {
   return api.pty.onQuiet(({ id, quiet }) => {
     const state = useDeck.getState()
-    const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === id)
+    const pane = findPane(state.workspaces, id)
     // An exit is the newer truth — a dead pane is not waiting for you — and
     // the guard doubles as the once-per-transition rule for the notification.
     if (!pane || pane.status !== (quiet ? 'running' : 'waiting')) return

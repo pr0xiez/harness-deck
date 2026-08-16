@@ -132,13 +132,20 @@ const INSTALLER_EXT: Partial<Record<NodeJS.Platform, string>> = {
  * a person would install, so the platform's installer has to be picked by
  * extension rather than by taking the first entry. `path` is the fallback for
  * a feed that only ever had one artifact.
+ *
+ * An entry the feed names no sha512 for is refused outright: the hash is the
+ * only thing tying the bytes we later download to the release that offered
+ * them, so without one there is nothing to verify against and the installer
+ * must never be offered in the first place.
  */
 export function pickInstaller(yml: LatestYml, platform: NodeJS.Platform): ReleaseFile | null {
   const ext = INSTALLER_EXT[platform]
   const match = ext ? yml.files.find((file) => file.url.toLowerCase().endsWith(ext)) : undefined
   const chosen = match ?? yml.files.find((file) => file.url === yml.path) ?? yml.files[0] ?? null
   if (!chosen?.url) return null
-  return { ...chosen, sha512: chosen.sha512 ?? yml.sha512, size: chosen.size ?? yml.size }
+  const sha512 = chosen.sha512 ?? yml.sha512
+  if (!sha512) return null
+  return { ...chosen, sha512, size: chosen.size ?? yml.size }
 }
 
 /**

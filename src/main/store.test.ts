@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -140,6 +140,63 @@ describe('writeJsonAtomic', () => {
 
     expect(existsSync(`${file}.bak`)).toBe(false)
   })
+
+  /**
+   * These files carry pane env vars in plain text, so nobody else on the
+   * machine gets to read them. The mode rides the temp file through the
+   * rename — even over an older copy left wide open by a previous version.
+   * Windows has no POSIX modes to assert on, so this stays off there.
+   */
+  it.skipIf(process.platform === 'win32')('leaves the file readable by its owner alone', () => {
+    const file = join(dir, 'thing.json')
+    put(file, JSON.stringify({ generation: 0 }))
+    // A previous version wrote this with default permissions.
+
+    writeJsonAtomic(file, { generation: 1 })
+
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+  })
+
+  /**
+   * The regression this pins: `writeFileSync`'s `mode` argument is only
+   * honoured when it creates the file. A `.tmp` left behind at 0o644 by a
+   * build that crashed (or simply predates this control) sits at that mode
+   * forever otherwise, because every later write reuses the same path and
+   * `open(2)` ignores `mode` on a path that already exists.
+   */
+  it.skipIf(process.platform === 'win32')('tightens a leftover .tmp left wide open by a crashed older build', () => {
+    const file = join(dir, 'thing.json')
+    const tmp = `${file}.tmp`
+    put(tmp, 'half-written junk from a build that died before renaming')
+    chmodSync(tmp, 0o644)
+
+    writeJsonAtomic(file, { generation: 1 })
+
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+  })
+
+  /**
+   * Same story for `.bak`: `copyFileSync` only carries the source's mode
+   * onto a destination it *creates*. A `.bak` already on disk at 0o644 keeps
+   * that mode through the copy unless it's chmod'd explicitly afterward —
+   * and `loadState` reads `.bak` as a full fallback, so it's a complete copy
+   * of every pane's env, not a scratch file nobody reads.
+   */
+  it.skipIf(process.platform === 'win32')(
+    'tightens a pre-existing .bak left wide open by an older build, not just the target',
+    () => {
+      const file = join(dir, 'thing.json')
+      put(file, JSON.stringify({ generation: 0 }))
+      chmodSync(file, 0o644)
+      put(`${file}.bak`, JSON.stringify({ generation: -1 }))
+      chmodSync(`${file}.bak`, 0o644)
+
+      writeJsonAtomic(file, { generation: 1 })
+
+      expect(statSync(file).mode & 0o777).toBe(0o600)
+      expect(statSync(`${file}.bak`).mode & 0o777).toBe(0o600)
+    }
+  )
 
   it('leaves no half-written temp file behind', () => {
     const file = join(dir, 'thing.json')

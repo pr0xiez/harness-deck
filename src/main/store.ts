@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { PersistedState } from '@shared/types'
+import type { PersistedState, SaveStateResult } from '@shared/types'
 
 export const STATE_VERSION = 1
 
@@ -39,21 +39,31 @@ export function loadState(baseDir: string = userData()): PersistedState | null {
   return null
 }
 
-/** Writes via a temp file + rename so a crash mid-write can't corrupt state. */
-export function writeJsonAtomic(file: string, value: unknown): void {
+/**
+ * Writes via a temp file + rename so a crash mid-write can't corrupt state.
+ *
+ * A failure is reported rather than thrown: every caller is a menu command or
+ * an IPC handler, and a throw would take the app down over a file it can say
+ * something about instead. The result carries the reason so the renderer can
+ * put it in front of the user (issue #26) — before it did, a full disk lost a
+ * whole session of edits with nothing but a console line in the main process.
+ */
+export function writeJsonAtomic(file: string, value: unknown): SaveStateResult {
   try {
     mkdirSync(dirname(file), { recursive: true })
     if (existsSync(file)) copyFileSync(file, `${file}.bak`)
     const tmp = `${file}.tmp`
     writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8')
     renameSync(tmp, file)
+    return { ok: true }
   } catch (err) {
     console.error(`[store] failed to write ${file}:`, err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
-export function saveState(state: PersistedState, baseDir: string = userData()): void {
-  writeJsonAtomic(statePath(baseDir), { ...state, version: STATE_VERSION })
+export function saveState(state: PersistedState, baseDir: string = userData()): SaveStateResult {
+  return writeJsonAtomic(statePath(baseDir), { ...state, version: STATE_VERSION })
 }
 
 export function stateLocation(baseDir: string = userData()): string {

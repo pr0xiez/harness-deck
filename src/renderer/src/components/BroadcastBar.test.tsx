@@ -28,7 +28,7 @@ const send = (selection: string): void =>
 const box = (): HTMLTextAreaElement => screen.getByRole('textbox') as HTMLTextAreaElement
 
 afterEach(() => {
-  useDeck.setState({ settings: DEFAULT_SETTINGS })
+  useDeck.setState({ settings: DEFAULT_SETTINGS, profiles: [] })
   useDeck.getState().setUi({ pendingInsert: null })
 })
 
@@ -54,6 +54,49 @@ describe('fencedBlock', () => {
   /** A drag past the end of the last line brings blank space back with it. */
   it('does not keep the trailing blank a drag picked up', () => {
     expect(fencedBlock('npm ERR! 404\n\n  ')).toBe('\n```\nnpm ERR! 404\n```\n')
+  })
+})
+
+describe('the target chips', () => {
+  /**
+   * The chip's label once stopped at the profile name, so a fresh pane opened
+   * from a nameless profile rendered an empty chip. The command is the floor.
+   */
+  it('labels a fresh pane by its command when its profile has no name', () => {
+    useDeck.setState({
+      profiles: [
+        {
+          id: 'custom:dev',
+          name: '',
+          command: 'npm',
+          args: [],
+          kind: 'custom',
+          icon: '»',
+          accent: '#7aa2f7',
+          available: true
+        }
+      ]
+    })
+    render(
+      <BroadcastBar
+        workspace={{
+          ...workspace,
+          panes: [
+            {
+              id: 'p1',
+              profileId: 'custom:dev',
+              command: 'npm run dev',
+              args: [],
+              cwd: '/repos/deck',
+              status: 'running',
+              epoch: 0
+            }
+          ]
+        }}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: /npm run dev/ })).toBeTruthy()
   })
 })
 

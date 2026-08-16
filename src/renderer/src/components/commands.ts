@@ -1,3 +1,4 @@
+import { paneLabel } from '../paneLabel'
 import { isActionable, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
@@ -255,7 +256,7 @@ export function paneCommands(state: Deck, workspace: DeckWorkspace): Command[] {
     list.push({
       id: `pane:focus:${pane.id}`,
       group: 'Panes',
-      label: `Focus ${pane.name || pane.processTitle || profile?.name || pane.command}`,
+      label: `Focus ${paneLabel(pane, profile)}`,
       hint: index < 9 ? `Alt+${index + 1}` : undefined,
       run: () => state.setActivePane(workspace.id, pane.id)
     })
@@ -270,16 +271,15 @@ export function activePaneCommands(
   workspace: DeckWorkspace,
   activePane: PaneView
 ): Command[] {
-  const paneLabel =
-    activePane.name ||
-    activePane.processTitle ||
-    state.profiles.find((p) => p.id === activePane.profileId)?.name ||
-    activePane.command
+  const activeLabel = paneLabel(
+    activePane,
+    state.profiles.find((p) => p.id === activePane.profileId)
+  )
   const copyTranscript = async (strip: boolean): Promise<void> =>
     api.clipboard.write(await api.pty.transcript(activePane.id, strip))
   const saveTranscript = async (strip: boolean): Promise<void> => {
     await api.saveText({
-      defaultName: transcriptName(workspace.name, paneLabel, new Date()),
+      defaultName: transcriptName(workspace.name, activeLabel, new Date()),
       text: await api.pty.transcript(activePane.id, strip)
     })
   }

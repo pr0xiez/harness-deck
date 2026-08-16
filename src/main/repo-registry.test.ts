@@ -132,4 +132,27 @@ describe('seedRegistry', () => {
 
     expect(isOpenDir(process.cwd())).toBe(false)
   })
+
+  /**
+   * `addWorkspace()` points a brand-new workspace at `settings.defaultCwd`
+   * before that workspace's own `cwd` is ever saved — so on a fresh boot the
+   * default folder needs to already be open, or `git:info` comes back `null`
+   * for a folder the user explicitly configured. See finding in review of #50.
+   */
+  it('opens the persisted default cwd, not just workspaces and panes', () => {
+    const withDefault = {
+      ...state,
+      settings: { defaultCwd: '/home/dev/repos' }
+    } as unknown as PersistedState
+
+    seedRegistry(withDefault)
+
+    expect(isOpenDir('/home/dev/repos')).toBe(true)
+  })
+
+  it('tolerates a missing settings object', () => {
+    seedRegistry(state)
+
+    expect(isOpenDir('/src/deck')).toBe(true)
+  })
 })

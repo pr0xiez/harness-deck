@@ -56,8 +56,13 @@ export function isAppWorktree(path: string): boolean {
  * The startup grant: every folder the saved layout points a workspace or pane
  * at is one the user put there. A pane's worktree only counts when it follows
  * the convention — loadState scrubs those anyway, and this does not rely on it.
+ * The persisted default cwd counts too: it is where `addWorkspace()` points a
+ * brand-new workspace before that workspace's own `cwd` is ever saved, so a
+ * fresh workspace on a fresh boot needs it open already or `git:info` comes
+ * back `null` for a folder the user explicitly configured.
  */
 export function seedRegistry(state: PersistedState | null): void {
+  openDir(state?.settings?.defaultCwd)
   for (const workspace of state?.workspaces ?? []) {
     openDir(workspace.cwd)
     for (const pane of workspace.panes ?? []) {

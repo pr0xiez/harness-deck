@@ -17,6 +17,7 @@ import type {
   RemoteStatus,
   RepoInfo,
   SavedProfile,
+  SaveStateResult,
   SaveTextRequest,
   SaveTextResult,
   TranscribeRequest,
@@ -40,7 +41,9 @@ const api = {
   info: (): Promise<AppInfo> => ipcRenderer.invoke(IPC.appInfo),
 
   loadState: (): Promise<PersistedState | null> => ipcRenderer.invoke(IPC.stateLoad),
-  saveState: (state: PersistedState): void => ipcRenderer.send(IPC.stateSave, state),
+  /** Resolves with what became of the write, so the renderer can say when it failed. */
+  saveState: (state: PersistedState): Promise<SaveStateResult> =>
+    ipcRenderer.invoke(IPC.stateSave, state),
   stateLocation: (): Promise<string> => ipcRenderer.invoke(IPC.stateLocation),
 
   /** @deprecated Use `profiles.list`. Kept so older call sites keep compiling. */
@@ -143,6 +146,7 @@ const api = {
     ipcRenderer.invoke(IPC.dialogSaveText, req),
 
   clipboard: {
+    /** Empty unless invoked within a moment of the paste chord (paste-gate.ts). */
     read: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardRead),
     write: (text: string): void => ipcRenderer.send(IPC.clipboardWrite, text)
   },
@@ -185,6 +189,11 @@ const api = {
 
   openExternal: (url: string): void => ipcRenderer.send(IPC.appOpenExternal, url),
   openPath: (path: string): void => ipcRenderer.send(IPC.appOpenPath, path),
+  /**
+   * Dev-only: the channel is registered only when the app was launched with
+   * `--capture=` (rejects otherwise), and the target must stay inside that
+   * flag's directory — anything else comes back null. See issue #29.
+   */
   capture: (target: string): Promise<string | null> => ipcRenderer.invoke(IPC.appCapture, target)
 }
 

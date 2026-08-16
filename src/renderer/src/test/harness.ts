@@ -1,4 +1,5 @@
 import { vi, type Mock } from 'vitest'
+import type { SaveStateResult } from '@shared/types'
 
 /**
  * The preload bridge, stubbed.
@@ -34,7 +35,10 @@ export const harness = {
   info: vi.fn(),
 
   loadState: vi.fn(),
-  saveState: vi.fn(),
+  // Succeeds unless a test says otherwise: the store awaits the result of
+  // every save, so a bare vi.fn()'s `undefined` would reject far from the
+  // test that caused it. Failure tests use `mockResolvedValueOnce`.
+  saveState: vi.fn(async (_state: unknown): Promise<SaveStateResult> => ({ ok: true })),
   stateLocation: vi.fn(),
 
   listProfiles: vi.fn(),

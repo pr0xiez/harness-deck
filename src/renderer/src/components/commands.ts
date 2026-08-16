@@ -22,8 +22,45 @@ export interface Command {
   run: () => void
 }
 
-/** The whole store, actions included — the builders call straight into it. */
-type Deck = ReturnType<typeof useDeck.getState>
+/**
+ * Only the store fields the builders below actually read, not the whole
+ * thing — `CommandPalette` selects exactly these out of `useDeck` so a change
+ * anywhere else in the store (bell rings, repo refreshes, notice toasts) does
+ * not re-render the palette. Add a key here when a builder starts using one.
+ */
+type Deck = Pick<
+  ReturnType<typeof useDeck.getState>,
+  | 'workspaces'
+  | 'activeWorkspaceId'
+  | 'templates'
+  | 'profiles'
+  | 'settings'
+  | 'ui'
+  | 'update'
+  | 'setUi'
+  | 'setActiveWorkspace'
+  | 'addWorkspace'
+  | 'newWorkspaceFromTemplate'
+  | 'updateWorkspace'
+  | 'duplicateWorkspace'
+  | 'removeWorkspace'
+  | 'runWorkspaceAction'
+  | 'setLayout'
+  | 'setColumns'
+  | 'addPane'
+  | 'focusNextWaiting'
+  | 'setActivePane'
+  | 'restartPane'
+  | 'updatePane'
+  | 'killPane'
+  | 'toggleZoom'
+  | 'closePane'
+  | 'refreshProfiles'
+  | 'showUpdate'
+  | 'checkForUpdate'
+  | 'installUpdate'
+  | 'updateSettings'
+>
 
 /** Names a workspace or pane in a way every filesystem will accept. */
 const slug = (text: string): string =>

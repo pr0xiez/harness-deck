@@ -7,7 +7,7 @@ import type {
   VoiceKeyState,
   VoiceProvider
 } from '@shared/types'
-import { voiceProvider } from '@shared/voice'
+import { voiceEndpointAllowed, voiceProvider } from '@shared/voice'
 import { shellEnv } from './shell-env'
 
 /**
@@ -59,8 +59,14 @@ function storedKey(provider: VoiceProvider): { key: string; encrypted: boolean }
   }
 }
 
-/** Keys exported in the user's shell profile, so no copy needs to be stored. */
-function envKey(provider: VoiceProvider): { key: string; envVar: string } | null {
+/**
+ * Keys exported in the user's shell profile, so no copy needs to be stored.
+ * `custom` has no `envVars` (see shared/voice.ts) and is additionally refused
+ * below in `resolveKey` — belt and suspenders against issue #17 reopening:
+ * `custom` accepts any http(s) host, so it must never pick up a key meant for
+ * a hosted service, however that key reached the environment.
+ */
+export function envKey(provider: VoiceProvider): { key: string; envVar: string } | null {
   const env = shellEnv()
   for (const envVar of voiceProvider(provider).envVars) {
     const key = env[envVar]?.trim()
@@ -70,7 +76,12 @@ function envKey(provider: VoiceProvider): { key: string; envVar: string } | null
 }
 
 function resolveKey(provider: VoiceProvider): string | null {
-  return storedKey(provider)?.key ?? envKey(provider)?.key ?? null
+  const stored = storedKey(provider)?.key
+  if (stored) return stored
+  // custom may only ever use a key stored specifically for it — never one
+  // read from the environment, which a hosted provider's key also lives in.
+  if (provider === 'custom') return null
+  return envKey(provider)?.key ?? null
 }
 
 export function keyState(provider: VoiceProvider): VoiceKeyState {
@@ -226,6 +237,18 @@ export async function transcribe(req: TranscribeRequest): Promise<TranscribeResu
 
   if (!/^https?:\/\//i.test(req.baseUrl)) {
     return done({ error: 'No transcription URL configured — set one in Settings › Voice input.' })
+  }
+  // The renderer names both the provider and the URL, so a compromised
+  // renderer could pair a real key with an attacker's endpoint. Refuse before
+  // any key is resolved: a hosted provider's key only ever goes to that
+  // provider's own host, over https.
+  if (!voiceEndpointAllowed(req.provider, req.baseUrl)) {
+    const info = voiceProvider(req.provider)
+    return done({
+      error: info.baseUrl
+        ? `Refusing to contact ${req.baseUrl} — ${info.name} requests only go to ${info.baseUrl}.`
+        : `${req.baseUrl} is not a usable endpoint URL — check Settings › Voice input.`
+    })
   }
   if (req.audio.byteLength < MIN_AUDIO_BYTES) {
     return done({ error: 'That was too short to transcribe.' })

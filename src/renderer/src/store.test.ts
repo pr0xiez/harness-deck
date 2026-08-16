@@ -4,6 +4,7 @@ import { harness } from './test/harness'
 import {
   activeWorkspace,
   DEFAULT_SETTINGS,
+  DEFAULT_VOICE,
   isActionable,
   isLive,
   onQuietPane,
@@ -517,6 +518,70 @@ describe('startPersistence', () => {
 
     expect(harness.saveState).toHaveBeenCalledTimes(2)
     expect(store.useDeck.getState().saveError).toBeNull()
+  })
+})
+
+describe('hydrate', () => {
+  const info = {
+    platform: 'linux' as NodeJS.Platform,
+    versions: { electron: '1', chrome: '1', node: '1', app: '1' },
+    homeDir: '/home/user',
+    defaultShell: '/bin/bash',
+    defaultCwd: '/home/user/project'
+  }
+
+  const saved = (voice: Partial<PersistedState['settings']['voice']>): PersistedState =>
+    ({
+      version: 1,
+      workspaces: [],
+      activeWorkspaceId: null,
+      settings: { ...DEFAULT_SETTINGS, voice: { ...DEFAULT_VOICE, ...voice } }
+    }) as PersistedState
+
+  beforeEach(() => {
+    harness.info.mockResolvedValue(info)
+    harness.profiles.list.mockResolvedValue([])
+  })
+
+  /**
+   * `voiceBaseUrl` (shared/voice.ts) stopped honouring a hosted provider's
+   * stored endpoint override. Settings saved by an older build that relied on
+   * that — an OpenAI-compatible local server under `provider: 'openai'` — must
+   * not start sending that server's key to `api.openai.com` on the next
+   * dictation instead. See the migration's own doc comment for the full story.
+   */
+  it('flips a hosted provider with a stored endpoint override to custom, keeping the address', async () => {
+    harness.loadState.mockResolvedValue(
+      saved({ provider: 'openai', baseUrl: 'http://127.0.0.1:8000/v1' })
+    )
+
+    await useDeck.getState().hydrate()
+
+    expect(useDeck.getState().settings.voice).toMatchObject({
+      provider: 'custom',
+      baseUrl: 'http://127.0.0.1:8000/v1'
+    })
+  })
+
+  it('leaves a hosted provider alone when no endpoint override is stored', async () => {
+    harness.loadState.mockResolvedValue(saved({ provider: 'openai', baseUrl: '' }))
+
+    await useDeck.getState().hydrate()
+
+    expect(useDeck.getState().settings.voice.provider).toBe('openai')
+  })
+
+  it('leaves a custom provider alone — its baseUrl is meant to be user-supplied', async () => {
+    harness.loadState.mockResolvedValue(
+      saved({ provider: 'custom', baseUrl: 'http://127.0.0.1:8000/v1' })
+    )
+
+    await useDeck.getState().hydrate()
+
+    expect(useDeck.getState().settings.voice).toMatchObject({
+      provider: 'custom',
+      baseUrl: 'http://127.0.0.1:8000/v1'
+    })
   })
 })
 

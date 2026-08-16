@@ -17,6 +17,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
   DiffRequest,
+  EnsureResult,
   PaneSpec,
   PersistedState,
   RemoteStatus,
@@ -30,6 +31,12 @@ import type {
 } from '@shared/types'
 import { IPC, type IpcChannel } from '@shared/ipc'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import {
+  type ApprovalCandidate,
+  type ApprovalStore,
+  loadApprovalStore,
+  verifyPaneSpec
+} from './pane-guard'
 import { PasteGate } from './paste-gate'
 import { resolveWithin } from './paths'
 import { decidePermission, originOf, type TrustedPage } from './permissions'
@@ -55,6 +62,8 @@ const isMac = process.platform === 'darwin'
 
 let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
+/** Pane specs a human has already clicked "Start" on — see pane-guard.ts. */
+let approvedPanes: ApprovalStore | null = null
 /** Records the paste chord off real keyboard input; gates `clipboard:read`. */
 const pasteGate = new PasteGate()
 /** Set when we are quitting to hand over to an installer — skip the pane prompt. */
@@ -237,6 +246,40 @@ function askStopRunning(win: BrowserWindow | null): boolean {
     win && !win.isDestroyed()
       ? dialog.showMessageBoxSync(win, options)
       : dialog.showMessageBoxSync(options)
+  return response === 0
+}
+
+/**
+ * The one Electron-touching step of the pane guard (pane-guard.ts): a native
+ * dialog a compromised renderer cannot click on the user's behalf. Shown once
+ * per distinct spec — pane-guard.ts caches the answer by digest, so this only
+ * fires for a spec (or a change to one) main has not seen approved before.
+ */
+async function requestPaneApproval(candidate: ApprovalCandidate): Promise<boolean> {
+  if (!mainWindow || mainWindow.isDestroyed()) return false
+  const lines = [
+    `Command: ${candidate.command}`,
+    `Args: ${candidate.args.length ? candidate.args.join(' ') : '(none)'}`,
+    `Folder: ${candidate.cwd}`,
+    `Setup: ${candidate.setup?.trim() || '(none)'}`,
+    `Env: ${
+      candidate.env && Object.keys(candidate.env).length
+        ? Object.entries(candidate.env)
+            .map(([key, value]) => `${key}=${value}`)
+            .join(', ')
+        : '(none)'
+    }`
+  ]
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: ['Start', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Start this pane?',
+    message: candidate.viaShell ? 'Run this command line in a shell?' : 'Start this process?',
+    detail: lines.join('\n'),
+    noLink: true
+  })
   return response === 0
 }
 
@@ -529,8 +572,30 @@ function registerIpc(): void {
   ipcMain.handle(IPC.updateSetChannel, (_e, channel: UpdateChannel) => setChannel(channel))
   ipcMain.handle(IPC.updateInstall, () => install())
 
-  ipcMain.handle(IPC.ptyEnsure, (_e, spec: PaneSpec, cols: number, rows: number) =>
-    ptys!.ensure(spec, cols, rows)
+  // The renderer's spec is a claim, not an instruction: it must re-derive from
+  // a built-in detected profile (trusted without asking), or clear a one-time
+  // native-dialog approval kept by main — see pane-guard.ts (issue #18).
+  ipcMain.handle(
+    IPC.ptyEnsure,
+    async (_e, spec: PaneSpec, cols: number, rows: number): Promise<EnsureResult> => {
+      const verdict = await verifyPaneSpec(spec, {
+        profiles: () => detectProfiles(),
+        attached: (id) => ptys!.status(id) !== null,
+        approve: (candidate) => requestPaneApproval(candidate),
+        approvals: approvedPanes!
+      })
+      if (!verdict.ok) {
+        console.warn(`[pty] refused pty:ensure: ${verdict.reason}`)
+        return {
+          created: false,
+          status: 'exited',
+          exitCode: -1,
+          replay: `\x1b[31mRefused to launch this pane: ${verdict.reason}\x1b[0m\r\n`,
+          error: verdict.reason
+        }
+      }
+      return ptys!.ensure(verdict.spec, cols, rows)
+    }
   )
   ipcMain.on(IPC.ptyWrite, (_e, id: string, data: string) => ptys!.write(id, data))
   ipcMain.on(IPC.ptyResize, (_e, id: string, cols: number, rows: number) =>
@@ -699,6 +764,7 @@ if (!app.requestSingleInstanceLock()) {
     const scrollback = new ScrollbackStore(app.getPath('userData'))
     pruneScrollback(scrollback)
     ptys = new PtyManager(send, undefined, () => quietMs, scrollback)
+    approvedPanes = loadApprovalStore(join(app.getPath('userData'), 'approved-panes.json'))
     registerIpc()
     // Before the window, so the renderer hydrates a state file it did not write.
     if (smoke) seedSmokeState()

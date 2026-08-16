@@ -79,7 +79,13 @@ export const VOICE_PROVIDERS: VoiceProviderInfo[] = [
     models: [],
     api: 'transcriptions',
     audio: 'webm',
-    envVars: ['HD_VOICE_API_KEY'],
+    // Empty on purpose: `custom` accepts any http(s) host the user types in
+    // (see `voiceEndpointAllowed`), so it may only ever send the key stored
+    // specifically for it — never `HD_VOICE_API_KEY`, which every hosted
+    // service also reads and would otherwise leak to whatever host a
+    // compromised renderer names. `resolveKey` in main/voice.ts enforces the
+    // same rule on the read side.
+    envVars: [],
     hint: 'Anything serving /audio/transcriptions — e.g. http://127.0.0.1:8000/v1 for a local Whisper.'
   }
 ]
@@ -88,12 +94,53 @@ export function voiceProvider(id: VoiceProvider): VoiceProviderInfo {
   return VOICE_PROVIDERS.find((p) => p.id === id) ?? VOICE_PROVIDERS[0]
 }
 
-/** Endpoint root for these settings, trailing slashes trimmed. */
+/**
+ * Endpoint root for these settings, trailing slashes trimmed. Only the custom
+ * service takes a user-supplied address; for a hosted service any stored
+ * override is ignored, so its key can never be aimed somewhere else.
+ */
 export function voiceBaseUrl(voice: VoiceSettings): string {
-  const base = voice.baseUrl.trim() || voiceProvider(voice.provider).baseUrl
+  const base =
+    voice.provider === 'custom' ? voice.baseUrl.trim() : voiceProvider(voice.provider).baseUrl
   return base.replace(/\/+$/, '')
+}
+
+/**
+ * Whether a request for `provider` may go to `baseUrl`. Hosted services only
+ * ever talk to their own https endpoint — an exact host match, so neither
+ * `api.openai.com.evil.com` nor `evil.com/?x=api.openai.com` slips a key out.
+ * The custom service accepts any http(s) address, and its requests only ever
+ * carry the custom-scoped key.
+ */
+export function voiceEndpointAllowed(provider: VoiceProvider, baseUrl: string): boolean {
+  let url: URL
+  try {
+    url = new URL(baseUrl)
+  } catch {
+    return false
+  }
+  if (provider === 'custom') return url.protocol === 'https:' || url.protocol === 'http:'
+  return url.protocol === 'https:' && url.host === new URL(voiceProvider(provider).baseUrl).host
 }
 
 export function voiceModel(voice: VoiceSettings): string {
   return voice.model.trim() || voiceProvider(voice.provider).model
+}
+
+/**
+ * One-time upgrade for settings saved before `voiceBaseUrl` started ignoring a
+ * hosted provider's stored override. Before that, `provider: 'openai'` with a
+ * `baseUrl` pointed at a local OpenAI-compatible server (LocalAI, an
+ * on-machine Whisper) was a supported way to run one. After it, the override
+ * is silently dropped and the request — and whatever key is on file — goes to
+ * `api.openai.com` instead, a host it was never meant for. Flipping the
+ * provider to `custom` keeps the address working and keeps the key from
+ * travelling to a third party it was never issued for; called once on
+ * hydrate, so a `baseUrl` typed for `custom` itself passes through untouched.
+ */
+export function migrateVoiceSettings(voice: VoiceSettings): VoiceSettings {
+  if (voice.provider !== 'custom' && voice.baseUrl.trim()) {
+    return { ...voice, provider: 'custom' }
+  }
+  return voice
 }

@@ -222,6 +222,11 @@ export function TerminalPane({
     let cancelled = false
     const { term } = handle
     void (async () => {
+      // The main process decides whether to spawn this on its own terms — a
+      // detected built-in profile, or a one-time native-dialog approval it
+      // remembers by digest (see main/pane-guard.ts). It never trusts this
+      // process's copy of persisted state, so there is nothing to flush here
+      // before asking.
       const result = await api.pty.ensure(
         {
           id: paneId,

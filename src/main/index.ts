@@ -30,6 +30,7 @@ import type {
 } from '@shared/types'
 import { IPC, type IpcChannel } from '@shared/ipc'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import { navigationAllowed } from './nav-guard'
 import { PasteGate } from './paste-gate'
 import { resolveWithin } from './paths'
 import { decidePermission, originOf, type TrustedPage } from './permissions'
@@ -272,7 +273,7 @@ function createWindow(): BrowserWindow {
     title: 'Harness Deck',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       spellcheck: false
     }
@@ -307,20 +308,33 @@ function createWindow(): BrowserWindow {
   // The preload re-runs on every document load, so navigating anywhere but our
   // own content would hand window.harness to whatever loaded — a file dropped
   // on the window is enough to trigger it. Only the app's own URL may load;
-  // everything else is blocked. The renderer also cancels drag-and-drop at the
-  // document (see main.tsx), but this guard is the one that cannot be bypassed.
-  // A packaged build never follows the dev-server variable (#51), so the guard
-  // and the load below read the same gated value.
+  // everything else is blocked, and http(s) URLs go to the browser instead,
+  // mirroring the window-open handler above. The renderer also cancels
+  // drag-and-drop at the document (see main.tsx), but this guard is the one
+  // that cannot be bypassed. A packaged build never follows the dev-server
+  // variable (#51), so the guard and the load below read the same gated
+  // value, and an unparseable value is treated as "no dev server" rather than
+  // throwing.
   const devUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL']
+  const devOrigin = originOf(devUrl)
   const appUrl = pathToFileURL(join(__dirname, '../renderer/index.html')).href
-  const isAllowedNavigation = (url: string): boolean =>
-    devUrl ? new URL(url).origin === new URL(devUrl).origin : url === appUrl
   win.webContents.on('will-navigate', (event, url) => {
-    if (!isAllowedNavigation(url)) event.preventDefault()
+    if (navigationAllowed(url, devOrigin, appUrl)) return
+    event.preventDefault()
+    if (/^https?:/.test(url)) shell.openExternal(url)
   })
   // will-navigate only covers the main frame; this catches subframes too.
   win.webContents.on('will-frame-navigate', (event) => {
-    if (!isAllowedNavigation(event.url)) event.preventDefault()
+    if (!navigationAllowed(event.url, devOrigin, appUrl)) event.preventDefault()
+  })
+  // will-navigate only fires at the start of a navigation; a redirect on an
+  // otherwise-allowed request (e.g. the dev server answering 302) never
+  // re-fires it, so it needs its own check. Nothing opens externally here:
+  // a redirect target is the server's doing, not a click, so handing it to
+  // the browser would let a compromised response force-open arbitrary URLs
+  // with no user action in the loop at all.
+  win.webContents.on('will-redirect', (event, url) => {
+    if (!navigationAllowed(url, devOrigin, appUrl)) event.preventDefault()
   })
 
   // The renderer's paste path (Ctrl/Cmd+Shift+V, see shortcuts.ts) asks the

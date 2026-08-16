@@ -446,6 +446,78 @@ describe('startPersistence', () => {
 
     expect(harness.saveState).toHaveBeenCalledTimes(1)
   })
+
+  /**
+   * Issue #26: the write used to be fire-and-forget end to end, so a full disk
+   * lost the whole session with no signal anywhere the user could see it.
+   * These drive the failure path: the reason lands in `saveError` (which is
+   * what SaveErrorToast renders), stays one message for the whole streak, and
+   * clears itself the moment a save gets through.
+   */
+  it('surfaces the reason a write did not land, and clears it when one does', async () => {
+    harness.saveState.mockResolvedValueOnce({ ok: false, error: 'disk full' })
+    store.useDeck.setState({ hydrated: true, workspaces: [workspace('one')] })
+    await vi.advanceTimersByTimeAsync(SAVE_MS)
+
+    expect(store.useDeck.getState().saveError).toBe('disk full')
+
+    store.useDeck.getState().updateWorkspace('one', { name: 'renamed' })
+    await vi.advanceTimersByTimeAsync(SAVE_MS)
+
+    expect(store.useDeck.getState().saveError).toBeNull()
+  })
+
+  it('does not believe a failed write saved the deck: the next change tries again', async () => {
+    harness.saveState.mockResolvedValueOnce({ ok: false, error: 'disk full' })
+    store.useDeck.setState({
+      hydrated: true,
+      workspaces: [workspace('one', [pane('a', 'idle')])]
+    })
+    await vi.advanceTimersByTimeAsync(SAVE_MS)
+    expect(harness.saveState).toHaveBeenCalledTimes(1)
+
+    // Nothing that survives a restart moved — but the deck never reached disk,
+    // so the snapshot check must not swallow this attempt.
+    store.useDeck.getState().setPaneStatus('a', 'running')
+    await vi.advanceTimersByTimeAsync(SAVE_MS)
+
+    expect(harness.saveState).toHaveBeenCalledTimes(2)
+    expect(store.useDeck.getState().saveError).toBeNull()
+  })
+
+  it('keeps a waved-off toast down while the same failure repeats, until a save lands', async () => {
+    harness.saveState.mockResolvedValueOnce({ ok: false, error: 'disk full' })
+    store.useDeck.setState({ hydrated: true, workspaces: [workspace('one')] })
+    await vi.advanceTimersByTimeAsync(SAVE_MS)
+    store.useDeck.getState().dismissSaveError()
+
+    harness.saveState.mockResolvedValueOnce({ ok: false, error: 'disk full' })
+    store.useDeck.getState().updateWorkspace('one', { name: 'renamed' })
+    await vi.advanceTimersByTimeAsync(SAVE_MS)
+
+    // Still the same outage: the message is unchanged and the dismissal holds.
+    expect(store.useDeck.getState().saveError).toBe('disk full')
+    expect(store.useDeck.getState().saveErrorDismissed).toBe(true)
+
+    store.useDeck.getState().updateWorkspace('one', { name: 'again' })
+    await vi.advanceTimersByTimeAsync(SAVE_MS)
+
+    // A save landed, so the slate is clean — the next streak shows a toast.
+    expect(store.useDeck.getState().saveError).toBeNull()
+    expect(store.useDeck.getState().saveErrorDismissed).toBe(false)
+  })
+
+  it('retrySave writes right away and takes the error down when it works', async () => {
+    harness.saveState.mockResolvedValueOnce({ ok: false, error: 'disk full' })
+    store.useDeck.setState({ hydrated: true, workspaces: [workspace('one')] })
+    await vi.advanceTimersByTimeAsync(SAVE_MS)
+    expect(store.useDeck.getState().saveError).toBe('disk full')
+
+    await store.useDeck.getState().retrySave()
+
+    expect(harness.saveState).toHaveBeenCalledTimes(2)
+    expect(store.useDeck.getState().saveError).toBeNull()
+  })
 })
 
 describe('moveWorkspace', () => {

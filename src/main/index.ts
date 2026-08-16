@@ -15,6 +15,7 @@ import { registerStateIpc } from './ipc/state'
 import { registerUpdateIpc } from './ipc/updates'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerWindowIpc } from './ipc/window'
+import { PasteGate } from './paste-gate'
 import { decidePermission, originOf, type TrustedPage } from './permissions'
 import { detectProfiles } from './profiles'
 import { DEFAULT_QUIET_MS, PtyManager } from './pty'
@@ -30,6 +31,8 @@ const isMac = process.platform === 'darwin'
 
 let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
+/** Records the paste chord off real keyboard input; gates `clipboard:read`. */
+const pasteGate = new PasteGate()
 /** Set when we are quitting to hand over to an installer — skip the pane prompt. */
 let quittingForUpdate = false
 /**
@@ -205,6 +208,12 @@ function createWindow(): BrowserWindow {
     if (!isAllowedNavigation(event.url)) event.preventDefault()
   })
 
+  // The renderer's paste path (Ctrl/Cmd+Shift+V, see shortcuts.ts) asks the
+  // main process for the clipboard over IPC. The chord is recorded here, off
+  // keyboard input the renderer cannot forge, and `clipboard:read` only
+  // answers within a moment of it — see registerIpc and paste-gate.ts.
+  win.webContents.on('before-input-event', (_event, input) => pasteGate.observe(input))
+
   // DevTools without an application menu. macOS has one (see installMenu), and
   // its View item owns Cmd+Alt+I — handling it here too would toggle twice.
   win.webContents.on('before-input-event', (_event, input) => {
@@ -271,7 +280,7 @@ function restrictPermissions(): void {
  */
 function registerIpc(): void {
   const getWindow = (): BrowserWindow | null => mainWindow
-  registerAppIpc({ getWindow })
+  registerAppIpc({ getWindow, pasteGate })
   registerStateIpc({ rememberAttention })
   registerProfilesIpc()
   registerGitIpc()

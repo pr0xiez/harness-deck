@@ -1,7 +1,7 @@
 import { create } from 'zustand'
-import type { PaneStatus, PersistedState } from '@shared/types'
 import { createAppSlice } from './app'
 import { api, isSnoozed, type DeckWorkspace, type PaneView } from './helpers'
+import { createPersistSlice, deliverSave, savedSnapshot, serialize } from './persist'
 import { createSettingsSlice } from './settings'
 import type { DeckState } from './types'
 import { createUiSlice } from './ui'
@@ -22,6 +22,7 @@ export {
   DEFAULT_SETTINGS,
   DEFAULT_VOICE
 } from './settings'
+export { serialize } from './persist'
 export type { DeckNotice } from './ui'
 export type { DeckState } from './types'
 
@@ -30,75 +31,14 @@ export const useDeck = create<DeckState>()((...args) => ({
   ...createWorkspaceSlice(...args),
   ...createSettingsSlice(...args),
   ...createUpdateSlice(...args),
-  ...createUiSlice(...args)
+  ...createUiSlice(...args),
+  ...createPersistSlice(...args)
 }))
 
 export const activeWorkspace = (state: DeckState): DeckWorkspace | undefined =>
   state.workspaces.find((w) => w.id === state.activeWorkspaceId)
 
 export const useActiveWorkspace = (): DeckWorkspace | undefined => useDeck(activeWorkspace)
-
-/** Strips transient fields and hands the result to the main process. */
-export function serialize(state: DeckState): PersistedState {
-  return {
-    version: 1,
-    activeWorkspaceId: state.activeWorkspaceId,
-    settings: state.settings,
-    templates: state.templates,
-    workspaces: state.workspaces.map((ws) => {
-      // A transient pane (the ship pane) is one run of one command; writing it
-      // to disk would make relaunch run the command again.
-      const kept = ws.panes.filter((p) => !p.transient)
-      return {
-        ...ws,
-        zoomedPaneId: null,
-        activePaneId: kept.some((p) => p.id === ws.activePaneId)
-          ? ws.activePaneId
-          : (kept[kept.length - 1]?.id ?? null),
-        panes: kept.map(
-          ({
-            id,
-            profileId,
-            command,
-            args,
-            cwd,
-            viaShell,
-            name,
-            env,
-            setup,
-            worktree,
-            autoRestart,
-            readOnly,
-            attentionMuted
-          }) => ({
-            id,
-            profileId,
-            command,
-            args,
-            cwd,
-            viaShell,
-            name,
-            env,
-            // Kept for the same reason as `worktree`: a restart re-runs the setup,
-            // and a pane that forgot it would put the agent in a tree nothing has
-            // installed into since the app was last quit.
-            setup,
-            // Kept, or a restart would forget that this folder is ours to remove.
-            worktree,
-            autoRestart,
-            readOnly,
-            // The build pane that goes quiet all day is still that pane tomorrow.
-            // Snoozes and acknowledgements are not: those expire with the session.
-            attentionMuted,
-            status: 'idle' as PaneStatus,
-            exitCode: null,
-            epoch: 0
-          })
-        )
-      }
-    })
-  }
-}
 
 /** What a quiet subscriber is told: the event, and the pane it was about. */
 export interface QuietPaneEvent {
@@ -171,7 +111,6 @@ export function startAttention(): () => void {
 }
 
 let saveTimer: number | undefined
-let lastSnapshot = ''
 
 /** Debounced persistence — called on every store change once hydrated. */
 export function startPersistence(): () => void {
@@ -181,9 +120,8 @@ export function startPersistence(): () => void {
     saveTimer = window.setTimeout(() => {
       const payload = serialize(state)
       const snapshot = JSON.stringify(payload)
-      if (snapshot === lastSnapshot) return
-      lastSnapshot = snapshot
-      api.saveState(payload)
+      if (snapshot === savedSnapshot()) return
+      void deliverSave(payload, snapshot, useDeck)
     }, 400)
   })
 }

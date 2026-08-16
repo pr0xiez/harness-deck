@@ -345,7 +345,7 @@
           </div>
           <div class="proc-body">
             <div class="mod"><span class="mname">App.tsx</span><span class="mrole">PTY/update subscriptions, global shortcuts, composition root</span></div>
-            <div class="mod"><span class="mname">store.ts · useDeck</span><span class="mrole">zustand: workspaces, panes, templates, settings, UI state</span></div>
+            <div class="mod"><span class="mname">store/ · useDeck</span><span class="mrole">zustand in five slices: app, workspace, settings, update, ui</span></div>
             <div class="mod"><span class="mname">voice.ts · useVoice</span><span class="mrole">mic capture, RMS meter, silence gate</span></div>
             <div class="mod"><span class="mname">terminals.ts</span><span class="mrole">live xterm.js registry — deliberately outside React</span></div>
             <div class="mod"><span class="mname">components/</span><span class="mrole">TitleBar · Sidebar · Toolbar · PaneArea · TerminalPane · BroadcastBar · CommandPalette · CompareView · dialogs</span></div>
@@ -384,7 +384,7 @@
             <span class="pruntime">Node.js · Electron 43 · src/main</span>
           </div>
           <div class="proc-body">
-            <div class="mod"><span class="mname">index.ts</span><span class="mrole">app entry, BrowserWindow, all IPC handler registration</span></div>
+            <div class="mod"><span class="mname">index.ts · ipc/</span><span class="mrole">app entry, BrowserWindow, permissions; one IPC module per domain</span></div>
             <div class="mod"><span class="mname">pty.ts · PtyManager</span><span class="mrole">node-pty sessions, 512 KB replay ring, 8 ms flush, quiet timer</span></div>
             <div class="mod"><span class="mname">shell-env.ts</span><span class="mrole">login-shell env probe at startup; PATH repair</span></div>
             <div class="mod"><span class="mname">profiles.ts</span><span class="mrole">detects installed agent CLIs + saved launchers</span></div>

@@ -26,8 +26,10 @@ export default defineConfig({
         'src/shared/types.ts',
         'src/preload/index.d.ts',
         // Covered by `npm run smoke` against the built app, which coverage of a
-        // unit run can only misreport.
+        // unit run can only misreport. debug.ts is the driver for those runs —
+        // unreachable without an Electron window — so it belongs here too.
         'src/main/smoke.ts',
+        'src/main/debug.ts',
         'src/renderer/src/main.tsx'
       ]
     },

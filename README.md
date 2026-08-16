@@ -225,7 +225,9 @@ pane, and `Cmd+Alt+I` for developer tools.
 ```
 src/
   main/          Electron main process
-    index.ts       window, IPC, smoke-test flags
+    index.ts       app lifecycle, window, permissions, IPC wiring
+    ipc/           one module per channel domain (app, pty, git, voice, …)
+    debug.ts       --smoke/--capture/--voice-check command-line hooks
     pty.ts         PTY sessions: spawn, batched output, replay buffer, resize
     profiles.ts    harness detection (PATH scan + WSL probe)
     shell-env.ts   login-shell environment resolution
@@ -236,7 +238,7 @@ src/
     pty.test.ts    session lifecycle, against a stub pty
   preload/       contextBridge API (the renderer never touches Node)
   renderer/      React UI
-    store.ts       zustand state + debounced persistence
+    store/         zustand state in slices + debounced persistence
     terminals.ts   registry of live xterm instances
     voice.ts       microphone capture, level metering, transcript delivery
     components/    title bar, sidebar, toolbar, panes, palette, dialogs

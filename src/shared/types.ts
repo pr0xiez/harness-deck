@@ -257,6 +257,12 @@ export interface PersistedState {
   templates?: WorkspaceTemplate[]
 }
 
+/** What became of one attempt to put the state file on disk. */
+export interface SaveStateResult {
+  ok: boolean
+  error?: string
+}
+
 export interface AppInfo {
   platform: NodeJS.Platform
   versions: { electron: string; chrome: string; node: string; app: string }

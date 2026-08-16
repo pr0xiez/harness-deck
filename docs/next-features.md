@@ -1,4 +1,4 @@
-# Harness Deck — next features
+# Harness Deck — next features, wave 2
 
 A work spec, written to be split across several agents working in parallel.
 
@@ -7,22 +7,57 @@ decisions already made, and what "done" looks like. An agent should be able to
 pick up one item, read only the files it names, and land it without asking
 anyone what the shape should be.
 
+This is the second edition. The first — HD-0 through HD-13 — has shipped in
+its entirety: attention routing, worktree panes and the compare view, saved
+launchers, broadcast history/targets/snippets, transcript export, workspace
+templates, persistent scrollback, the GitHub update channel, find across
+panes, auto-restart, SSH/container panes and the read-only lock are all in
+`main` and described in the README. The old text lives in git history; the
+numbering continues from where it stopped.
+
+---
+
+## Where these came from
+
+This wave was distilled from a teardown of **T3 Code**
+([pingdotgg/t3code](https://github.com/pingdotgg/t3code)) — the closest thing
+this app has to a well-funded rival. The full notes, with mockups of
+everything specced below, are in
+[`docs/t3code-design-notes.html`](t3code-design-notes.html) (also published
+[as an artifact](https://claude.ai/code/artifact/af48e948-3172-4c59-b7e3-22662bb4b25e)).
+
+The short version: their atomic unit is a *conversation*, parsed out of each
+provider by a per-provider adapter. Ours is a *process in a real terminal*,
+deliberately unparsed. Every item below follows one rule:
+
+> **Steal the semantics, keep the terminal.** Where they attach a behaviour to
+> a thread, attach it to a pane, a workspace or a worktree. Where they parse
+> provider events to know what happened, show the raw tail and let the user's
+> eyes parse it. Where they run a hidden RPC, run a visible command in a pane.
+
+One principle of theirs is adopted verbatim (from their AGENTS.md, credit
+where due): **"If you added a way in, add the way out and the way to see it.
+A one-way door is a bug."** Every state introduced below — mute, snooze,
+acknowledge, remote — ships with its reverse.
+
 ---
 
 ## The thesis
 
-The app already does the hard part — several agent CLIs alive at once, surviving
-window reloads, detected across PATH and WSL. What it does not yet do is any of
-the things that *only matter because* there are several:
+Wave 1 made several agents *runnable* side by side. It did not close the loop
+around a fan-out — prepare, direct, triage, judge, land — and it falls silent
+the moment you stand up from the desk.
 
 | Question the user has | Today's answer |
 | --- | --- |
-| Which of these six panes is waiting for me? | None. `activity` fires on any output, so it is on constantly. |
-| Two agents on one task — how do they not overwrite each other? | They don't. Every pane in a workspace shares one `cwd`. |
-| I broadcast one prompt; what did each agent actually do? | Read six terminals and decide for yourself. |
-| Can I get my four-pane review setup back on another repo? | Duplicate the workspace and re-point every pane by hand. |
+| Six panes are waiting — which first, and what does each want? | `Ctrl+Shift+J` jumps blind. The dot says *waiting*, never *why*. |
+| Three agents, three fresh worktrees — why are they all stalled? | Each is discovering there is no `node_modules`. |
+| Compare says pane B won. Now what? | Six git commands typed by hand, then close the losers one dialog at a time. |
+| What did the *last* burst change? | Re-read the whole diff and remember what you saw last time. |
+| The error is on screen in the shell pane. | Select, copy, `Ctrl+Shift+B`, paste, describe. |
+| I walked away for coffee. | The deck notifies the desk it is sitting on. |
 
-Wave 1 and 2 below answer those four. Wave 3 is polish and debt.
+Waves A and B answer those. Wave C is smaller borrowings and polish.
 
 ---
 
@@ -36,500 +71,595 @@ npm test             # vitest, ~100ms
 npm run smoke        # builds, boots the real app, asserts, exits 0/1
 ```
 
-`npm run smoke` is the one that matters. Typecheck and a green build cannot see
-a broken pty; the smoke test can, because it starts a real process through a
-real one. If your item adds a capability the smoke test could assert cheaply,
-add the assertion to `src/main/smoke.ts`.
+`npm run smoke` is the one that matters. Typecheck and a green build cannot
+see a broken pty; the smoke test can. If your item adds a capability the
+smoke test could assert cheaply, add the assertion to `src/main/smoke.ts` —
+HD-21 in particular must.
 
 **Isolation.** Give each agent its own git worktree and its own branch
-(`feat/hd-1-attention`, …). Several of these items touch overlapping files; the
+(`feat/hd-15-queue`, …). Several of these items touch overlapping files; the
 worktree is what stops that becoming a merge fight.
 
 **Conventions to match** — the codebase has a voice, keep it:
 
-- Comments explain *why*, never *what*. Look at the ones in `pty.ts` around
-  session disposal, or `TerminalPane.tsx` around the exit race, for the register.
+- Comments explain *why*, never *what*. The register to copy is in `pty.ts`
+  around session disposal and `BroadcastBar.tsx` around the send delay.
 - The renderer never touches Node. Everything crosses through
   `src/preload/index.ts`.
 - Anything shared across the process boundary is typed in `src/shared/types.ts`.
-- New state that must survive a restart goes into `PersistedState` and gets a
-  default in `DEFAULT_SETTINGS` (`src/renderer/src/store.ts`) so an older state
-  file still hydrates — see how `voice` is spread in `hydrate()`.
+- New persisted state goes into `PersistedState` with a default in
+  `DEFAULT_SETTINGS` / the hydrate path (`src/renderer/src/store.ts`) so an
+  older state file still hydrates.
+- **Keyboard shortcuts are declared in `src/renderer/src/shortcuts.ts`** — the
+  `SHORTCUTS` table is the single source of truth that App.tsx dispatches and
+  TerminalPane reserves. (The wave-1 text said "the ctrl && shiftKey block in
+  App.tsx"; that block has since been replaced by this table.) Add the id, the
+  matcher, the App.tsx binding, a `HelpDialog` row and a palette command.
 - No new runtime dependencies without saying why in the PR.
 
-**Conflict hotspots.** Four files attract edits from nearly every item:
+**Conflict hotspots.** The same four files as last time attract edits from
+nearly every item — `src/shared/types.ts`, `src/preload/index.ts`, the
+`ipcMain.handle` block in `src/main/index.ts`, `src/renderer/src/store.ts` —
+plus one new one: **the quiet-event subscription**. Three items (HD-15, HD-20,
+and the repo refresh that already exists in `Toolbar.tsx`) all want to react
+to `pty:onQuiet`. Whoever lands first should lift the subscription into a
+single store-level handler that fans out; whoever lands second rebases on it.
 
-- `src/shared/types.ts`
-- `src/preload/index.ts`
-- the `ipcMain.handle` block in `src/main/index.ts`
-- `src/renderer/src/store.ts`
-
-**HD-0 exists to defuse them — land it first, alone.** After HD-0, every other
-item in wave 1 touches mostly its own files.
+**HD-14 exists to defuse the rest — land it first, alone.**
 
 ---
 
-## HD-0 — Land the shared surface first
+## HD-14 — Land the shared surface first
 
 **Owner:** one agent, alone, before anyone else starts. Small.
 
-Add every type, preload method and IPC registration that waves 1–2 need, wired
-to stub implementations that compile and behave sanely. Nothing user-visible
-ships; the point is that five agents can then work without three of them
-rewriting the same twenty lines.
+Add every type, preload method and IPC registration that waves A–C need,
+wired to stub implementations that compile and behave sanely. Nothing
+user-visible ships.
 
 **Files:** `src/shared/types.ts`, `src/preload/index.ts`, `src/main/index.ts`.
 
 **Add to `src/shared/types.ts`:**
 
 ```ts
-// PaneStatus gains a fourth state — see HD-1.
-export type PaneStatus = 'idle' | 'running' | 'waiting' | 'exited'
+// Pane gains, persisted (transient attention state — snooze, acknowledge —
+// stays in the renderer's PaneView; it should not survive a restart):
+//   attentionMuted?: boolean          // see HD-15
 
-export interface PtyQuietEvent {
+// PaneSpec gains:
+//   setup?: string                    // run before the command, same pane. HD-16
+
+// Workspace and WorkspaceTemplate gain:
+//   setupCommand?: string             // copied onto worktree panes at creation. HD-16
+//   actions?: WorkspaceAction[]       // HD-16
+
+/** A named command the toolbar offers as one click. See HD-16. */
+export interface WorkspaceAction {
   id: string
-  /** True when the pane went quiet, false on the first byte after that. */
-  quiet: boolean
-}
-
-/** A git repository behind a workspace or pane folder. See HD-2. */
-export interface RepoInfo {
-  root: string
-  branch: string
-  dirty: number
-  /** Set when this folder is a linked worktree rather than the main one. */
-  worktreeOf?: string
-}
-
-export interface WorktreeRequest {
-  repo: string
-  /** Branch to create; the caller guarantees it is unique. */
-  branch: string
-  path: string
-}
-
-export interface WorktreeResult {
-  ok: boolean
-  path?: string
-  error?: string
-}
-
-/** A launcher the user saved, merged with the detected ones. See HD-4. */
-export interface SavedProfile {
-  id: string
-  name: string
+  label: string
   command: string
-  args: string[]
-  cwd?: string
-  env?: Record<string, string>
-  icon: string
-  accent: string
-  viaShell?: boolean
+}
+
+// DiffRequest gains:
+//   base?: string                     // diff from this ref instead of the branch point. HD-20
+
+/** One quiet-burst snapshot of a worktree. See HD-20. */
+export interface CheckpointInfo {
+  ref: string
+  /** ISO time the burst ended. */
+  at: string
+  /** `git diff --shortstat` against the previous checkpoint, for the menu. */
+  summary: string
+}
+
+/** Which PR-capable CLI is on PATH, if any. See HD-18. */
+export type ForgeCli = 'gh' | 'glab'
+
+/** What the remote server is doing right now. See HD-21/22. */
+export interface RemoteStatus {
+  enabled: boolean
+  /** Reachable URL including the token fragment, when enabled. */
+  url: string | null
+  lan: boolean
+  allowTyping: boolean
+  clients: number
 }
 ```
 
-`Settings` gains `attention: AttentionSettings` (HD-1) and
-`broadcastHistory: string[]` (HD-7). `Workspace` gains nothing yet.
+`Settings` gains `remote: RemoteSettings` (`{ enabled: false, lan: false,
+allowTyping: false }` — the token is *not* settings: it is regenerated on
+every enable and lives only in main-process memory).
 
 **Add to the preload bridge**, alongside the existing groups:
 
 ```ts
 pty: {
   …,
-  onQuiet: (handler: (event: PtyQuietEvent) => void) => subscribe('pty:quiet', handler),
-  transcript: (id: string): Promise<string> => ipcRenderer.invoke('pty:transcript', id),
+  /** Last `lines` non-empty lines, ANSI-stripped in main (stripAnsi lives there). */
+  tail: (id: string, lines: number): Promise<string[]> => ipcRenderer.invoke('pty:tail', id, lines),
 },
 git: {
-  info: (dir: string): Promise<RepoInfo | null> => ipcRenderer.invoke('git:info', dir),
-  addWorktree: (req: WorktreeRequest): Promise<WorktreeResult> => ipcRenderer.invoke('git:addWorktree', req),
-  removeWorktree: (path: string): Promise<WorktreeResult> => ipcRenderer.invoke('git:removeWorktree', path),
-  diffStat: (dir: string): Promise<string> => ipcRenderer.invoke('git:diffStat', dir),
+  …,
+  checkpoint: (dir: string): Promise<void> => ipcRenderer.invoke('git:checkpoint', dir),
+  checkpoints: (dir: string): Promise<CheckpointInfo[]> => ipcRenderer.invoke('git:checkpoints', dir),
+  restoreCheckpoint: (dir: string, ref: string): Promise<WorktreeResult> => …,
+  dropCheckpoints: (repoRoot: string, paneId: string): Promise<void> => …,
+  deleteBranch: (repoRoot: string, branch: string): Promise<WorktreeResult> => …,
+  forge: (): Promise<ForgeCli | null> => ipcRenderer.invoke('git:forge'),
 },
-profiles: {
-  list: () => …,                       // move the existing `listProfiles` under here
-  saveCustom: (profile: SavedProfile): Promise<SavedProfile[]> => …,
-  removeCustom: (id: string): Promise<SavedProfile[]> => …,
-},
-attention: {
-  setBadge: (count: number): void => ipcRenderer.send('app:setBadge', count),
+remote: {
+  status: (): Promise<RemoteStatus> => …,
+  setEnabled: (on: boolean): Promise<RemoteStatus> => …,
+  setLan: (on: boolean): Promise<RemoteStatus> => …,
+  setAllowTyping: (on: boolean): Promise<RemoteStatus> => …,
+  onStatus: (handler: (status: RemoteStatus) => void) => subscribe('remote:status', handler),
 },
 ```
 
-Keep `listProfiles` as a deprecated alias so nothing breaks mid-wave.
-
-**Stubs:** `git:*` returns `null` / `{ ok: false, error: 'not implemented' }`,
-`pty:transcript` returns `''`, `profiles:saveCustom` returns the detected list
-unchanged. `app:setBadge` can be real immediately — one line of
-`app.setBadgeCount` on macOS/Linux, `win.setOverlayIcon`/`flashFrame` on Windows.
+**Stubs:** `pty:tail` returns `[]`; `git:checkpoint*` return empties /
+`{ ok: false, error: 'not implemented' }`; `git:forge` returns `null`;
+`remote:*` returns `{ enabled: false, url: null, lan: false, allowTyping:
+false, clients: 0 }` and `setEnabled` is a no-op. Nothing may open a socket.
 
 **Done when:** typecheck is clean, the smoke test still passes, and no
 user-visible behaviour changed.
 
 ---
 
-# Wave 1 — parallel, after HD-0
+# Wave A — parallel, after HD-14
 
-## HD-1 — Attention routing: "which pane needs me?"
+## HD-15 — The waiting queue
 
-**The problem.** `src/renderer/src/App.tsx` sets `activity: true` on any pty
-output for an unfocused pane. An agent that is working produces output
-constantly, so the dot is on for every busy pane and means nothing. The signal
-the user actually wants is the inverse: **output stopped while the process is
-still running** — the agent has hit a prompt, an approval gate, or finished.
+**The problem.** Attention routing answers *that* a pane wants you; with six
+panes it cannot answer *which first*, *why*, or *can it wait*. The rival's
+answer is precomputed flags parsed out of provider events. Ours is better and
+cheaper: **the last lines of a waiting pane's buffer are the reason it is
+waiting** — for an agent at an approval gate, the tail *is* the question. The
+buffer is already in `PtyManager`; `stripAnsi` already lives beside it.
 
-**Files:** `src/main/pty.ts`, `src/main/pty.test.ts`,
-`src/renderer/src/App.tsx`, `src/renderer/src/store.ts`,
-`src/renderer/src/components/TerminalPane.tsx`,
-`src/renderer/src/components/Sidebar.tsx`,
-`src/renderer/src/components/SettingsDialog.tsx`.
+**Files:** new `src/renderer/src/components/WaitingQueue.tsx`,
+`src/renderer/src/store.ts`, `src/renderer/src/App.tsx`,
+`src/renderer/src/shortcuts.ts`, `src/renderer/src/components/Sidebar.tsx`,
+`src/renderer/src/components/TerminalPane.tsx` (mute in the pane menu),
+`src/main/pty.ts` + `src/main/index.ts` (the `pty:tail` accessor beside
+`pty:transcript`).
 
 **Design.**
 
-Main process — extend `Session` in `pty.ts` with `lastDataAt: number` and
-`quiet: boolean`, plus a `quietTimer`. In `queue()`, if the session was quiet,
-clear the flag and emit `pty:quiet {quiet: false}`; then (re)arm a timer for
-`QUIET_MS`. When it fires on a session that is still `running` *and* still
-current (`isCurrent`), set `quiet` and emit `pty:quiet {quiet: true}`. Clear the
-timer in `dispose()` next to `flushTimer`, and on exit — an exited pane is not
-waiting for you, it is dead, and `pane.status` already says so.
+The overlay (`Ctrl+Shift+U`, palette: "Waiting queue") lists every waiting
+pane across all workspaces, oldest first, each row: workspace swatch, profile
+icon, pane name, time waiting, and the last three non-empty lines of its
+buffer, stripped. Rows append as panes join; **rows never reorder while the
+queue is open** — a list that reshuffles under your finger cannot be operated.
+A pane with an empty buffer says "no output yet" rather than rendering blank.
 
-`QUIET_MS = 2500` as the default. Put it behind a setting rather than hard-coding:
+Three verbs, all on the pane, all reversible:
 
-```ts
-export interface AttentionSettings {
-  /** Milliseconds of silence from a running process before it counts as waiting. */
-  quietMs: number
-  notify: boolean
-  /** Bounce the dock / flash the taskbar as well as notifying. */
-  badge: boolean
-}
+- **Acknowledge** (`A`) — seen it. Leaves the badge count and notification
+  set; the row stays, dimmed. Cleared automatically the next time the pane
+  goes quiet (a fresh stop is fresh news).
+- **Snooze** (`S`) — not now. Cycles *until next quiet* → *for an hour* →
+  off. A snoozed pane is skipped by badge, notifications and `Ctrl+Shift+J`.
+  **A snoozed pane that rings the terminal bell wakes immediately**, flagged
+  `woke` — Claude Code rings the bell at permission prompts, so this is the
+  rival's "raised hand outranks your snooze" rebuilt from a signal the
+  terminal has carried for decades. `pane.bell` is already tracked.
+- **Mute** (`M`, also in the pane header menu) — this pane never counts. For
+  the build pane that goes quiet constantly. Persisted (`attentionMuted`).
+  A muted pane keeps the amber dot in its own header — the local truth — but
+  never reaches any aggregate: sidebar, badge, notification, queue, jump.
+
+`Enter` jumps — reuse DeckSearch's zoom rule (a jump out of a zoomed pane
+lands zoomed on the target, never hides it). `Ctrl+Shift+J` keeps working
+without the overlay, now walking oldest-first and skipping snoozed and muted
+panes. Store records `waitingSince` on the status transition; sidebar and
+badge count only actionable panes (not muted, snoozed or acknowledged).
+
+**Acceptance criteria.**
+
+- Three waiting panes: queue shows them oldest first with stripped tails; a
+  fourth going quiet appends without reordering the first three.
+- Acknowledge drops the pane from the dock badge immediately; the pane
+  re-quieting restores it.
+- A snoozed pane never fires a notification; a bell during snooze returns it
+  to the queue at once, flagged.
+- Mute and unmute are the same control in the same two places. Muting never
+  clears the pane's own header dot.
+- `Ctrl+Shift+J` with everything snoozed is a no-op, not an error.
+- `pty:tail` on a pane that has scrolled past the replay limit returns the
+  tail without shipping the whole buffer across IPC.
+
+**Tests.** Store transitions in `store.test.ts` (ack cleared by re-quiet;
+bell clears snooze; muted pane excluded from counts). The tail accessor in
+`pty.test.ts` beside the transcript tests.
+
+**Out of scope.** Classifying tails ("this is an approval") — timing and
+bytes only, nothing that rots when a CLI changes its UI. Per-pane `quietMs`.
+
+---
+
+## HD-16 — Worktree setup, and deck actions
+
+**The problem.** Two gaps that share a dialog, like HD-4 before them.
+
+Hand a task to three agents in three fresh worktrees and all three burn their
+first minutes discovering there is no `node_modules` — worse, they each
+"helpfully" run the install themselves, differently. And the commands a
+workspace runs all day — tests, typecheck, dev server — are retyped into
+shell panes because nothing remembers them.
+
+**Files:** new `src/renderer/src/components/WorkspaceDialog.tsx`,
+`src/renderer/src/components/Sidebar.tsx` (menu entry),
+`src/renderer/src/components/Toolbar.tsx` (action chips),
+`src/renderer/src/components/ProfileMenu.tsx` (worktree launch path),
+`src/renderer/src/components/PaneDialog.tsx` (show/edit a pane's `setup`),
+`src/renderer/src/store.ts`, `src/renderer/src/templates.ts`,
+`src/main/pty.ts` (spawn composition), `src/renderer/src/shortcuts.ts`.
+
+**Design.**
+
+One dialog serves both jobs, built from the `Modal`/`Field` primitives in
+`ui.tsx`: a **setup command** field ("After creating a worktree, run") and an
+**actions table** (label + command line, add/remove). Reached from the
+workspace menu in the sidebar and the palette.
+
+*Setup* — when a worktree pane is created and the workspace has a setup
+command, the pane's `PaneSpec.setup` is set from it. `pty.ts` composes the
+spawn: with `setup` present, run via shell as `<setup> && exec <command
+line>` (the quoting rules `shared/remote.ts` already proves). The install
+scrolls by in the pane, then the agent takes over — same pane, no hidden
+phase. `&&` is the design: **a failed setup leaves an exited pane with the
+failure on screen**, never a silent fall-through to an agent in a broken
+tree. Restart re-runs setup; installs are idempotent, that is fine. WSL and
+remote panes get it through the same wrapping they already use.
+
+*Actions* — the toolbar renders each action as a chip after the repo chip
+(more than four collapse into a dropdown). Clicking one opens a fresh shell
+pane in the workspace folder running the command, named after the action — a
+normal pane: restartable, closable, transcript-able. `Alt+Shift+1…9` fires by
+position. **Note the overlap:** `focus-pane-by-digit` currently matches
+`Alt+digit` without excluding Shift; give it a `!e.shiftKey` guard as part of
+this item (today `Alt+Shift+1` focuses pane 1 — a combination nobody is
+documented to be using, but say so in the PR).
+
+Templates carry both fields; instantiating a template against a new repo
+brings its setup and its actions along.
+
+**Acceptance criteria.**
+
+- A worktree pane with setup `npm ci` shows the install, then the agent, in
+  one pane; `Ctrl+Shift+R` re-runs both.
+- Setup exiting non-zero leaves the pane exited with output visible; the
+  agent never started.
+- An action chip's pane is a normal pane in every respect.
+- `Alt+Shift+2` runs the second action; `Alt+2` still focuses pane 2.
+- A workspace with neither field set spawns byte-identical commands to today.
+- A template made from this workspace reproduces both on another repo.
+
+**Out of scope.** Per-action target picking (run in a chosen worktree) —
+actions run in the workspace folder; a worktree has a pane, and that pane has
+the agent in it. Secrets in setup commands.
+
+---
+
+## HD-17 — Selection → prompt
+
+**The problem.** The error is on screen in the shell pane. Getting it in
+front of the agents is select, copy, `Ctrl+Shift+B`, paste, fence it by
+hand, describe. Five steps for the single most common hand-off in the app.
+
+**Files:** `src/renderer/src/App.tsx`, `src/renderer/src/shortcuts.ts`,
+`src/renderer/src/components/BroadcastBar.tsx`, `src/renderer/src/store.ts`.
+
+**Design.** One shortcut, `Ctrl+Shift+E` ("send selection"): take the focused
+pane's selection (`getTerminal(id).term.getSelection()` — xterm hands back
+plain text, no stripping needed), open the broadcast bar, and append the
+selection as a fenced block plus a trailing newline, caret after it, box
+focused. The user types the instruction and sends. Targets keep their
+existing default (agents on, shells off — the pane the error came from is
+usually a shell, so it is already excluded). Plumb it as a `pendingInsert` on
+the ui slice that `BroadcastBar` consumes on mount through its existing
+`insert()`; do not touch the `registerVoiceSink` ref wiring — dictation
+arrives through the same funnel and must keep working.
+
+A selection containing ``` fences is fenced with `~~~` instead — the block
+must survive its own contents.
+
+**Acceptance criteria.**
+
+- Multi-line selection arrives fenced and intact, no ANSI, no prompt noise
+  beyond what was selected.
+- No selection → no-op, not an empty fence.
+- Works from a zoomed pane; the bar opens over it.
+- Dictating after an insert appends after the block, exactly as `insert()`
+  behaves today.
+- History (`↑`) and snippets are unaffected.
+
+**Out of scope.** A floating "send" pill over the selection (the mockup shows
+one; the shortcut is the feature — chrome can follow). Sending from
+unfocused panes.
+
+---
+
+## HD-18 — Ship a worktree
+
+**The problem.** The compare view ends at a verdict and the app walks away:
+landing the winner is `add`, `commit`, `push`, `pr create` typed by hand,
+times N worktrees. The rival's one-button PR is their marketing headline —
+"no terminal dance required". Ours should keep the dance *visible* and skip
+the typing: **compose the exact commands, show them, and run them in a real
+pane in that worktree.** Failures arrive as scrollback, not toast mysteries.
+
+**Files:** new `src/renderer/src/components/ShipDialog.tsx`,
+`src/renderer/src/components/CompareView.tsx` (a Ship button per worktree
+column), `src/renderer/src/components/TerminalPane.tsx` (pane-menu entry for
+worktree panes), `src/main/index.ts` (`git:forge` via the `findExecutable`
+machinery in `src/main/profiles.ts`), `src/renderer/src/store.ts`.
+
+**Design.**
+
+The dialog: commit message (single field), three toggles — *commit all*,
+*push*, *open PR* — and a read-only command preview that regenerates as the
+toggles change:
+
+```
+git add -A
+git commit -m '<message, quoted by the rules remote.ts proves>'
+git push -u origin <branch>
+gh pr create --fill
 ```
 
-Renderer — a pane whose session reports quiet gets `status: 'waiting'`. Note
-`PaneStatus` is a persisted field: `serialize()` in `store.ts` already forces
-`'idle'` on save, so nothing extra is needed there, but check the `.pane` CSS
-selectors in `styles.css` that key off status.
+Two buttons: **Run in a pane** and **Copy commands**. Run opens a transient
+pane in the worktree, `viaShell`, named `ship · <branch>` — a normal pane.
+The preview *is* the contract: what runs is exactly what was shown.
 
-Then the payoff, in three places:
+`git:forge` answers `gh` / `glab` / null once per app run. No forge → the PR
+toggle is disabled with the install command as hint text, the same voice
+`detectProfiles` uses for a missing agent. `gh` owns auth and applies the
+repo's PR template itself — the app never touches a token.
 
-1. **Pane header** — amber dot, distinct from running-green and exited-grey.
-   Replace the current activity dot for that pane; keep the plain activity dot
-   only for non-agent panes.
-2. **Sidebar** — `WorkspaceRow` already renders running/exited/idle counts. Add a
-   waiting count that wins over the others, so a background workspace with an
-   agent at a prompt is visible without switching to it.
-3. **`Ctrl+Shift+J`** — focus the next waiting pane, searching the active
-   workspace first and then the rest in order, switching workspace if needed.
-   Register it in the `ctrl && event.shiftKey` block in `App.tsx`, add it to
-   `HelpDialog`, and add a palette command.
+The column with nothing changed since the branch point (already known from
+`diffRange`) opens the dialog with *commit* disabled and a sentence saying
+why — never a commit that would come back empty.
 
-Notify once per transition to waiting, never on a repeat, and only when the
-window is unfocused — reuse the `document.hasFocus()` guard the bell already
-uses in `TerminalPane.tsx`. Badge count = total waiting panes across all
-workspaces, pushed through `api.attention.setBadge`.
+Optional, last, and only when a `claude` profile is detected: a **Propose**
+button beside the message field that runs `git diff | claude -p '…'` in main
+(`execFile`, hard timeout, result editable, never auto-accepted). The
+subscription the user already has, doing the small writing — no side API key.
+If it proves flaky, ship without it; the feature is the pane, not the prose.
 
 **Acceptance criteria.**
 
-- A pane running `sleep 5; echo done` shows running, flips to waiting ~2.5s
-  after `done` lands, and flips back to running the moment more output arrives.
-- A pane whose process exits shows exited, never waiting.
-- Restarting a pane (`Ctrl+Shift+R`) clears any waiting state — the epoch bump
-  must not leave a stale timer pointing at the old session.
-- Six busy panes produce no notifications; the first one to go quiet produces
-  exactly one.
-- `Ctrl+Shift+J` with nothing waiting is a no-op, not an error.
+- The pane runs exactly the previewed chain; closing the dialog runs nothing.
+- A message containing `'` or spaces round-trips into one commit.
+- No `gh`/`glab`: chain composes without the PR step; toggle explains itself.
+- A rejected push leaves the pane's output on screen; nothing retries.
+- Ship is offered on worktree panes only — the workspace's own tree is the
+  user's, and this app does not commit it.
 
-**Tests.** `pty.test.ts` drives a stub pty with injectable `spawn` — extend it
-with fake timers: feed `onData`, advance past `quietMs`, assert one
-`pty:quiet {quiet: true}`; feed more data, assert the `false` event; fire
-`onExit` mid-quiet and assert no further events for that id. The disposal race
-that the existing tests pin down is exactly the shape to copy.
-
-**Out of scope.** Parsing pane output for agent-specific prompt strings. Timing
-alone is provider-agnostic and does not rot when a CLI changes its UI.
+**Out of scope.** Forge APIs, tokens, PR templates, auto-merge, draft PRs —
+`gh pr create`'s flags are the escape hatch and the pane is right there.
 
 ---
 
-## HD-4 — Edit pane, and saved launchers
+# Wave B — after wave A lands
 
-**The problem.** Two gaps that share a dialog.
+## HD-19 — Resolve a comparison
 
-`PaneSpec.env` is fully plumbed — typed in `shared/types.ts`, merged in
-`buildEnv()` in `pty.ts`, persisted through `serialize()` in the renderer store —
-and **no UI anywhere sets it**. It is a finished feature missing its front end.
+**Depends on:** HD-18 (a resolved comparison wants to say "shipped").
 
-Separately, `CustomCommandDialog` in `ProfileMenu.tsx` is one-shot: it opens a
-pane and forgets the command. There is no way to keep `claude --resume`, or a
-pane with a model pinned through the environment, as a launcher you can click
-again tomorrow.
+**The problem.** The fan-out's last mile: three worktrees, one winner. Today
+the losers are closed one confirmation at a time, their branches linger, and
+`.harness-deck/` silts up with the corpses of every experiment.
 
-**Files:** new `src/renderer/src/components/PaneDialog.tsx`,
-`src/renderer/src/components/ProfileMenu.tsx`,
-`src/renderer/src/components/TerminalPane.tsx` (one header button),
-`src/renderer/src/components/CommandPalette.tsx`, new
-`src/main/profiles-store.ts`, `src/main/profiles.ts`.
+**Files:** `src/renderer/src/components/CompareView.tsx`,
+`src/renderer/src/store.ts`, `src/main/git.ts` (`deleteBranch`),
+`src/main/index.ts`.
+
+**Design.** A **Resolve…** button in the compare header once two or more
+worktree columns exist. The panel lists the worktree panes: pick a winner
+(or "no winner"), losers checked by default, each row showing its dirty count
+from `git info` so surprises surface *before* the confirm. One confirmation
+names every pane that will be closed and every dirty tree among them. Then,
+per loser: close the pane, remove the worktree (the existing flow's
+warn-on-dirty rules, batched into that one confirm), delete the branch with
+`git branch -d` from the repo root. `-d`, never `-D`: an unmerged branch
+survives, its refusal shown inline on the row — deleting unmerged work takes
+a trip to a shell, on purpose.
+
+**Acceptance criteria.**
+
+- The winner is untouched in every respect.
+- Escape before the confirm changes nothing anywhere.
+- A loser with uncommitted changes is named in the confirm; unchecking it
+  leaves pane, worktree and branch alone.
+- `branch -d` refusing (unmerged) is reported on the row; the worktree is
+  still gone; nothing retries with `-D`.
+- The main working tree can never be a loser.
+
+**Out of scope.** Merging the winner anywhere — shipping is HD-18, and
+merging is the forge's review flow or the user's shell.
+
+---
+
+## HD-20 — Quiet checkpoints
+
+**The problem.** "What did the agent just do?" has one answer today: re-read
+the whole diff. The rival brackets every parsed *turn* with a hidden git ref
+and got per-turn diffs and revert from it — their best engineering. We
+refuse the parsing, but we already trust a turn boundary of our own: **the
+quiet event.** The toolbar already re-reads git on it, on the recorded
+observation that an agent falling silent has usually just stopped writing
+files. Snapshot the tree at that same moment and the compare view can answer
+"the last burst" instead of "everything".
+
+**Files:** `src/main/git.ts`, `src/main/git.test.ts`, `src/main/index.ts`,
+`src/renderer/src/store.ts` (the shared quiet subscription — see the
+hotspot note; rebase on HD-15), `src/renderer/src/components/CompareView.tsx`.
 
 **Design.**
 
-One dialog serves both jobs: name, command line, working directory, and an
-env-var table (add/remove rows, values masked behind a reveal toggle since
-people will put API keys in there). Build it out of the existing `Modal`,
-`Field` and `Dropdown` primitives in `components/ui.tsx` — do not introduce a
-new form idiom.
+Capture, renderer-driven like the repo refresh: on quiet for a worktree pane,
+call `git:checkpoint(dir)` (debounced a second). Main does the cheap outs
+first — porcelain clean, or tree identical to the last checkpoint → no ref.
+Otherwise build the snapshot **without touching the user's index or tree**:
+a temporary `GIT_INDEX_FILE`, `git add -A`, `write-tree`, `commit-tree -p
+HEAD`, `update-ref refs/hd/<paneId>/<n>`. Keep the newest 20; prune the rest.
+Invisible to `git status` and `git log` by construction.
 
-Reached from: a pencil button in the pane header next to restart, the palette
-("Edit pane…"), and the "Custom command…" entry in the profile menu.
+Read: each compare column's baseline becomes a dropdown — *since branch
+point* (today's behaviour, still the default) or any burst, listed with time
+and `--shortstat` summary. `DiffRequest.base` carries the choice into
+`diffRange`.
 
-Editing a pane writes through `updatePane` and, if the command or cwd changed,
-bumps `epoch` to respawn — that path already exists in `restartPane`.
+Restore: *Restore worktree to burst N…* in the same dropdown, behind the
+warn-on-dirty confirm the worktree close already uses. `git restore
+--source=<ref> --worktree -- .` returns every tracked file to the burst; a
+file the agent created *after* that burst and never checkpointed survives,
+and the confirm says how many such files there are — honesty over a
+`git clean` nobody asked for.
 
-Saved launchers persist to `custom-profiles.json` beside `workspaces.json`,
-using the same atomic-write helper as `src/main/store.ts`. `detectProfiles()`
-appends them to its returned list with `kind: 'custom'` so they appear in the
-profile menu, the palette and the empty-workspace quick picks with no changes to
-those call sites. Availability for a saved profile is whatever
-`findExecutable()` says about its first word.
+Cleanup: removing a worktree drops its `refs/hd/<paneId>/*`; boot prunes refs
+whose pane no longer exists, the same way scrollback prunes its orphans.
 
 **Acceptance criteria.**
 
-- A pane given `ANTHROPIC_MODEL=…` in the dialog restarts with that variable set
-  and it survives an app restart.
-- Saved launchers appear in the profile menu under their own group and open a
-  pane in one click.
-- Deleting a saved launcher does not disturb panes already open from it.
-- An env value containing `=` or spaces round-trips intact.
+- A burst that changed nothing creates no ref; two identical trees, one ref.
+- The 21st checkpoint prunes the 1st.
+- `git status` / `git log` in the worktree never show any of it.
+- Compare with a burst baseline shows only that burst's changes; the
+  truncation fold still applies.
+- Restore never touches the index; the untracked caveat is stated in the
+  confirm, with the count.
+- Worktree removal leaves no `refs/hd/<paneId>` behind.
 
-**Out of scope.** Secret storage. If someone puts a key in there it lands in
-`custom-profiles.json` in plain text — say so in the dialog's hint text. Voice
-keys use `safeStorage` because they are the app's own; pane env is the user's.
+**Tests.** `git.test.ts` against a scratch repo: checkpoint → mutate →
+checkpoint → list shows two with sane summaries; restore round-trips a file;
+prune-at-20 drops the oldest.
+
+**Out of scope.** Conversation rewind — `claude --resume` and its kin belong
+to the CLIs; the deck promises the tree, nothing else. Checkpointing
+non-worktree panes: the workspace's main tree is the user's.
 
 ---
 
-## HD-7 — Broadcast: history, targets, snippets
+## HD-21 — Deck Remote: glance
 
-**The problem.** `BroadcastBar.tsx` sends to every running agent pane and clears
-the box. Retyping a prompt you sent two minutes ago means retyping it. The
-"agents only" checkbox is the only targeting control, so a workspace with three
-agents where you want two has no answer.
+**The problem.** Every signal the app can raise — notification, badge, amber
+dot — lands on the machine you just walked away from. The rival's
+phone-first story is the feature its maker daily-drives; it fell out of their
+architecture. It falls out of ours too: **processes already live in the main
+process, addressed by pane id, with replay buffers** — the renderer is
+already just a client. Add a second, deliberately smaller one.
 
-**Files:** `src/renderer/src/components/BroadcastBar.tsx`,
-`src/renderer/src/store.ts` (settings only).
+**Files:** new `src/main/remote-server.ts`, new
+`src/main/remote-server.test.ts`, `src/main/index.ts`,
+`src/renderer/src/components/SettingsDialog.tsx`, a new tiny page —
+`src/remote/index.html` + `src/remote/main.ts` (an extra electron-vite
+renderer input, bundled into `out/` and served from disk), `src/main/smoke.ts`.
 
 **Design.**
 
-- **History** — ↑/↓ from an empty or unmodified box walks recent prompts, most
-  recent first. Persist the last 50 in `Settings.broadcastHistory`. Escape from
-  a recalled prompt restores the draft, the way a shell does.
-- **Per-pane targets** — replace the "agents only" checkbox with the chip row
-  that is already rendered: make each chip a toggle. Default on for agent panes,
-  off for shells; remember per workspace for the session. Keep an "all / agents"
-  quick toggle so the common case stays one click.
-- **Snippets** — a small saved list ("run the test suite and fix what fails"),
-  stored in settings, inserted from a dropdown next to the send button.
+A plain `node:http` server in main — no new runtime dependency; SSE for
+streams, static files for the page. **Off by default, and off means no
+socket exists.** The README's promise — nothing reaches the network until
+changed by hand — extends to listening: nothing *listens* either.
 
-Keep the 60ms delay before the carriage return. It is not decoration — TUIs drop
-input pasted in the same tick as the newline.
+Settings → Remote: an enable toggle, the URL with a fresh random token in
+the fragment (`http://127.0.0.1:<port>/#<token>` — regenerated every enable,
+held only in main memory), and a *reachable on the local network* toggle
+that rebinds from loopback to all interfaces next to one honest sentence:
+this is plain HTTP; anyone on the network with the link can watch; prefer
+your tailnet. Loopback-only is already useful — `tailscale serve` and
+`ssh -L` both terminate there, encrypted by someone whose job that is. A QR
+of the URL is worth one small dependency; if that argument fails review, a
+copyable URL ships first.
 
-**Acceptance criteria.**
-
-- ↑ twice, edit, send: history gains the edited prompt and the original is
-  unchanged.
-- Dictation still lands in the box and still respects "press enter"
-  (`registerVoiceSink` in the same file — do not break the ref plumbing it needs).
-- Deselecting every target disables the send button rather than sending nowhere.
-
----
-
-## HD-8 — Transcript export
-
-**The problem.** `PtyManager` holds the last 512 KB of every pane
-(`REPLAY_LIMIT`) and there is no way to get at it. Comparing two agents means
-scrolling two terminals.
-
-**Files:** `src/main/pty.ts` (one accessor), `src/main/index.ts` (one handler),
-`src/renderer/src/components/TerminalPane.tsx`,
-`src/renderer/src/components/CommandPalette.tsx`.
-
-**Design.** `transcript(id)` returns `session.chunks.join('')`. Two commands:
-"Copy pane transcript" (through `api.clipboard.write`) and "Save pane
-transcript…" (a save dialog, default name
-`<workspace>-<pane>-<yyyymmdd-hhmm>.txt`). Offer both raw and ANSI-stripped —
-raw for replay, stripped for pasting into an issue. A ~20-line regex strip is
-fine; do not add a dependency for it.
-
-**Acceptance criteria.** Saving a pane that has scrolled past 512 KB writes the
-tail without erroring. Saving an idle pane that never ran writes an empty file
-rather than failing.
-
----
-
-## HD-10 — Point the updater at GitHub releases
-
-**The problem.** `src/main/updater.ts` reads a local `update.json` written by
-`npm run release`. That works for the machine that builds. Anyone who installed
-from the `latest-main` prerelease that CI publishes gets **no updates ever** —
-the app has no idea that release channel exists. The README already flags this
-as the missing half.
-
-**Files:** `src/main/updater.ts`, `src/main/index.ts`,
-`src/renderer/src/components/SettingsDialog.tsx`.
-
-**Design.** Keep the local manifest path working — it is the fast local loop and
-several people rely on it. Add a second source: fetch the release's
-`latest*.yml`, compare with the existing `compareVersions`, download the
-installer to a temp dir, verify sha512 (the check already exists for the local
-path — reuse it, do not write a second one), then hand it to the same installer
-launch. Settings picks the channel: local manifest, GitHub releases, or off.
-
-Note the consequence recorded in the README: because publishing was taken away
-from electron-builder so the two platform jobs could write into one release,
-`latest*.yml` is **no longer emitted**. Restoring `--publish always` on the tag
-path in `.github/workflows/build.yml` is part of this item, not a follow-up.
-
-**Acceptance criteria.** A local manifest still triggers the toast exactly as it
-does today. With the channel set to GitHub and no network, the updater reports
-an error state and does not wedge the 15-minute poll. A corrupt download fails
-the hash check and is never launched.
-
----
-
-# Wave 2 — after wave 1 lands
-
-## HD-2 — Worktree panes
-
-**The problem.** The README's own pitch is "handing the same task to two models
-and comparing". Today both models edit the same working tree, so the second one
-to write wins and the comparison is meaningless. There is no git code anywhere
-in `src/`.
-
-**Files:** new `src/main/git.ts`, new `src/main/git.test.ts`,
-`src/main/index.ts`, `src/renderer/src/components/ProfileMenu.tsx`,
-`src/renderer/src/components/Toolbar.tsx`, `src/renderer/src/store.ts`.
-
-**Design.**
-
-`git.ts` shells out with `execFile` — the pattern is already in `profiles.ts`,
-including the timeout and `windowsHide` handling. No git library.
-
-- `info(dir)` → `git rev-parse --show-toplevel`, `--abbrev-ref HEAD`, and
-  `status --porcelain | wc -l`, or `null` when the folder is not a repo.
-- `addWorktree({repo, branch, path})` → `git worktree add -b <branch> <path>`.
-- `removeWorktree(path)` → `git worktree remove --force <path>`.
-
-In the profile menu, when the workspace folder is a repo, each agent gets a
-second affordance: **open in a new worktree**. It creates `hd/<pane-name>` at
-`<repo>/../.harness-deck/<repo-name>/<branch>` — outside the repo, so no agent
-trips over it and no `.gitignore` entry is needed — and sets the pane's `cwd`
-there. The pane records `worktree: string` so close can offer to remove it.
-
-Show branch and dirty count in the toolbar beside the folder chip. Poll on
-window focus and after a pane goes quiet (HD-1 gives you that event for free) —
-not on a timer.
+The page is the waiting queue in your pocket: workspaces with status dots,
+waiting panes with `pty:tail` previews, and a live **read-only** terminal
+view per pane — xterm.js (already in the tree) fed the replay tail (capped
+~64 KB) then live bytes over SSE. Pane names and workspace grouping come from
+the persisted state `store.ts` already owns; live status and quiet come from
+`PtyManager`. R1 has **no write route at all** — read-only is not a flag to
+check, it is an endpoint that does not exist.
 
 **Acceptance criteria.**
 
-- Two agents launched into worktrees of one repo write to different directories
-  and neither sees the other's edits.
-- Closing a worktree pane asks before removing the worktree, and never removes
-  the main working tree.
-- A non-repo workspace shows no worktree options and no branch chip — no errors,
-  no empty UI.
-- Removing a worktree with uncommitted changes warns first.
+- Disabled (the default): no port is open, provably; toggling off closes the
+  socket and severs clients.
+- Wrong or missing token: 401 on every route, including the page.
+- Two enables, two different tokens.
+- A pane going quiet reaches an open phone page within a second, no polling.
+- A pane with 512 KB of scrollback does not ship 512 KB to the phone.
+- A window reload does not restart the server (it lives in main, like the
+  panes themselves).
+- Smoke: enable, fetch `/` with and without the token, assert 200/401, disable,
+  assert refused.
 
-**Out of scope.** Branch management UI, commits, merges. The pane has a shell in
-it; that is where git lives.
-
----
-
-## HD-3 — Compare what the agents did
-
-**Depends on:** HD-2.
-
-**Files:** new `src/renderer/src/components/CompareView.tsx`, `Toolbar.tsx`,
-`CommandPalette.tsx`.
-
-**Design.** A "Compare" action on any workspace with two or more worktree panes.
-Full-area overlay, one column per pane: `git diff --stat` against the branch
-point, expandable to the full diff, with each column headed by the pane's badge
-and accent so it reads as the same object as the pane. Read-only. Escape closes.
-
-This is the feature nothing else in the category has: broadcast one prompt, then
-see three agents' answers as three diffs.
-
-**Acceptance criteria.** Panes with no changes render "no changes" rather than an
-empty column. A 5,000-line diff does not lock the renderer — cap what is rendered
-and say so at the fold.
+**Out of scope.** Typing (HD-22). TLS, tunnels, accounts, push notifications,
+native apps — reachability and encryption are the tailnet's job, and the
+page being open *is* the notification.
 
 ---
 
-## HD-5 — Workspace templates
+# Wave C — smaller, unblocked, take them when convenient
 
-**The problem.** `duplicateWorkspace` copies a workspace including its folder.
-There is no way to say "this four-pane review setup, but against a different
-repo", which is the actual reuse people want.
+## HD-22 — Deck Remote: hands
 
-**Files:** `src/renderer/src/store.ts`, `src/renderer/src/components/Sidebar.tsx`,
-`CommandPalette.tsx`, `src/shared/types.ts`.
+**Depends on:** HD-21. Typing from the phone, behind an *allow typing*
+toggle that defaults off (403 when off — checked per request, not per
+connection). Input takes the exact `pty.write` path local keys take,
+including the 60 ms pause before a carriage return that `BroadcastBar`
+documents — TUIs drop input pasted in the same tick as its newline. Add the
+broadcast box and the queue verbs (ack / snooze), forwarded to the renderer
+so the store stays the one owner of attention state. Acceptance: with typing
+off nothing writes; `1↵` from a phone answers an approval exactly as it does
+at the desk; two connected phones see each other's effects.
 
-**Design.** A template is a workspace with its `cwd` removed and each pane's cwd
-stored relative to it. "Save as template…" from the workspace menu; "New from
-template…" picks a folder and instantiates. Store them in `PersistedState`
-alongside workspaces — same file, same atomic write, no new persistence code.
-`duplicateWorkspace` is 90% of the instantiation logic already; factor rather
-than copy.
+## HD-23 — Compare: unified and split
 
-**Acceptance criteria.** A template made from a worktree workspace (HD-2)
-instantiates fresh worktrees rather than pointing at the originals. A template
-whose folder no longer exists fails loudly at instantiation, not silently into
-`homedir()`.
+A compare column is too narrow for side-by-side, so: clicking a column
+header zooms it to the full overlay width (Escape steps back to all
+columns), and the zoomed view gains a Unified / Split segmented control next
+to Summary / Full diff. Split renders old/new panes from the same patch text
+— no dependency; the `Lines` renderer grows a twin, and the 700-line cap
+already protects the frame budget.
 
----
+## HD-24 — Find across every workspace
 
-## HD-6 — Scrollback that survives a real quit
+`DeckSearch` answers "which of these six panes"; add a scope toggle for
+"which of these six *workspaces*". Mounted workspaces search live terminals
+through the existing registry; unmounted ones fall back to a main-side scan
+of `pty:transcript` text for counts, and jumping mounts the workspace then
+walks to the match. The summary line says which workspaces could not be
+counted, rather than pretending zero.
 
-**The problem.** The README says "survives restarts", and for a *window reload*
-it does. Quit the app and every transcript is gone — `chunks` lives in
-`PtyManager`, in memory, and the panes come back `idle` with blank terminals.
+## HD-25 — Launcher variants
 
-**Files:** `src/main/pty.ts`, new `src/main/scrollback.ts`, `src/main/index.ts`.
+Saved launchers already carry env and args — what is missing is the
+affordance. "Duplicate as variant…" on any profile opens the existing
+`PaneDialog` prefilled, with hint text naming the useful knobs:
+`CLAUDE_CONFIG_DIR` for a second account, model-pinning variables, `--resume`.
+Renderer only; ten lines of plumbing, a real unlock (work/personal accounts
+as two one-click launchers).
 
-**Design.** On quit, and every ~30s for panes that have produced output, write
-the tail (128 KB, less than the live 512 KB — this is for orientation, not
-forensics) to `scrollback/<paneId>.log` in user data. On `ensure()` for a
-session that does not exist yet, seed `chunks` from that file and mark the
-replay so the renderer can print a dim `— previous session —` rule before it.
-Delete a pane's file in `dispose()`. Prune orphans on boot: any file whose pane
-id is not in the loaded state.
+## HD-26 — `hd .`
 
-**Coordinate with HD-1** — both items edit `Session` and the flush path in
-`pty.ts`. Land HD-1 first, rebase this on it.
+Opening the app *from* a repo should land in that repo's workspace. The
+single-instance lock already forwards a second launch's argv: handle
+`--open <dir>` by focusing (or creating) the workspace whose folder matches.
+Ship the shell side as a documented function in the README (`hd()` calling
+the installed binary with `--open "$PWD"`), per platform — there is no npm
+bin to publish and no PATH to fight.
 
-**Acceptance criteria.** Quit with three live panes, reopen: each shows its last
-output above a fresh prompt, and the processes are gone (not falsely reported as
-running). Disk use stays bounded — a pane that has run for a week does not have a
-1 GB log.
+## HD-27 — Editable keybindings
 
----
-
-# Wave 3 — smaller, unblocked, take them when convenient
-
-**HD-9 — Find across panes.** `PaneSearch` drives one `SearchAddon`. A
-workspace-wide search that reports which panes match and jumps to each — the
-registry in `terminals.ts` (`allTerminals()`) already gives you every live
-instance.
-
-**HD-11 — Auto-restart on crash.** An opt-in per pane: restart on a non-zero
-exit, with backoff and a cap of three attempts, then stop and say so. The exit
-bar in `TerminalPane.tsx` is where it belongs.
-
-**HD-12 — SSH and container panes.** The WSL profiles in `profiles.ts` already
-prove the shape: launch elsewhere, hand over a translated cwd through the
-environment. `ssh <host>` and `docker exec -it <container>` are the same pattern
-with a different translation. Reuse `HD_CWD`.
-
-**HD-13 — Read-only pane lock.** One toggle that makes a pane refuse input, so a
-long-running build or a production shell cannot be typed into by accident.
-`attachCustomKeyEventHandler` in `TerminalPane.tsx` is the hook.
+`SHORTCUTS` in `shortcuts.ts` is already the single source of truth; let a
+`keybindings.json` in user data remap chords by `ShortcutId`. Parsing and
+merging are pure functions beside the table (testable in plain node);
+`HelpDialog` shows the *effective* bindings and flags conflicts — two ids on
+one chord render both red rather than one silently winning. No when-clauses,
+no chords-of-chords: a flat remap is 80 % of the value at 20 % of the rot.
 
 ---
 
@@ -537,22 +667,23 @@ long-running build or a production shell cannot be typed into by accident.
 
 | Wave | Item | Rough size | Touches |
 | --- | --- | --- | --- |
-| 0 | HD-0 shared surface | S | types, preload, IPC — **alone, first** |
-| 1 | HD-1 attention routing | L | main + renderer |
-| 1 | HD-4 pane dialog + saved launchers | M | renderer + small main |
-| 1 | HD-7 broadcast history | S | renderer only |
-| 1 | HD-8 transcript export | S | main + small renderer |
-| 1 | HD-10 updater → releases | M | main + CI |
-| 2 | HD-2 worktree panes | L | new main module + renderer |
-| 2 | HD-5 templates | M | store-heavy |
-| 2 | HD-6 persistent scrollback | M | pty.ts — **rebase on HD-1** |
-| 3 | HD-3 compare view | M | renderer, needs HD-2 |
-| 3 | HD-9, 11, 12, 13 | S each | isolated |
+| 0 | HD-14 shared surface | S | types, preload, IPC — **alone, first** |
+| A | HD-15 waiting queue | L | renderer + tail IPC |
+| A | HD-16 setup + actions | M | store, toolbar, pty spawn |
+| A | HD-17 selection → prompt | S | renderer only |
+| A | HD-18 ship a worktree | M | compare, new dialog, forge probe |
+| B | HD-19 resolve | S–M | compare + git.ts — **after HD-18** |
+| B | HD-20 quiet checkpoints | M | git.ts + compare — **rebase on HD-15** |
+| B | HD-21 remote: glance | L | new main module + tiny page |
+| C | HD-22 remote: hands | M | **after HD-21** |
+| C | HD-23…HD-27 | S each | isolated |
 
-Five agents can run wave 1 concurrently once HD-0 is in. The only ordering
-constraints in the whole spec are HD-0 before everything, HD-1 before HD-6, and
-HD-2 before HD-3.
+Four agents can run wave A concurrently once HD-14 is in. The ordering
+constraints in the whole spec: HD-14 before everything, HD-18 before HD-19,
+HD-21 before HD-22, and HD-15 before HD-20 (both grow the quiet
+subscription; the queue also settles the attention semantics the checkpoint
+UI sits beside).
 
-**If only two things get built: HD-1 and HD-2.** Together they are the
-difference between a terminal multiplexer that happens to run agents and a
-cockpit for running several of them at once.
+**If only two things get built: HD-15 and HD-18.** Triage and landing.
+Together they finish the loop the compare view opened — see what the agents
+did, decide, and be done without leaving the deck.

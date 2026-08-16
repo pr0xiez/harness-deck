@@ -96,6 +96,7 @@ export function PaneDialog({ workspaceId, paneId, where: opensOn, onClose }: Pro
   const [there, setThere] = useState(remote?.target.dir ?? '')
   const [remoteShell, setRemoteShell] = useState(remote?.target.shell ?? '')
   const [line, setLine] = useState(initialLine)
+  const [setup, setSetup] = useState(pane?.setup ?? '')
   const [name, setName] = useState(pane?.name ?? '')
   const [cwd, setCwd] = useState(pane?.cwd ?? workspace?.cwd ?? '')
   const [rows, setRows] = useState<EnvRow[]>(() =>
@@ -134,6 +135,10 @@ export function PaneDialog({ workspaceId, paneId, where: opensOn, onClose }: Pro
   const patchRow = (key: number, patch: Partial<EnvRow>): void =>
     setRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)))
 
+  // Only a local pane can have one: a remote pane's install belongs on the far
+  // machine, and this line would run here. See HD-16.
+  const before = where === 'local' ? setup.trim() || undefined : undefined
+
   const apply = (): void => {
     if (!ready) return
     if (pane) {
@@ -142,11 +147,13 @@ export function PaneDialog({ workspaceId, paneId, where: opensOn, onClose }: Pro
         spec.args.join('\0') !== pane.args.join('\0') ||
         Boolean(spec.viaShell) !== Boolean(pane.viaShell) ||
         cwd !== pane.cwd ||
+        before !== (pane.setup || undefined) ||
         !sameEnv(env, pane.env)
       updatePane(pane.id, {
         ...spec,
         cwd,
         env,
+        setup: before,
         autoRestart,
         readOnly,
         name: name.trim() || undefined
@@ -161,6 +168,7 @@ export function PaneDialog({ workspaceId, paneId, where: opensOn, onClose }: Pro
         ...spec,
         cwd,
         env,
+        setup: before,
         autoRestart,
         readOnly,
         name: name.trim() || autoName
@@ -297,6 +305,23 @@ export function PaneDialog({ workspaceId, paneId, where: opensOn, onClose }: Pro
           }}
         />
       </Field>
+
+      {/* Remote panes are out: this line runs on this machine, and theirs is not
+          it. A worktree pane gets one from its workspace, and this is where you
+          see what it was and change it. */}
+      {where === 'local' ? (
+        <Field
+          label="Run first"
+          hint="Optional. Runs in the same pane, ahead of the command line, every time the pane starts. If it fails the command line is never reached — the pane exits with the failure still on screen. Both run through your login shell, so its profile (PATH edits and the like) applies to a pane that used to launch directly."
+        >
+          <input
+            value={setup}
+            placeholder="npm ci  ·  make setup"
+            spellCheck={false}
+            onChange={(event) => setSetup(event.target.value)}
+          />
+        </Field>
+      ) : null}
 
       <Field label="Name" hint="Optional. Shown in the pane header, and in the menu once saved.">
         <input value={name} placeholder="auto" onChange={(event) => setName(event.target.value)} />

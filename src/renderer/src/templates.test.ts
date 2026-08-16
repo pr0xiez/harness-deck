@@ -104,6 +104,41 @@ describe('saving a workspace as a template', () => {
     expect(made.panes[0].command).toBe('claude')
   })
 
+  /**
+   * Neither field names a folder, so both make the trip — a template landing on
+   * another repo brings the install it needs and the commands it runs all day.
+   */
+  it('carries the setup command and the actions to another repo', () => {
+    const source = workspace({
+      setupCommand: 'npm ci',
+      actions: [
+        { id: 'act_1', label: 'Tests', command: 'npm test' },
+        { id: 'act_2', label: 'Dev', command: 'npm run dev' }
+      ],
+      panes: [pane()]
+    })
+    const template = templateFromWorkspace(source, 'Review', 'tpl_6', 'now')
+
+    expect(template.setupCommand).toBe('npm ci')
+    expect(template.actions).toEqual(source.actions)
+
+    const made = workspaceFromTemplate(template, '/work/other', uid)
+    expect(made.setupCommand).toBe('npm ci')
+    expect(made.actions).toEqual(source.actions)
+    // Copied, not shared: editing the new workspace must not rewrite either the
+    // template or the workspace it was saved from.
+    expect(made.actions?.[0]).not.toBe(source.actions?.[0])
+    expect(made.actions?.[0]).not.toBe(template.actions?.[0])
+  })
+
+  it('leaves a workspace that set neither field without either', () => {
+    const template = templateFromWorkspace(workspace({ panes: [pane()] }), 'Plain', 'tpl_7', 'now')
+
+    expect(template).not.toHaveProperty('setupCommand')
+    expect(template).not.toHaveProperty('actions')
+    expect(workspaceFromTemplate(template, '/work/other', uid)).not.toHaveProperty('setupCommand')
+  })
+
   it('never carries a worktree path into another workspace', () => {
     const source = workspace({
       cwd: '/src/app',

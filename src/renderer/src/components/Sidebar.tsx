@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
-import { isLive, useDeck, type DeckWorkspace } from '../store'
+import { isActionable, isLive, useDeck, type DeckWorkspace } from '../store'
 import { ACCENTS } from '../theme'
 import { Dropdown } from './ui'
 import { Icon } from './Icon'
 import { SaveTemplateDialog, TemplatePicker } from './TemplateDialog'
+import { WorkspaceDialog } from './WorkspaceDialog'
 
 const api = window.harness
 
@@ -40,7 +41,9 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
   const moveWorkspace = useDeck((s) => s.moveWorkspace)
   const setUi = useDeck((s) => s.setUi)
 
-  const waiting = workspace.panes.filter((p) => p.status === 'waiting').length
+  // A pane you muted, snoozed or already looked at is not something this row
+  // should still be asking you about.
+  const waiting = workspace.panes.filter((p) => isActionable(p)).length
   const running = workspace.panes.filter((p) => p.status === 'running').length
   const exited = workspace.panes.filter((p) => p.status === 'exited').length
 
@@ -86,12 +89,17 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
           <span className="dot running" title={`${running} pane${running === 1 ? '' : 's'} running`} />
         ) : null}
         {waiting ? (
-          <span
+          <button
             className="count waiting"
-            title={`${waiting} pane${waiting === 1 ? '' : 's'} waiting for you (Ctrl+Shift+J)`}
+            title={`${waiting} pane${waiting === 1 ? '' : 's'} waiting for you — open the queue (Ctrl+Shift+U)`}
+            onClick={(event) => {
+              // The row underneath switches workspace; this opens the queue.
+              event.stopPropagation()
+              setUi({ waitingQueue: true })
+            }}
           >
             {waiting}
-          </span>
+          </button>
         ) : null}
         {!waiting && running ? <span className="count running">{running}</span> : null}
         {!waiting && !running && exited ? <span className="count exited">{exited}</span> : null}
@@ -130,6 +138,12 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
               </button>
               <button className="menu-item" onClick={() => { setMenuOpen(false); duplicateWorkspace(workspace.id) }}>
                 Duplicate with panes
+              </button>
+              <button
+                className="menu-item"
+                onClick={() => { setMenuOpen(false); setUi({ workspaceDialogFor: workspace.id }) }}
+              >
+                Setup and actions…
               </button>
               <button
                 className="menu-item"
@@ -263,6 +277,18 @@ export function Sidebar(): React.JSX.Element {
         />
       ) : null}
       {ui.templatePicker ? <TemplatePicker onClose={() => setUi({ templatePicker: false })} /> : null}
+      {/* Mounted here rather than in the toolbar because the palette opens it
+          too, and the sidebar is the one thing on screen whatever is active.
+          Keyed so retargeting to another workspace remounts it — the fields
+          are useState initialisers, and stale ones would save one workspace's
+          setup and actions onto another. */}
+      {ui.workspaceDialogFor ? (
+        <WorkspaceDialog
+          key={ui.workspaceDialogFor}
+          workspaceId={ui.workspaceDialogFor}
+          onClose={() => setUi({ workspaceDialogFor: null })}
+        />
+      ) : null}
     </aside>
   )
 }

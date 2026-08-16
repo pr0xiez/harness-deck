@@ -35,6 +35,8 @@ export interface PaneSpec {
   cwd: string
   viaShell?: boolean
   env?: Record<string, string>
+  /** Runs before the command line, through a shell, in the same pane. See HD-16. */
+  setup?: string
 }
 
 export interface Pane extends PaneSpec {
@@ -57,6 +59,11 @@ export interface Pane extends PaneSpec {
   readOnly?: boolean
   /** Set when the pane's cwd is a worktree this app created for it. */
   worktree?: string
+  /**
+   * Never reaches an attention aggregate — badge, queue, notification, jump.
+   * The pane's own header dot stays: local truth survives the mute. See HD-15.
+   */
+  attentionMuted?: boolean
 }
 
 export interface Workspace {
@@ -70,6 +77,16 @@ export interface Workspace {
   /** Column count for grid layout (1-4). */
   columns: number
   zoomedPaneId: string | null
+  /** Copied onto worktree panes at creation, run before their command. See HD-16. */
+  setupCommand?: string
+  actions?: WorkspaceAction[]
+}
+
+/** A named command the toolbar offers as one click. See HD-16. */
+export interface WorkspaceAction {
+  id: string
+  label: string
+  command: string
 }
 
 /**
@@ -83,6 +100,9 @@ export interface WorkspaceTemplate {
   layout: LayoutMode
   columns: number
   panes: TemplatePane[]
+  /** Both travel with the panes when the template lands on another repo. See HD-16. */
+  setupCommand?: string
+  actions?: WorkspaceAction[]
   /** ISO date it was saved, shown in the picker. */
   createdAt: string
 }
@@ -120,6 +140,7 @@ export interface Settings {
   sidebarCollapsed: boolean
   voice: VoiceSettings
   attention: AttentionSettings
+  remote: RemoteSettings
   /** Which release channel the updater watches. See HD-10. */
   updateChannel: UpdateChannel
   /** Recent broadcast prompts, most recent first. */
@@ -135,6 +156,30 @@ export interface AttentionSettings {
   notify: boolean
   /** Bounce the dock / flash the taskbar as well as notifying. */
   badge: boolean
+}
+
+/**
+ * Deck Remote — the page this app can serve so another device may watch the
+ * deck. See HD-21. Unrelated to `RemoteTarget` in `shared/remote.ts`, which is
+ * a pane whose process runs somewhere else. The access token is deliberately
+ * absent: it is regenerated on every enable and lives only in main-process
+ * memory.
+ */
+export interface RemoteSettings {
+  enabled: boolean
+  /** Listen on every interface rather than loopback only. */
+  lan: boolean
+  allowTyping: boolean
+}
+
+/** What the remote server is doing right now. See HD-21/22. */
+export interface RemoteStatus {
+  enabled: boolean
+  /** Reachable URL including the token fragment, when enabled. */
+  url: string | null
+  lan: boolean
+  allowTyping: boolean
+  clients: number
 }
 
 /** Speech-to-text service. `custom` is any OpenAI-compatible endpoint. */
@@ -262,6 +307,11 @@ export interface WorktreeResult {
 export interface DiffRequest {
   /** The pane's folder. The answer is about the whole worktree above it. */
   dir: string
+  /**
+   * Diff from this ref instead of the branch point the main process would
+   * otherwise compute. `DiffResult.base`/`baseRef` report whichever won. See HD-20.
+   */
+  base?: string
   /** Most patch lines to send back. The main process never ships more than this. */
   limit?: number
 }
@@ -295,6 +345,18 @@ export interface DiffResult {
   /** Why there is nothing to show, when that is not simply "nothing changed". */
   error?: string
 }
+
+/** One quiet-burst snapshot of a worktree. See HD-20. */
+export interface CheckpointInfo {
+  ref: string
+  /** ISO time the burst ended. */
+  at: string
+  /** `git diff --shortstat` against the previous checkpoint, for the menu. */
+  summary: string
+}
+
+/** Which PR-capable CLI is on PATH, if any. See HD-18. */
+export type ForgeCli = 'gh' | 'glab'
 
 /** A launcher the user saved, merged with the detected ones. See HD-4. */
 export interface SavedProfile {

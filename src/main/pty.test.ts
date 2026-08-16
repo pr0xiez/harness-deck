@@ -69,7 +69,7 @@ interface Harness {
   sent: Array<{ channel: string; payload: Record<string, unknown> }>
   spawned: FakePty[]
   /** What the manager asked the pty layer for, in order. */
-  calls: Array<{ command: string; cwd: string; env: NodeJS.ProcessEnv }>
+  calls: Array<{ command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }>
   /** Every `pty:data` payload for an id, concatenated. */
   dataFor(id: string): string
   /** The `quiet` flag of every `pty:quiet` event for an id, in order. */
@@ -84,10 +84,11 @@ function harness(
   const sent: Harness['sent'] = []
   const spawned: FakePty[] = []
   const calls: Harness['calls'] = []
-  const spawn: Spawn = (command, _args, options) => {
+  const spawn: Spawn = (command, args, options) => {
     if (spawnImpl) spawnImpl()
     calls.push({
       command,
+      args: Array.isArray(args) ? [...args] : [String(args)],
       cwd: String(options?.cwd ?? ''),
       env: (options?.env ?? {}) as NodeJS.ProcessEnv
     })
@@ -374,6 +375,60 @@ describe('transcript', () => {
     mgr.dispose('a')
 
     expect(mgr.transcript('a')).toBe('')
+  })
+})
+
+/**
+ * The waiting queue's answer to "why is this pane waiting" is the last thing it
+ * said, so the cut has to happen here: the buffer is half a megabyte and the
+ * question is three lines wide.
+ */
+describe('tail', () => {
+  it('hands back the last lines, stripped of the escapes that drew them', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('\x1b[32mRunning tests\x1b[0m\r\n')
+    spawned[0].emit('\x1b[2m14 passed\x1b[0m\r\n')
+    spawned[0].emit('Apply this patch? \x1b[1m(y/n)\x1b[0m')
+
+    expect(mgr.tail('a', 3)).toEqual(['Running tests', '14 passed', 'Apply this patch? (y/n)'])
+  })
+
+  it('skips the blank lines a redrawn frame leaves behind', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('first\r\n\r\n   \r\nsecond\r\n\r\n')
+
+    expect(mgr.tail('a', 3)).toEqual(['first', 'second'])
+  })
+
+  it('reads the tail of a pane that has scrolled past the replay limit without shipping it', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    const chunk = `${'x'.repeat(64 * 1024)}\r\n`
+    for (let i = 0; i < 20; i++) spawned[0].emit(chunk)
+    spawned[0].emit('Waiting for your approval\r\n')
+
+    const tail = mgr.tail('a', 3)
+    expect(tail[tail.length - 1]).toBe('Waiting for your approval')
+    // The whole point: the caller gets three lines, not the 512 KB they came
+    // out of. Two of these are still the last of the giant chunks.
+    expect(tail).toHaveLength(3)
+    expect(mgr.transcript('a').length).toBeGreaterThan(REPLAY_LIMIT / 2)
+  })
+
+  it('is empty for a pane that never started, rather than an error', () => {
+    const { mgr } = harness()
+
+    expect(mgr.tail('ghost', 3)).toEqual([])
+  })
+
+  it('is empty when nothing was asked for', () => {
+    const { mgr, spawned } = harness()
+    mgr.ensure(spec('a'), 100, 40)
+    spawned[0].emit('something\r\n')
+
+    expect(mgr.tail('a', 0)).toEqual([])
   })
 })
 
@@ -852,6 +907,217 @@ describe('a pane that runs elsewhere', () => {
     // `sshuttle` and `dockerize` are not ssh and docker.
     expect(envFor('/usr/bin/sshuttle').HD_CWD).toBeUndefined()
     expect(envFor('dockerize').HD_CWD).toBeUndefined()
+  })
+})
+
+/**
+ * A workspace's setup command runs in the same pane, ahead of the agent, which
+ * means composing it onto the command line of whichever shell this platform
+ * has. Every branch below is a shell that says "and then" differently — and the
+ * first test is the promise that a workspace without one changed nothing.
+ */
+describe('a pane with a setup command', () => {
+  const HOST = process.platform
+  let dir = ''
+
+  /** `process.platform` is read-only; this is the only way to ask the other ones. */
+  const onPlatform = (value: NodeJS.Platform): void => {
+    Object.defineProperty(process, 'platform', { value, configurable: true })
+  }
+
+  /** Where Windows looks for a shell, pointed at a directory a test fills in. */
+  const windowsShellsIn = (root: string): void => {
+    vi.stubEnv('SystemRoot', root)
+    vi.stubEnv('ProgramFiles', root)
+    vi.stubEnv('LOCALAPPDATA', root)
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hd-pty-shell-'))
+  })
+
+  afterEach(() => {
+    onPlatform(HOST)
+    vi.unstubAllEnvs()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const argvFor = (over: Partial<PaneSpec>): { command: string; args: string[] } => {
+    const { mgr, calls } = harness()
+    mgr.ensure(spec('a', over), 80, 24)
+    return { command: calls[0].command, args: calls[0].args }
+  }
+
+  it('spawns byte-identical commands for a workspace that set neither field', () => {
+    onPlatform('linux')
+    vi.stubEnv('SHELL', '/bin/bash')
+
+    expect(argvFor({})).toEqual({ command: 'fake-agent', args: [] })
+    expect(argvFor({ setup: '' })).toEqual({ command: 'fake-agent', args: [] })
+    expect(argvFor({ command: '/opt/hd/claude', args: ['--resume'] })).toEqual({
+      command: '/opt/hd/claude',
+      args: ['--resume']
+    })
+    expect(argvFor({ command: 'npm run dev', viaShell: true })).toEqual({
+      command: '/bin/bash',
+      args: ['-l', '-i', '-c', 'npm run dev']
+    })
+  })
+
+  it('runs the setup first, and the command only if it passed', () => {
+    onPlatform('linux')
+    vi.stubEnv('SHELL', '/bin/bash')
+
+    expect(argvFor({ setup: ' npm ci ', command: 'npm run dev', viaShell: true })).toEqual({
+      command: '/bin/bash',
+      args: ['-l', '-i', '-c', 'npm ci && npm run dev']
+    })
+  })
+
+  /**
+   * No `exec` on a `viaShell` line: it is the user's own, `&&`s and `;`s
+   * included, and `exec` binds to the first simple command only — `npm ci &&
+   * exec npm run build && npm run dev` runs the build and silently never the
+   * dev server. The shell staying as the parent is also what a `viaShell` pane
+   * did before it had a setup.
+   */
+  it('leaves a compound viaShell line whole rather than handing it to exec', () => {
+    onPlatform('linux')
+    vi.stubEnv('SHELL', '/bin/bash')
+
+    expect(
+      argvFor({ setup: 'npm ci', command: 'npm run build && npm run dev', viaShell: true })
+    ).toEqual({
+      command: '/bin/bash',
+      args: ['-l', '-i', '-c', 'npm ci && npm run build && npm run dev']
+    })
+  })
+
+  /**
+   * The common case: an agent spawned straight off the absolute path
+   * `findExecutable` returned, with no shell anywhere in the picture — so there
+   * is nothing for `&&` to run in until the setup command puts one there.
+   */
+  it('promotes a pane that had no shell, quoting its argv back into a line', () => {
+    onPlatform('darwin')
+    vi.stubEnv('SHELL', '/bin/zsh')
+
+    expect(
+      argvFor({ setup: 'npm ci', command: '/Users/a b/bin/claude', args: ['--model', 'opus'] })
+    ).toEqual({
+      command: '/bin/zsh',
+      args: ['-l', '-i', '-c', "npm ci && exec '/Users/a b/bin/claude' '--model' 'opus'"]
+    })
+  })
+
+  /**
+   * `/c`, not `/k`: a pane with a setup must report its exit — `/k` leaves an
+   * interactive prompt as the pty's process, so onExit never fires, the pane
+   * reads as running forever and auto-restart is dead. A plain viaShell pane
+   * keeps the `/k` it has always had.
+   */
+  it('leaves out the exec on cmd.exe, which has none, and tells it to exit', () => {
+    onPlatform('win32')
+    windowsShellsIn(dir)
+    vi.stubEnv('COMSPEC', 'C:\\Windows\\System32\\cmd.exe')
+
+    expect(argvFor({ setup: 'npm ci', command: 'npm run dev', viaShell: true })).toEqual({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/c', 'npm ci && npm run dev']
+    })
+    expect(argvFor({ command: 'npm run dev', viaShell: true })).toEqual({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/k', 'npm run dev']
+    })
+  })
+
+  /**
+   * cmd.exe expands `%VAR%` during tokenization — inside double quotes too —
+   * and a `/c` line has no escape for `%`, so a promoted argv carrying one
+   * cannot be quoted faithfully. Spawning anyway would run a line that
+   * quietly differs from the pane's spec; the manager refuses instead, in the
+   * same in-band shape a bad path lands in.
+   */
+  it('refuses to promote an argv cmd.exe would rewrite, rather than spawn a lie', () => {
+    onPlatform('win32')
+    windowsShellsIn(dir)
+    vi.stubEnv('COMSPEC', 'C:\\Windows\\System32\\cmd.exe')
+
+    const { mgr, calls } = harness()
+    const result = mgr.ensure(
+      spec('a', { setup: 'npm ci', args: ['--prompt=%USERPROFILE%'] }),
+      80,
+      24
+    )
+
+    expect(calls).toHaveLength(0)
+    expect(result).toMatchObject({ created: true, status: 'exited', exitCode: -1 })
+    expect(result.error).toContain('%...%')
+    expect(result.replay).toContain('Failed to start: fake-agent')
+    expect(mgr.status('a')).toEqual({ status: 'exited', exitCode: -1 })
+  })
+
+  /**
+   * The PowerShell preamble carries three findings at once: $LASTEXITCODE is
+   * $null until a *native* executable sets it, so it is primed to 0 or a
+   * cmdlet-only setup would never start the agent; $? is what a failing cmdlet
+   * shows; and there is no -NoExit — the shell must die with the command so
+   * the pane's exit code is real (the trailing `exit` forwards the agent's).
+   */
+  it('asks PowerShell for the exit code, having no && to ask it with', () => {
+    onPlatform('win32')
+    const pwsh = join(dir, 'PowerShell', '7', 'pwsh.exe')
+    mkdirSync(join(dir, 'PowerShell', '7'), { recursive: true })
+    writeFileSync(pwsh, '')
+    windowsShellsIn(dir)
+
+    const guard =
+      '$LASTEXITCODE = 0; npm ci; $ok = $?; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if (-not $ok) { exit 1 }'
+    expect(argvFor({ setup: 'npm ci', command: 'npm run dev', viaShell: true })).toEqual({
+      command: pwsh,
+      args: ['-NoLogo', '-Command', `${guard}; npm run dev; exit $LASTEXITCODE`]
+    })
+    // The call operator, because a quoted path on its own is a string to
+    // print — and single quotes, PowerShell's literal string: double quotes
+    // expand, and would rewrite `$env:USER` before the agent saw it.
+    expect(
+      argvFor({
+        setup: 'npm ci',
+        command: 'C:\\Program Files\\hd\\claude.cmd',
+        args: ['--prompt=$env:USER']
+      }).args
+    ).toEqual([
+      '-NoLogo',
+      '-Command',
+      `${guard}; & 'C:\\Program Files\\hd\\claude.cmd' '--prompt=$env:USER'; exit $LASTEXITCODE`
+    ])
+    // Without a setup nothing changes: interactive, and the line as typed.
+    expect(argvFor({ command: 'npm run dev', viaShell: true })).toEqual({
+      command: pwsh,
+      args: ['-NoLogo', '-NoExit', '-Command', 'npm run dev']
+    })
+  })
+
+  /**
+   * `ssh`, `wsl` and `docker` are launchers on *this* machine carrying the
+   * process to another one. Prepending a local shell would run the install
+   * here, which is the opposite of what it is for — so those panes are left
+   * exactly as they were.
+   */
+  it('does not put a local install in front of a pane that runs elsewhere', () => {
+    onPlatform('linux')
+    vi.stubEnv('SHELL', '/bin/bash')
+
+    expect(argvFor({ setup: 'npm ci', command: 'ssh', args: ['-t', 'build-box', 'claude'] })).toEqual(
+      { command: 'ssh', args: ['-t', 'build-box', 'claude'] }
+    )
+    expect(argvFor({ setup: 'npm ci', command: 'docker', args: ['exec', '-it', 'web-1'] })).toEqual({
+      command: 'docker',
+      args: ['exec', '-it', 'web-1']
+    })
+    expect(
+      argvFor({ setup: 'npm ci', command: 'C:\\Windows\\System32\\wsl.exe', args: ['-d', 'Ubuntu'] })
+    ).toEqual({ command: 'C:\\Windows\\System32\\wsl.exe', args: ['-d', 'Ubuntu'] })
   })
 })
 

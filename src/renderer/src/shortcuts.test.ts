@@ -61,6 +61,12 @@ describe('matching', () => {
     expect(matchShortcut(ctrlShift('ƒ', { code: 'KeyF', altKey: true }), true)?.id).toBe('find-all')
     expect(matchShortcut(ctrlShift('f', { code: 'KeyF' }), true)?.id).toBe('find-pane')
   })
+
+  /** The two halves of attention routing, one chord apart. */
+  it('separates jumping to the next waiting pane from the queue of all of them', () => {
+    expect(matchShortcut(ctrlShift('j'), false)?.id).toBe('focus-waiting')
+    expect(matchShortcut(ctrlShift('u'), false)?.id).toBe('toggle-waiting-queue')
+  })
 })
 
 describe('the typing guard', () => {
@@ -87,6 +93,26 @@ describe('digits', () => {
     )
     expect(matchShortcut(press({ key: '¡', code: 'Digit1', altKey: true }), true)?.id).toBe(
       'focus-pane-by-digit'
+    )
+  })
+
+  /**
+   * Alt+Shift used to fall into the pane digits, so Alt+Shift+1 focused pane 1.
+   * It fires the workspace's first action now, and the pane digits had to learn
+   * to exclude Shift for that to be reachable at all.
+   */
+  it('sends Alt+Shift+digit to an action and leaves Alt+digit on the pane', () => {
+    expect(
+      matchShortcut(press({ key: '2', code: 'Digit2', altKey: true, shiftKey: true }), false)?.id
+    ).toBe('run-action-by-digit')
+    expect(matchShortcut(press({ key: '2', code: 'Digit2', altKey: true }), false)?.id).toBe(
+      'focus-pane-by-digit'
+    )
+  })
+
+  it('reserves Alt+Shift+digit, which no Ctrl+Shift rule covers', () => {
+    expect(isReservedShortcut(press({ key: '2', code: 'Digit2', altKey: true, shiftKey: true }))).toBe(
+      true
     )
   })
 

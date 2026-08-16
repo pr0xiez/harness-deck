@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type {
@@ -8,6 +8,7 @@ import type {
   WorktreeRequest,
   WorktreeResult
 } from '@shared/types'
+import { runProcess } from './process'
 import { shellEnv } from './shell-env'
 
 /**
@@ -53,23 +54,19 @@ interface Ran {
   error: string
 }
 
-function run(args: string[], cwd: string, timeout = TIMEOUT): Promise<Ran> {
-  return new Promise((done) => {
-    const child = execFile(
-      'git',
-      args,
-      { cwd, env: shellEnv(), timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) =>
-        done({
-          ok: !err,
-          stdout: stdout ?? '',
-          error: err ? firstLine(stderr) || err.message : ''
-        })
-    )
-    // No git on PATH at all, or a cwd that went away between the check and the
-    // spawn — neither reaches the callback on every platform.
-    child.on('error', (err) => done({ ok: false, stdout: '', error: err.message }))
+async function run(args: string[], cwd: string, timeout = TIMEOUT): Promise<Ran> {
+  const git = await runProcess('git', args, {
+    cwd,
+    env: shellEnv(),
+    timeout,
+    maxBuffer: 8 * 1024 * 1024
   })
+  return {
+    ok: git.ok,
+    stdout: git.stdout,
+    // git's own words where it said any; Node's (ENOENT, the timeout) otherwise.
+    error: git.error ? firstLine(git.stderr) || git.error.message : ''
+  }
 }
 
 interface Capped {

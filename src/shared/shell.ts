@@ -35,6 +35,22 @@ export function quoteFor(value: string, flavour: ShellFlavour): string {
 }
 
 /**
+ * True when cmd.exe would rewrite the value before the program saw it. cmd
+ * expands `%VAR%` while it tokenizes the line — before quoting is even
+ * consulted, so `"fix %USERNAME% handling"` is substituted *inside* the double
+ * quotes `quoteFor` adds — and a `/c`/`/k` command line has no faithful escape
+ * for `%`: the `%%` doubling only works inside batch files, and `^%` survives
+ * one parse but not the variable pass. There is no spelling of `%` cmd will
+ * reliably read back as itself, so a caller composing for the `cmd` flavour
+ * must refuse a value with one in it rather than let the line it shows diverge
+ * from the line that runs — which could quietly leak whatever the variable
+ * holds.
+ */
+export function cmdExpansionHazard(value: string): boolean {
+  return value.includes('%')
+}
+
+/**
  * Runs the commands in order, each step only if the one before it succeeded —
  * `&&` where the shell has it. PowerShell before 7 has none (the same gap
  * `withSetup` in `pty.ts` works around), so it gets the `$LASTEXITCODE` form,

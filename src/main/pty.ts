@@ -2,7 +2,8 @@ import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as nodePty from '@lydell/node-pty'
 import type { IPty } from '@lydell/node-pty'
-import { commandName, quote } from '@shared/remote'
+import { commandName } from '@shared/remote'
+import { cmdExpansionHazard, quoteFor } from '@shared/shell'
 import type { EnsureResult, PaneSpec, PaneStatus } from '@shared/types'
 import { shellCommandLine, shellFlavour, type ShellFlavour } from './profiles'
 import type { ScrollbackStore } from './scrollback'
@@ -113,7 +114,6 @@ export class PtyManager {
     this.sessions.set(spec.id, session)
     this.seed(session)
 
-    const { command, args } = resolveCommand(spec)
     const cwd = resolveCwd(spec.cwd)
     const env = buildEnv(spec, cwd)
 
@@ -122,6 +122,12 @@ export class PtyManager {
     }
 
     try {
+      // Inside the try on purpose: composing the command line can refuse —
+      // `quoteArg` throws rather than build a cmd.exe line that would diverge
+      // from the pane's spec — and a refusal must land the same way a bad
+      // path does: an exited pane with the reason on screen, never a throw
+      // across IPC.
+      const { command, args } = resolveCommand(spec)
       const proc = this.spawn(command, args, {
         name: 'xterm-256color',
         cols: session.cols,
@@ -162,7 +168,7 @@ export class PtyManager {
       const message = err instanceof Error ? err.message : String(err)
       session.status = 'exited'
       session.exitCode = -1
-      this.appendLocal(session, red(`Failed to start: ${command}\r\n${message}\r\n`))
+      this.appendLocal(session, red(`Failed to start: ${spec.command}\r\n${message}\r\n`))
       return {
         created: true,
         status: 'exited',
@@ -444,16 +450,23 @@ function quotedLine(spec: PaneSpec, flavour: ShellFlavour): string {
   return flavour === 'powershell' ? `& ${line}` : line
 }
 
+/**
+ * One argv entry back into a word on the shell's command line — the shared
+ * `quoteFor`, plus the one refusal quoting cannot make for us: cmd.exe expands
+ * `%VAR%` during tokenization, quotes or no quotes, and a `/c` line has no
+ * faithful escape for `%` (see `cmdExpansionHazard`). Spawning anyway would
+ * hand the agent an argv that quietly differs from the pane's spec, so this
+ * throws instead — `ensure()` catches it and the pane opens exited with the
+ * reason on screen, the same shape a bad path lands in.
+ */
 function quoteArg(value: string, flavour: ShellFlavour): string {
-  if (flavour === 'posix') return quote(value)
-  // Single quotes are PowerShell's literal string — no `$` expansion, no
-  // backticks, an embedded quote doubles. Double quotes are its *expanding*
-  // form, and would rewrite an arg like `--prompt=$env:USER` before the agent
-  // ever saw it.
-  if (flavour === 'powershell') return `'${value.split("'").join("''")}'`
-  // cmd has no literal form; a doubled double quote is the closest it reads.
-  // Paths with quotes in them do not exist, spaces in them always do.
-  return `"${value.split('"').join('""')}"`
+  if (flavour === 'cmd' && cmdExpansionHazard(value)) {
+    throw new Error(
+      `cmd.exe would expand the %...% in ${JSON.stringify(value)} before the program saw it, ` +
+        'and a /c command line has no way to escape it. Remove the % or use PowerShell.'
+    )
+  }
+  return quoteFor(value, flavour)
 }
 
 /**

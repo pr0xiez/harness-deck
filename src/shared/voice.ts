@@ -79,7 +79,13 @@ export const VOICE_PROVIDERS: VoiceProviderInfo[] = [
     models: [],
     api: 'transcriptions',
     audio: 'webm',
-    envVars: ['HD_VOICE_API_KEY'],
+    // Empty on purpose: `custom` accepts any http(s) host the user types in
+    // (see `voiceEndpointAllowed`), so it may only ever send the key stored
+    // specifically for it — never `HD_VOICE_API_KEY`, which every hosted
+    // service also reads and would otherwise leak to whatever host a
+    // compromised renderer names. `resolveKey` in main/voice.ts enforces the
+    // same rule on the read side.
+    envVars: [],
     hint: 'Anything serving /audio/transcriptions — e.g. http://127.0.0.1:8000/v1 for a local Whisper.'
   }
 ]

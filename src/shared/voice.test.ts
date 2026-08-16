@@ -50,6 +50,25 @@ describe('VOICE_PROVIDERS', () => {
     expect(VOICE_PROVIDERS[0].baseUrl).toBeTruthy()
     expect(VOICE_PROVIDERS[0].model).toBeTruthy()
   })
+
+  /**
+   * Issue #17's exfiltration path, reopened: `custom` accepts any http(s) host
+   * (see `voiceEndpointAllowed`), so if it read the same env var every hosted
+   * service does, a key exported for OpenAI/Groq/OpenRouter would ride along
+   * to whatever host a compromised renderer names via `provider: 'custom'`.
+   * `custom` may only ever use a key stored specifically for it.
+   */
+  it('gives the custom service no environment variable to read a key from', () => {
+    expect(voiceProvider('custom').envVars).toEqual([])
+  })
+
+  /** The bug was `HD_VOICE_API_KEY` riding on every provider, custom included. */
+  it('keeps HD_VOICE_API_KEY out of the custom service, present everywhere else', () => {
+    for (const info of VOICE_PROVIDERS) {
+      if (info.id === 'custom') expect(info.envVars).not.toContain('HD_VOICE_API_KEY')
+      else expect(info.envVars).toContain('HD_VOICE_API_KEY')
+    }
+  })
 })
 
 describe('voiceProvider', () => {

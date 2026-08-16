@@ -174,6 +174,14 @@ interface DeckState {
   /** Why the last install attempt did not get off the ground. */
   updateError: string | null
   updateInstalling: boolean
+  /** Why the last save did not reach disk; null again once one does. */
+  saveError: string | null
+  /**
+   * The current failure's toast was waved off. Cleared by the next save that
+   * lands, so a fresh run of failures shows the toast again — dismissing is
+   * "stop telling me about this outage", not "never warn me again".
+   */
+  saveErrorDismissed: boolean
   /** Shown bottom-right until waved off. Never saved. */
   notice: DeckNotice | null
 
@@ -191,6 +199,10 @@ interface DeckState {
   installUpdate: () => Promise<void>
   dismissUpdate: () => void
   showUpdate: () => void
+
+  /** One immediate save of the deck as it stands, without waiting for an edit. */
+  retrySave: () => Promise<void>
+  dismissSaveError: () => void
 
   addWorkspace: (name?: string, cwd?: string) => string
   duplicateWorkspace: (id: string) => string
@@ -329,6 +341,8 @@ export const useDeck = create<DeckState>((set, get) => ({
   updateDismissed: null,
   updateError: null,
   updateInstalling: false,
+  saveError: null,
+  saveErrorDismissed: false,
   notice: null,
 
   hydrate: async () => {
@@ -438,6 +452,13 @@ export const useDeck = create<DeckState>((set, get) => ({
     set({ updateDismissed: get().update?.available?.version ?? null, updateError: null }),
 
   showUpdate: () => set({ updateDismissed: null }),
+
+  retrySave: async () => {
+    const payload = serialize(get())
+    await deliverSave(payload, JSON.stringify(payload))
+  },
+
+  dismissSaveError: () => set({ saveErrorDismissed: true }),
 
   addWorkspace: (name, cwd) => {
     const { workspaces, settings, info } = get()
@@ -1061,6 +1082,35 @@ export function startAttention(): () => void {
 let saveTimer: number | undefined
 let lastSnapshot = ''
 
+/**
+ * One write to disk, with the outcome reflected into the store (issue #26).
+ *
+ * The snapshot is remembered before the reply comes back — that is what lets
+ * the debounce dedupe back-to-back identical decks — and handed back on
+ * failure: a snapshot kept after a failed write would convince the debounce
+ * the deck was already on disk, and the next edit would skip the write that
+ * could have recovered it. Forgetting it means every later change — even one
+ * that serializes identically — tries again, which is the retry loop, for free.
+ *
+ * The toast is fed by `saveError`, written only when the message changes and
+ * cleared by the first save that lands — so a failure streak shows one toast
+ * for as long as it lasts rather than a new one per debounce tick.
+ */
+async function deliverSave(payload: PersistedState, snapshot: string): Promise<void> {
+  lastSnapshot = snapshot
+  const result = await api.saveState(payload)
+  const { saveError, saveErrorDismissed } = useDeck.getState()
+  if (result.ok) {
+    if (saveError !== null || saveErrorDismissed) {
+      useDeck.setState({ saveError: null, saveErrorDismissed: false })
+    }
+    return
+  }
+  if (lastSnapshot === snapshot) lastSnapshot = ''
+  const error = result.error || 'unknown error'
+  if (saveError !== error) useDeck.setState({ saveError: error })
+}
+
 /** Debounced persistence — called on every store change once hydrated. */
 export function startPersistence(): () => void {
   return useDeck.subscribe((state) => {
@@ -1070,8 +1120,7 @@ export function startPersistence(): () => void {
       const payload = serialize(state)
       const snapshot = JSON.stringify(payload)
       if (snapshot === lastSnapshot) return
-      lastSnapshot = snapshot
-      api.saveState(payload)
+      void deliverSave(payload, snapshot)
     }, 400)
   })
 }

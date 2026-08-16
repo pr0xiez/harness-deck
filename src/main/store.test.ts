@@ -207,6 +207,10 @@ describe('writeJsonAtomic', () => {
     expect(readdirSync(dir)).toEqual(['thing.json'])
   })
 
+  it('reports a write that landed', () => {
+    expect(writeJsonAtomic(join(dir, 'thing.json'), { hello: 'world' })).toEqual({ ok: true })
+  })
+
   /**
    * Every caller here is a menu command or an IPC handler on the way to
    * quitting: a throw would take the app down over a file it could have
@@ -223,13 +227,28 @@ describe('writeJsonAtomic', () => {
     expect(readFileSync(blocker, 'utf8')).toBe('something else lives here')
   })
 
+  /**
+   * Issue #26: the console line above is for developers; the returned reason
+   * is what travels back over IPC so the renderer can put it in front of the
+   * user instead of losing the session in silence.
+   */
+  it('hands the caller the reason for a write it could not make', () => {
+    const blocker = join(dir, 'not-a-folder')
+    put(blocker, 'something else lives here')
+
+    const result = writeJsonAtomic(join(blocker, 'thing.json'), { hello: 'world' })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBeTruthy()
+  })
+
   it('leaves the last good copy alone when the value cannot be described in JSON', () => {
     const file = join(dir, 'thing.json')
     writeJsonAtomic(file, { generation: 1 })
     const circular: Record<string, unknown> = {}
     circular.self = circular
 
-    expect(() => writeJsonAtomic(file, circular)).not.toThrow()
+    expect(writeJsonAtomic(file, circular).ok).toBe(false)
 
     // The write threw before the rename, so the file is still the last thing
     // that parsed — the temp file is where the failure stayed.
@@ -270,5 +289,17 @@ describe('saveState', () => {
     put(stateFile(), '{"workspaces": [')
 
     expect(loadState(dir)?.activeWorkspaceId).toBe('first')
+  })
+
+  /** What the `state:save` IPC handler passes back to the renderer (issue #26). */
+  it('reports whether the session actually reached disk', () => {
+    expect(saveState(state(), dir)).toEqual({ ok: true })
+
+    const blocker = join(dir, 'not-a-folder')
+    put(blocker, 'something else lives here')
+
+    const failed = saveState(state(), join(blocker, 'deeper'))
+    expect(failed.ok).toBe(false)
+    expect(failed.error).toBeTruthy()
   })
 })

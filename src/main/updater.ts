@@ -423,6 +423,14 @@ export async function install(): Promise<InstallResult> {
       }
     }
 
+    // Has to run before sha512() below: that opens the same path to hash it,
+    // so a missing file would otherwise surface as a raw ENOENT out of the
+    // outer catch instead of this message.
+    if (!existsSync(manifest.installer)) {
+      installing = false
+      return { ok: false, error: `The installer has gone missing: ${manifest.installer}` }
+    }
+
     const actual = await sha512(manifest.installer)
     if (actual !== manifest.sha512) {
       installing = false
@@ -436,11 +444,6 @@ export async function install(): Promise<InstallResult> {
         ok: false,
         error: `The installer for ${manifest.version} failed its checksum — the build may still be running.`
       }
-    }
-
-    if (!existsSync(manifest.installer)) {
-      installing = false
-      return { ok: false, error: `The installer has gone missing: ${manifest.installer}` }
     }
 
     const child = spawn(

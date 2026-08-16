@@ -78,6 +78,21 @@ describe('isAppWorktree', () => {
     expect(isAppWorktree('/home/dev/harness-deck')).toBe(false)
     expect(isAppWorktree('')).toBe(false)
   })
+
+  /**
+   * The reason `git:removeWorktree`'s handler checks `isAppWorktree` against
+   * `repo.root` (what git resolves) rather than the caller-supplied string:
+   * a symlink can be *named* like a worktree without *being* one. Checking
+   * the string alone would let it through; checking the resolved root is
+   * what actually matters, and the two can disagree. See #48.
+   */
+  it('a caller-supplied string can look conventional while the path it resolves to does not — which is why the check must run on the resolved root', () => {
+    const symlinkName = '/home/dev/staging/.harness-deck/deck/hd/api'
+    const resolvedRoot = '/home/dev/other-repo-worktrees/feature'
+
+    expect(isAppWorktree(symlinkName)).toBe(true)
+    expect(isAppWorktree(resolvedRoot)).toBe(false)
+  })
 })
 
 describe('seedRegistry', () => {

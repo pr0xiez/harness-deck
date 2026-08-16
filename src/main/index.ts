@@ -524,8 +524,16 @@ function registerIpc(): void {
     if (result.ok && result.path) openDir(result.path)
     return result
   })
-  ipcMain.handle(IPC.gitRemoveWorktree, (_e, path: string) => {
-    if (!isOpenDir(path) || !isAppWorktree(path)) {
+  ipcMain.handle(IPC.gitRemoveWorktree, async (_e, path: string) => {
+    if (!isOpenDir(path)) {
+      return { ok: false, error: `${path} is not a worktree Harness Deck created.` }
+    }
+    // #48's convention check has to land on the path git actually resolves —
+    // repo.root — not the caller-supplied string, or a symlink named
+    // `.harness-deck/...` that points elsewhere would sail through the check
+    // and then have removeWorktree() delete whatever it really points at.
+    const repo = await repoInfo(path)
+    if (!repo || !isAppWorktree(repo.root)) {
       return { ok: false, error: `${path} is not a worktree Harness Deck created.` }
     }
     return removeWorktree(path)

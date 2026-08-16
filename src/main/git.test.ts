@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -160,7 +169,16 @@ describeGit('addWorktree', () => {
   })
 
   it('reports a git refusal in-band', async () => {
-    const result = await addWorktree({ repo: base, branch: 'hd/x', path: worktreeFor('hd/x') })
+    // Not `repo: base`: worktreePathAllowed would derive the allowed base as
+    // `dirname(base)/.harness-deck`, which `worktreeFor('hd/x')` (under
+    // `base/.harness-deck`) does not sit inside — the request is refused by the
+    // containment guard before git ever runs, and this test would pass for the
+    // wrong reason. A folder one level down makes the allowed base
+    // `base/.harness-deck`, which does contain it, so the refusal below is
+    // really git's (the folder is not a repo) rather than the guard's.
+    const repo = join(base, 'sub')
+    mkdirSync(repo)
+    const result = await addWorktree({ repo, branch: 'hd/x', path: worktreeFor('hd/x') })
 
     expect(result.ok).toBe(false)
     expect(result.error).toBeTruthy()
@@ -174,6 +192,31 @@ describeGit('addWorktree', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toContain('.harness-deck')
     expect(existsSync(outside)).toBe(false)
+  })
+
+  /**
+   * `worktreePathAllowed` alone is purely lexical, and does not have to be
+   * planted by hand to matter: a checkout of a hostile repo can ship a symlink
+   * as ordinary content, and `addWorktree` itself is what walks into it. Here
+   * `.harness-deck/repo/hd` stands in for a directory a first worktree's own
+   * branch segment would already have created, redirected out to `autostart`.
+   */
+  it('refuses a worktree whose path is real only through a symlink', async () => {
+    const outside = join(base, 'autostart')
+    mkdirSync(outside, { recursive: true })
+    const harnessDeckRepo = join(base, '.harness-deck', 'repo')
+    mkdirSync(harnessDeckRepo, { recursive: true })
+    symlinkSync(outside, join(harnessDeckRepo, 'hd'), 'dir')
+
+    // Lexically this sits inside `.harness-deck`, and would pass the plain
+    // string check — the point of the test is that it is refused anyway.
+    const path = worktreeFor('hd/evil')
+    expect(worktreePathAllowed(root, path)).toBe(true)
+
+    const result = await addWorktree({ repo: root, branch: 'hd/evil', path })
+
+    expect(result.ok).toBe(false)
+    expect(existsSync(join(outside, 'evil'))).toBe(false)
   })
 })
 
@@ -220,6 +263,13 @@ describe('worktreePathAllowed', () => {
   it('rejects the base directory itself — a worktree is a folder within it', () => {
     expect(worktreePathAllowed(repo, '/home/dev/projects/.harness-deck')).toBe(false)
     expect(worktreePathAllowed(repo, '/home/dev/projects/.harness-deck/')).toBe(false)
+  })
+
+  it('allows a child whose name merely starts with .. — only a .. segment escapes', () => {
+    // Unreachable through the app today (worktreeBranch slugifies), but the
+    // rule itself should agree with isInsideDir's `..${sep}` test in
+    // open-path.ts rather than rejecting on any `..` prefix.
+    expect(worktreePathAllowed(repo, '/home/dev/projects/.harness-deck/..hidden')).toBe(true)
   })
 
   it('rejects a sibling whose name merely starts with the base name', () => {

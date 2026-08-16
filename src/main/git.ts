@@ -1,6 +1,6 @@
-import { execFile, spawn } from 'node:child_process'
-import { existsSync, statSync } from 'node:fs'
-import { dirname, posix, resolve, win32 } from 'node:path'
+import { spawn } from 'node:child_process'
+import { existsSync, realpathSync, statSync } from 'node:fs'
+import { basename, dirname, posix, resolve, win32 } from 'node:path'
 import type {
   DiffRequest,
   DiffResult,
@@ -9,6 +9,7 @@ import type {
   WorktreeResult
 } from '@shared/types'
 import { WORKTREE_DIR } from '@shared/worktree'
+import { runProcess } from './process'
 import { shellEnv } from './shell-env'
 
 /**
@@ -54,23 +55,19 @@ interface Ran {
   error: string
 }
 
-function run(args: string[], cwd: string, timeout = TIMEOUT): Promise<Ran> {
-  return new Promise((done) => {
-    const child = execFile(
-      'git',
-      args,
-      { cwd, env: shellEnv(), timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) =>
-        done({
-          ok: !err,
-          stdout: stdout ?? '',
-          error: err ? firstLine(stderr) || err.message : ''
-        })
-    )
-    // No git on PATH at all, or a cwd that went away between the check and the
-    // spawn — neither reaches the callback on every platform.
-    child.on('error', (err) => done({ ok: false, stdout: '', error: err.message }))
+async function run(args: string[], cwd: string, timeout = TIMEOUT): Promise<Ran> {
+  const git = await runProcess('git', args, {
+    cwd,
+    env: shellEnv(),
+    timeout,
+    maxBuffer: 8 * 1024 * 1024
   })
+  return {
+    ok: git.ok,
+    stdout: git.stdout,
+    // git's own words where it said any; Node's (ENOENT, the timeout) otherwise.
+    error: git.error ? firstLine(git.stderr) || git.error.message : ''
+  }
 }
 
 interface Capped {
@@ -225,13 +222,49 @@ export function worktreePathAllowed(repo: string, target: string): boolean {
   const p = /^[a-zA-Z]:[\\/]/.test(repo) || repo.includes('\\') ? win32 : posix
   const base = p.resolve(p.dirname(p.resolve(repo)), WORKTREE_DIR)
   const rel = p.relative(base, p.resolve(target))
-  return rel !== '' && !rel.startsWith('..') && !p.isAbsolute(rel)
+  // Same rule `isInsideDir` in index.ts uses for the openPath allowlist: a
+  // sibling that merely starts with `..` (`<base>/..hidden`) is a legitimate
+  // child, not an escape — only a `..` segment (`..`, or `..` then the
+  // separator) means the relative path climbed out of `base`.
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${p.sep}`) && !p.isAbsolute(rel)
+}
+
+/**
+ * Real path of the deepest ancestor of `target` that already exists, with
+ * whatever does not exist yet rejoined below it. `worktree add` creates the
+ * destination itself, so `realpathSync` on the whole path would just throw —
+ * but a symlink only has to sit somewhere already on disk under
+ * `.harness-deck` (planted by the contents of a hostile checkout, not
+ * necessarily by hand) to redirect where git writes, and that ancestor is
+ * real by the time this runs.
+ */
+function realExistingPrefix(target: string): string {
+  let current = resolve(target)
+  const pending: string[] = []
+  for (;;) {
+    try {
+      const real = realpathSync(current)
+      return pending.length ? resolve(real, ...pending.reverse()) : real
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return target // reached the root without finding anything real
+      pending.push(basename(current))
+      current = parent
+    }
+  }
 }
 
 export async function addWorktree(req: WorktreeRequest): Promise<WorktreeResult> {
   if (!isDir(req.repo)) return { ok: false, error: `${req.repo} is not a folder.` }
   if (!req.branch || !req.path) return { ok: false, error: 'A worktree needs a branch and a path.' }
   if (!worktreePathAllowed(req.repo, req.path)) {
+    return { ok: false, error: `${req.path} is outside the ${WORKTREE_DIR} folder beside the repo.` }
+  }
+  // The check above is purely lexical. `req.repo` exists (checked above) so
+  // its realpath is exact; `req.path` usually does not exist yet, so this
+  // re-checks containment against the realpath of whatever of it already is
+  // on disk — closing the symlink escape the lexical check alone would miss.
+  if (!worktreePathAllowed(realpathSync(req.repo), realExistingPrefix(req.path))) {
     return { ok: false, error: `${req.path} is outside the ${WORKTREE_DIR} folder beside the repo.` }
   }
 

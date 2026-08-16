@@ -374,6 +374,11 @@ code {
   box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 35%, transparent);
 }
 
+/* The waiting count is a button where it opens the queue (sidebar rows). */
+button.count.waiting:hover {
+  background: color-mix(in srgb, var(--warn) 42%, var(--bg-3));
+}
+
 /* Slower than the waiting pulse on purpose: this one is on for as long as a
    harness runs, so it has to be visible from the corner of your eye without
    competing with the amber "come here" signals. */
@@ -530,6 +535,92 @@ code {
   background: color-mix(in srgb, var(--warn) 22%, transparent);
   color: color-mix(in srgb, var(--warn) 80%, var(--fg));
   font-weight: 650;
+}
+
+/* A workspace's saved commands, one click each. Sits between the repo chip and
+   the pane count, so the toolbar reads left to right as where you are, what the
+   repo is doing, what you can run, and what is open. See HD-16. */
+.action-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 3px 9px 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-1);
+  color: var(--fg-1);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.action-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.action-chip:hover,
+.action-chip.on {
+  border-color: var(--line-2);
+  background: var(--bg-2);
+  color: var(--fg);
+}
+
+.action-menu-anchor {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.action-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* Capped so a long label truncates itself instead of pushing the command out. */
+.action-item-label {
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-item-command {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-2);
+  font: 11px/1.4 var(--mono);
+}
+
+.action-item-key {
+  color: var(--fg-2);
+  font-size: 11px;
+}
+
+/* The dialog's editor for the same list. */
+.action-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.action-row .action-command {
+  font-family: var(--mono);
+}
+
+.action-add {
+  align-self: flex-start;
 }
 
 .pane-count {
@@ -697,6 +788,17 @@ code {
   background: color-mix(in srgb, var(--ws-accent) 16%, var(--bg-2));
   border-color: color-mix(in srgb, var(--ws-accent) 32%, transparent);
   color: color-mix(in srgb, var(--ws-accent) 72%, #fff);
+}
+
+/* The title-bar door into the waiting queue — amber like every other
+   "come here" signal, and only rendered while something actually waits. */
+.ghost-btn.waiting {
+  color: color-mix(in srgb, var(--warn) 80%, #fff);
+}
+
+.ghost-btn.waiting:hover {
+  background: color-mix(in srgb, var(--warn) 14%, var(--bg-2));
+  color: color-mix(in srgb, var(--warn) 90%, #fff);
 }
 
 .icon-btn {
@@ -1008,6 +1110,29 @@ code {
   background: color-mix(in srgb, var(--fg-2) 26%, transparent);
 }
 
+/* Struck through rather than given its own glyph: the icon says "this pane
+   signals for you", and muting is that sentence crossed out. */
+.icon-btn.pane-mute-btn {
+  position: relative;
+}
+
+.icon-btn.pane-mute-btn.on {
+  color: var(--fg-2);
+  background: color-mix(in srgb, var(--fg-2) 26%, transparent);
+}
+
+.icon-btn.pane-mute-btn.on::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 50%;
+  height: 1.3px;
+  border-radius: 1px;
+  background: currentColor;
+  transform: rotate(-45deg);
+}
+
 .pane-actions {
   display: flex;
   gap: 1px;
@@ -1209,6 +1334,175 @@ code {
 .deck-search .target-chip b {
   color: var(--fg);
   font-weight: 650;
+}
+
+/* ---------- waiting queue ---------- */
+
+.queue-scrim {
+  align-items: flex-start;
+  padding-top: 9vh;
+}
+
+.queue {
+  width: min(820px, calc(100vw - 48px));
+  max-height: 74vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: #0f141b;
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* It is focused from the moment it opens — A, S and M have to reach it — and a
+   focus ring on a whole dialog reads as an error state. */
+.queue:focus {
+  outline: none;
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-2);
+}
+
+.queue-title {
+  font-size: 13px;
+  font-weight: 640;
+  color: var(--fg);
+}
+
+.queue-count {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--warn);
+  font: 650 10.5px/1.6 var(--mono);
+}
+
+.queue-legend {
+  margin-left: auto;
+  font: 10px/1 var(--mono);
+  color: var(--fg-2);
+  opacity: 0.75;
+}
+
+.queue-legend b {
+  color: var(--fg-1);
+  font-weight: 650;
+}
+
+.queue-list {
+  overflow-y: auto;
+  padding: 6px;
+}
+
+/* Two rows: the identity line, then the tail underneath it spanning the width.
+   The tail is the reason the row exists, so it gets the space. */
+.queue-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.queue-row.on {
+  background: var(--bg-2);
+  border-color: color-mix(in srgb, var(--ws-accent) 40%, var(--line-2));
+}
+
+/* Seen it: still listed, because acknowledging is not hiding — just quieter
+   than the panes still asking. */
+.queue-row.is-acknowledged {
+  opacity: 0.52;
+}
+
+.queue-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  background: var(--ws-accent);
+}
+
+.queue-badge {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.queue-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--fg);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.queue-ws {
+  font: 10px/1 var(--mono);
+  color: var(--fg-2);
+}
+
+.queue-flag {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--warn) 26%, transparent);
+  color: var(--warn);
+  font: 650 9px/1.6 var(--mono);
+}
+
+.queue-flag.seen {
+  background: color-mix(in srgb, var(--fg-2) 24%, transparent);
+  color: var(--fg-1);
+}
+
+.queue-age {
+  font: 10.5px/1 var(--mono);
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+
+.queue-tail {
+  grid-column: 3 / -1;
+  margin: 4px 0 0;
+  max-height: 3.9em;
+  overflow: hidden;
+  font: 10.5px/1.3 var(--mono);
+  color: var(--fg-1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.queue-actions {
+  grid-column: 3 / -1;
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.queue-row.on .queue-actions,
+.queue-row:hover .queue-actions {
+  opacity: 1;
+}
+
+.queue-none {
+  padding: 22px 14px;
+  text-align: center;
+  color: var(--fg-2);
+  font-size: 12px;
 }
 
 /* ---------- empty states ---------- */
@@ -2019,6 +2313,37 @@ code {
   font: inherit;
 }
 
+/* The one control in the column header that writes something, so it carries the
+   column's accent instead of sitting quiet beside the folder button. */
+.cmp-ship {
+  color: var(--pane-accent);
+}
+
+/* The ship dialog. Filed with compare because that is where it is reached from,
+   even though the pane header offers it too. */
+
+/* Fixed height, so flipping a toggle never resizes the dialog under the cursor
+   — the chain is at most four lines and the box is sized for all four. */
+.ship-preview {
+  margin: 0;
+  min-height: 76px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  font: 11.5px/1.65 var(--mono);
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Belongs to the toggle primitive, kept here with the item that needed it: the
+   PR switch with no gh on PATH, and commit with nothing to commit. */
+.toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ---------- command palette ---------- */
 
 .palette-scrim {
@@ -2305,6 +2630,16 @@ code {
     opacity: 1;
     transform: none;
   }
+}
+
+.toast.notice {
+  z-index: 51;
+  border-color: color-mix(in srgb, var(--bad) 34%, var(--line-2));
+}
+
+.toast.notice .toast-dot {
+  background: var(--bad);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 20%, transparent);
 }
 
 .toast-head {

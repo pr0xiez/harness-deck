@@ -50,7 +50,13 @@ export const harness = {
     addWorktree: vi.fn(),
     removeWorktree: vi.fn(),
     diffStat: vi.fn(),
-    diffRange: vi.fn()
+    diffRange: vi.fn(),
+    checkpoint: vi.fn(),
+    checkpoints: vi.fn(),
+    restoreCheckpoint: vi.fn(),
+    dropCheckpoints: vi.fn(),
+    deleteBranch: vi.fn(),
+    forge: vi.fn()
   },
 
   attention: {
@@ -80,7 +86,8 @@ export const harness = {
     onData: subscribe(),
     onExit: subscribe(),
     onQuiet: subscribe(),
-    transcript: vi.fn()
+    transcript: vi.fn(),
+    tail: vi.fn()
   },
 
   pickDirectory: vi.fn(),
@@ -97,6 +104,14 @@ export const harness = {
     setKey: vi.fn(),
     transcribe: vi.fn(),
     requestMicAccess: vi.fn()
+  },
+
+  remote: {
+    status: vi.fn(),
+    setEnabled: vi.fn(),
+    setLan: vi.fn(),
+    setAllowTyping: vi.fn(),
+    onStatus: subscribe()
   },
 
   window: {

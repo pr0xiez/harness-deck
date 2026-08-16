@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { PersistedState, SaveStateResult } from '@shared/types'
+import { isAppWorktree } from './repo-registry'
 
 export const STATE_VERSION = 1
 
@@ -31,12 +32,30 @@ export function loadState(baseDir: string = userData()): PersistedState | null {
     if (!existsSync(candidate)) continue
     try {
       const parsed = JSON.parse(readFileSync(candidate, 'utf8')) as PersistedState
-      if (parsed && Array.isArray(parsed.workspaces)) return parsed
+      if (parsed && Array.isArray(parsed.workspaces)) return scrubWorktrees(parsed)
     } catch (err) {
       console.error(`[store] ignoring unreadable state at ${candidate}:`, err)
     }
   }
   return null
+}
+
+/**
+ * A worktree the app created always lives under a `.harness-deck` segment, and
+ * a state file is not trusted to say otherwise: `pane.worktree` is what feeds
+ * the delete-confirm flow, so a tampered workspaces.json pointing it anywhere
+ * else would put somebody's real folder behind that button. See issue #48.
+ */
+function scrubWorktrees(state: PersistedState): PersistedState {
+  for (const workspace of state.workspaces) {
+    for (const pane of workspace.panes ?? []) {
+      if (pane.worktree && !isAppWorktree(pane.worktree)) {
+        console.warn(`[store] dropping worktree outside the app's convention: ${pane.worktree}`)
+        delete pane.worktree
+      }
+    }
+  }
+  return state
 }
 
 /**

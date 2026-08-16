@@ -89,12 +89,17 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
           <span className="dot running" title={`${running} pane${running === 1 ? '' : 's'} running`} />
         ) : null}
         {waiting ? (
-          <span
+          <button
             className="count waiting"
-            title={`${waiting} pane${waiting === 1 ? '' : 's'} waiting for you (Ctrl+Shift+J)`}
+            title={`${waiting} pane${waiting === 1 ? '' : 's'} waiting for you — open the queue (Ctrl+Shift+U)`}
+            onClick={(event) => {
+              // The row underneath switches workspace; this opens the queue.
+              event.stopPropagation()
+              setUi({ waitingQueue: true })
+            }}
           >
             {waiting}
-          </span>
+          </button>
         ) : null}
         {!waiting && running ? <span className="count running">{running}</span> : null}
         {!waiting && !running && exited ? <span className="count exited">{exited}</span> : null}

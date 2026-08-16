@@ -6,6 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { Profile } from '@shared/types'
+import { paneLabel } from '../paneLabel'
 import { findPane, useDeck, type PaneView } from '../store'
 import { isReservedShortcut } from '../shortcuts'
 import { decideRestart, RESTART_CAP, type RestartDecision } from '../restart'
@@ -80,7 +81,7 @@ export function TerminalPane({
   const setUi = useDeck((s) => s.setUi)
   const zoomed = useDeck((s) => s.workspaces.find((w) => w.id === workspaceId)?.zoomedPaneId === pane.id)
 
-  const title = pane.name || pane.processTitle || profile?.name || pane.command || 'terminal'
+  const title = paneLabel(pane, profile) || 'terminal'
   const paneId = pane.id
   const autoRestart = Boolean(pane.autoRestart)
   const locked = Boolean(pane.readOnly)

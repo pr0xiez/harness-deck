@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isLive, useDeck } from '../store'
+import { isActionable, isLive, useDeck } from '../store'
 import { Icon } from './Icon'
 
 const api = window.harness
@@ -17,6 +17,11 @@ export function TitleBar(): React.JSX.Element {
   const active = workspaces.find((w) => w.id === activeId)
   // Waiting counts as running: the process is alive, it has just stopped talking.
   const runningCount = workspaces.reduce((total, ws) => total + ws.panes.filter(isLive).length, 0)
+  // Same rule as the dock badge and the sidebar counts, so the three never disagree.
+  const waitingCount = workspaces.reduce(
+    (total, ws) => total + ws.panes.filter((p) => isActionable(p)).length,
+    0
+  )
 
   useEffect(() => {
     void api.window.isMaximized().then(setMaximized)
@@ -49,6 +54,19 @@ export function TitleBar(): React.JSX.Element {
       <div className="titlebar-drag" />
 
       <div className="titlebar-right">
+        {/* Only while something is waiting: at zero it would be chrome with
+            nothing behind it, and the amber appearing is itself the signal. */}
+        {waitingCount ? (
+          <button
+            className="ghost-btn waiting"
+            title={`${waitingCount} pane${waitingCount === 1 ? '' : 's'} waiting for you — open the queue (Ctrl+Shift+U)`}
+            onClick={() => setUi({ waitingQueue: true })}
+          >
+            <Icon name="bell" />
+            <span>Waiting</span>
+            <span className="count waiting">{waitingCount}</span>
+          </button>
+        ) : null}
         {updateReady ? (
           <button
             className="ghost-btn on"

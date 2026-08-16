@@ -374,6 +374,11 @@ code {
   box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 35%, transparent);
 }
 
+/* The waiting count is a button where it opens the queue (sidebar rows). */
+button.count.waiting:hover {
+  background: color-mix(in srgb, var(--warn) 42%, var(--bg-3));
+}
+
 /* Slower than the waiting pulse on purpose: this one is on for as long as a
    harness runs, so it has to be visible from the corner of your eye without
    competing with the amber "come here" signals. */
@@ -783,6 +788,17 @@ code {
   background: color-mix(in srgb, var(--ws-accent) 16%, var(--bg-2));
   border-color: color-mix(in srgb, var(--ws-accent) 32%, transparent);
   color: color-mix(in srgb, var(--ws-accent) 72%, #fff);
+}
+
+/* The title-bar door into the waiting queue — amber like every other
+   "come here" signal, and only rendered while something actually waits. */
+.ghost-btn.waiting {
+  color: color-mix(in srgb, var(--warn) 80%, #fff);
+}
+
+.ghost-btn.waiting:hover {
+  background: color-mix(in srgb, var(--warn) 14%, var(--bg-2));
+  color: color-mix(in srgb, var(--warn) 90%, #fff);
 }
 
 .icon-btn {
@@ -2614,6 +2630,16 @@ code {
     opacity: 1;
     transform: none;
   }
+}
+
+.toast.notice {
+  z-index: 51;
+  border-color: color-mix(in srgb, var(--bad) 34%, var(--line-2));
+}
+
+.toast.notice .toast-dot {
+  background: var(--bad);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 20%, transparent);
 }
 
 .toast-head {

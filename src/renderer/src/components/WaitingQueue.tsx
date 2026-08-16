@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { paneLabel } from '../paneLabel'
 import { isSnoozed, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { getTerminal } from '../terminals'
 import { Icon } from './Icon'
@@ -183,7 +184,7 @@ export function WaitingQueue(): React.JSX.Element {
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="queue-head">
-          <Icon name="broadcast" />
+          <Icon name="bell" />
           <span className="queue-title">Waiting for you</span>
           <span className="queue-count">{rows.length}</span>
           <span className="queue-legend">
@@ -214,7 +215,7 @@ export function WaitingQueue(): React.JSX.Element {
                   {profile?.icon ?? '»'}
                 </span>
                 <span className="queue-name">
-                  {pane.name || pane.processTitle || profile?.name || pane.command}
+                  {paneLabel(pane, profile)}
                   <span className="queue-ws">{workspace.name}</span>
                 </span>
                 {/* The bell outranked a snooze to put this row back — say so,

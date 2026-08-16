@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { chainFor, flavourOf, quoteFor, type ShellFlavour } from '@shared/shell'
+import { chainFor, cmdExpansionHazard, flavourOf, quoteFor, type ShellFlavour } from '@shared/shell'
 import type { DiffResult, ForgeCli } from '@shared/types'
 import { useDeck, type PaneView } from '../store'
 import { Field, Modal, Toggle } from './ui'
@@ -81,6 +81,16 @@ export function shipChain(plan: ShipPlan): string {
 
 /** The voice `detectProfiles` uses for a harness that isn't installed. */
 const NO_FORGE = 'Not on PATH — install with: brew install gh (or glab, for GitLab)'
+
+/**
+ * Why Run is off when the shell is cmd.exe and a `%` got into the chain: cmd
+ * expands `%VAR%` before quoting is even read (`cmdExpansionHazard`), so the
+ * preview could show one message and git could be handed another — with an
+ * environment variable's value, possibly a secret, committed in its place.
+ * Refusing is the only honest option cmd leaves.
+ */
+const CMD_HAZARD =
+  'cmd.exe would expand the %...% before git saw it, so this preview could not be honoured — remove the % or use PowerShell.'
 
 interface Props {
   workspaceId: string
@@ -169,7 +179,13 @@ export function ShipDialog({ workspaceId, pane, diff, onClose }: Props): React.J
   )
 
   const needsMessage = commitOn && !message.trim()
-  const canRun = Boolean(chain) && !needsMessage && !busy
+  // The preview is a contract cmd.exe cannot keep once a `%` is in the chain
+  // (see CMD_HAZARD) — only the values headed into it count: a hazardous
+  // message with the commit toggle off ships nothing hazardous.
+  const messageHazard = flavour === 'cmd' && commitOn && cmdExpansionHazard(message.trim())
+  const branchHazard = flavour === 'cmd' && push && cmdExpansionHazard(branch.trim())
+  const cmdHazard = messageHazard || branchHazard
+  const canRun = Boolean(chain) && !needsMessage && !cmdHazard && !busy
 
   const copy = (): void => {
     api.clipboard.write(chain)
@@ -227,7 +243,10 @@ export function ShipDialog({ workspaceId, pane, diff, onClose }: Props): React.J
       footer={
         <>
           <span className="foot-note">
-            {error ?? 'It runs in a pane, in this worktree. Closing this runs nothing.'}
+            {error ??
+              (cmdHazard
+                ? CMD_HAZARD
+                : 'It runs in a pane, in this worktree. Closing this runs nothing.')}
           </span>
           <button className="btn subtle" onClick={copy} disabled={!chain}>
             {copied ? 'Copied' : 'Copy commands'}
@@ -243,7 +262,9 @@ export function ShipDialog({ workspaceId, pane, diff, onClose }: Props): React.J
         hint={
           needsMessage
             ? 'A commit needs a message.'
-            : "Apostrophes and quotes are fine — it is one argument to git, however it's written."
+            : messageHazard
+              ? CMD_HAZARD
+              : "Apostrophes and quotes are fine — it is one argument to git, however it's written."
         }
       >
         <input

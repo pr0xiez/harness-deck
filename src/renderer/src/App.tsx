@@ -13,6 +13,7 @@ import { WaitingQueue } from './components/WaitingQueue'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
 import { UpdateToast } from './components/UpdateToast'
+import { NoticeToast } from './components/NoticeToast'
 import { VoiceHud } from './components/VoiceHud'
 import { Icon } from './components/Icon'
 import { useVoice } from './voice'
@@ -353,6 +354,7 @@ export function App(): React.JSX.Element {
       </div>
 
       <UpdateToast />
+      <NoticeToast />
       <VoiceHud />
 
       {/* Outside the deck: it lists panes from every workspace, so it cannot

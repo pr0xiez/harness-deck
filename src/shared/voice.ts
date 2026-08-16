@@ -126,3 +126,21 @@ export function voiceEndpointAllowed(provider: VoiceProvider, baseUrl: string): 
 export function voiceModel(voice: VoiceSettings): string {
   return voice.model.trim() || voiceProvider(voice.provider).model
 }
+
+/**
+ * One-time upgrade for settings saved before `voiceBaseUrl` started ignoring a
+ * hosted provider's stored override. Before that, `provider: 'openai'` with a
+ * `baseUrl` pointed at a local OpenAI-compatible server (LocalAI, an
+ * on-machine Whisper) was a supported way to run one. After it, the override
+ * is silently dropped and the request — and whatever key is on file — goes to
+ * `api.openai.com` instead, a host it was never meant for. Flipping the
+ * provider to `custom` keeps the address working and keeps the key from
+ * travelling to a third party it was never issued for; called once on
+ * hydrate, so a `baseUrl` typed for `custom` itself passes through untouched.
+ */
+export function migrateVoiceSettings(voice: VoiceSettings): VoiceSettings {
+  if (voice.provider !== 'custom' && voice.baseUrl.trim()) {
+    return { ...voice, provider: 'custom' }
+  }
+  return voice
+}

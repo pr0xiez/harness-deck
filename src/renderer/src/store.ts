@@ -16,6 +16,7 @@ import type {
   Workspace,
   WorkspaceTemplate
 } from '@shared/types'
+import { migrateVoiceSettings } from '@shared/voice'
 import { ACCENTS, MONO_STACK } from './theme'
 import { paneLabel } from './paneLabel'
 import {
@@ -344,7 +345,11 @@ export const useDeck = create<DeckState>((set, get) => ({
       ...saved?.settings,
       defaultCwd,
       // Nested, so a state file written before a field existed still gets it.
-      voice: { ...DEFAULT_VOICE, ...saved?.settings?.voice },
+      // migrateVoiceSettings: a hosted provider's baseUrl override stopped
+      // being honoured (voiceBaseUrl ignores it) — flip such a setting to
+      // `custom` once, rather than silently sending its key to the hosted
+      // host and breaking whatever the override was pointed at. See HD review.
+      voice: migrateVoiceSettings({ ...DEFAULT_VOICE, ...saved?.settings?.voice }),
       attention: { ...DEFAULT_ATTENTION, ...saved?.settings?.attention },
       remote: { ...DEFAULT_REMOTE, ...saved?.settings?.remote }
     }

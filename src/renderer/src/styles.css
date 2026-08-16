@@ -1236,6 +1236,46 @@ button.count.waiting:hover {
   overflow-wrap: anywhere;
 }
 
+/* A flagged pane's overlay is a security control, not a convenience toggle —
+   the amber border and heading are what keep it from reading like the
+   ordinary "autostart is off" card just above it. */
+.overlay-card-review {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line-2));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--warn) 30%, transparent),
+    var(--shadow);
+}
+
+.overlay-title-review {
+  color: var(--warn);
+}
+
+.overlay-fields {
+  display: grid;
+  gap: 6px;
+  margin: 2px 0 0;
+  width: 100%;
+  max-width: 320px;
+  max-height: 180px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.overlay-field dt {
+  font: 10px/1.4 var(--ui);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--fg-2);
+}
+
+.overlay-field dd {
+  margin: 0;
+  font: 11px/1.4 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .pane-search {
   position: absolute;
   top: 6px;

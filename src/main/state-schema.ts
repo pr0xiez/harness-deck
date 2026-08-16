@@ -27,12 +27,20 @@ import type {
  *     about to write.
  *  2. `flagUntrustedPanes` — did the UI write it? A well-typed pane is exactly
  *     what an attacker would write, so types prove nothing about provenance.
- *     What the state file cannot forge is the profile registry: detected
- *     harnesses come off PATH and saved launchers live in their own file, so a
- *     pane whose command line re-derives from its profile was producible by
- *     the UI. One that does not is kept but flagged, and the renderer holds it
- *     at its Start overlay — the click, with the command line on screen, is
- *     the user's confirmation.
+ *     The only anchor the state file cannot forge is a profile the app itself
+ *     detected on the machine — an agent binary found on PATH, a shell, a WSL
+ *     launcher. Saved launchers (`custom:*`) and the free-text `custom`
+ *     sentinel do not count: they are read from `custom-profiles.json`, a file
+ *     in the same userData directory as `workspaces.json` and no better
+ *     guarded (`profiles:saveCustom` is an ungated IPC call besides), so they
+ *     are exactly as forgeable as the state file they would be vouching for. A
+ *     pane whose command line re-derives from a *built-in* profile, and that
+ *     carries no `setup` line (which has no anchor outside the state file
+ *     either — `workspace.setupCommand` lives in that same file), was
+ *     producible by the UI. Anything else is kept but flagged, and the
+ *     renderer holds it at its Start overlay — the click, with the command
+ *     line and every field it was flagged for on screen, is the user's
+ *     confirmation.
  */
 
 type Dict = Record<string, unknown>
@@ -257,9 +265,14 @@ export function sanitizeState(value: unknown): PersistedState | null {
 /**
  * The slice of a profile a pane's spawn is shaped by. `detectProfiles()`
  * returns a superset; taking only this keeps the trust check testable in plain
- * Node, where nothing can walk PATH the way the real registry does.
+ * Node, where nothing can walk PATH the way the real registry does. `kind` is
+ * what tells a profile the app detected on the machine apart from one read out
+ * of `custom-profiles.json` — see `rederives`.
  */
-export type LauncherShape = Pick<Profile, 'id' | 'command' | 'args' | 'viaShell' | 'env'>
+export type LauncherShape = Pick<Profile, 'id' | 'command' | 'args' | 'viaShell' | 'env' | 'kind'>
+
+/** The fields common to a live `Pane` and a template's `TemplatePane`. */
+type Launchable = Pick<Pane, 'profileId' | 'command' | 'args' | 'viaShell' | 'env'>
 
 const sameArgs = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((arg, i) => arg === b[i])
@@ -274,14 +287,18 @@ const sameEnv = (
 }
 
 /**
- * Does this pane's command line re-derive, field for field, from the profile it
- * claims? `env` counts as command-shaping — LD_PRELOAD under a trusted binary
- * is as much a payload as the binary itself. `cwd` does not: pointing a real
- * launcher at another folder is what workspaces are for.
+ * Does this pane's command line re-derive, field for field, from a *built-in*
+ * profile it claims? `env` counts as command-shaping — LD_PRELOAD under a
+ * trusted binary is as much a payload as the binary itself. `cwd` does not:
+ * pointing a real launcher at another folder is what workspaces are for.
+ *
+ * `kind === 'custom'` covers both a saved launcher (`custom:*`) and the
+ * free-text sentinel (`custom` itself, `command: ''`): neither came from this
+ * machine, so neither can vouch, however exactly the pane matches it.
  */
-function rederives(pane: Pane, launchers: LauncherShape[]): boolean {
+function rederives(pane: Launchable, launchers: LauncherShape[]): boolean {
   const profile = launchers.find((p) => p.id === pane.profileId)
-  if (!profile) return false
+  if (!profile || profile.kind === 'custom') return false
   return (
     pane.command === profile.command &&
     sameArgs(pane.args, profile.args) &&
@@ -291,16 +308,20 @@ function rederives(pane: Pane, launchers: LauncherShape[]): boolean {
 }
 
 /**
- * Marks every pane whose command line the profile registry cannot vouch for.
- * The registry is the trust anchor precisely because it is the one thing the
- * state file cannot write: any gate decidable from the file alone — including
- * `settings.autoStartPanes` — is a gate the attacker operates.
+ * Marks every pane whose command line the profile registry cannot vouch for —
+ * in both a workspace's live panes and any saved templates, since a template's
+ * panes spawn on instantiation with just as little review. The registry is the
+ * trust anchor precisely because a built-in profile is the one thing the state
+ * file cannot write for itself: any gate decidable from the file alone —
+ * including `settings.autoStartPanes` — is a gate the attacker operates, and
+ * (per `rederives`) so is anything sourced from `custom-profiles.json`.
  *
- * A `setup` line is legitimate exactly when it is the workspace's own
- * `setupCommand`, the only setup the UI ever copies onto a pane (templates
- * arrive through that same field). Anything else — a custom command line, an
- * edited pane, a planted one — keeps its pane on screen but flagged, which the
- * renderer turns into the Start overlay: the command in view, one click to run.
+ * A `setup` line gets no exception either: `pane.setup` and
+ * `workspace.setupCommand` live in the same file, so a match between them
+ * proves nothing — the attacker who writes one writes both. Any pane carrying
+ * a non-empty `setup` is flagged outright. Kept but flagged, either way: the
+ * renderer turns the flag into the Start overlay, the command and every
+ * flagged field in view, one click to run.
  */
 export function flagUntrustedPanes(
   state: PersistedState,
@@ -311,9 +332,19 @@ export function flagUntrustedPanes(
     workspaces: state.workspaces.map((workspace) => ({
       ...workspace,
       panes: workspace.panes.map((pane) => {
-        const setupOk = pane.setup === undefined || pane.setup === workspace.setupCommand
-        return setupOk && rederives(pane, launchers) ? pane : { ...pane, needsReview: true as const }
+        const trusted = !pane.setup && rederives(pane, launchers)
+        return trusted ? pane : { ...pane, needsReview: true as const }
       })
-    }))
+    })),
+    ...(state.templates
+      ? {
+          templates: state.templates.map((template) => ({
+            ...template,
+            panes: template.panes.map((pane) =>
+              rederives(pane, launchers) ? pane : { ...pane, needsReview: true as const }
+            )
+          }))
+        }
+      : {})
   }
 }

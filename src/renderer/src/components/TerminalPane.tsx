@@ -49,6 +49,30 @@ const LOCK_HINT = 'Read-only: typing, paste, broadcast and dictation are refused
  */
 const MUTE_HINT = 'Never count this pane as waiting — no badge, sidebar count, notification or queue'
 
+/**
+ * The fields `flagUntrustedPanes` (main process) actually judged this pane on
+ * — command line, folder, setup, environment — so the Start overlay can show
+ * what would run rather than repeat the plain title/command line an ordinary
+ * "autostart is off" pane already shows. A field with nothing to show is
+ * skipped rather than printed empty.
+ */
+function reviewFields(pane: PaneView): Array<{ label: string; value: string }> {
+  const fields: Array<{ label: string; value: string }> = [
+    { label: 'Command', value: `${pane.command} ${pane.args.join(' ')}`.trim() || '(empty)' },
+    { label: 'Folder', value: pane.cwd }
+  ]
+  if (pane.setup) fields.push({ label: 'Runs first', value: pane.setup })
+  if (pane.env && Object.keys(pane.env).length) {
+    fields.push({
+      label: 'Environment',
+      value: Object.entries(pane.env)
+        .map(([key, val]) => `${key}=${val}`)
+        .join('\n')
+    })
+  }
+  return fields
+}
+
 export function TerminalPane({
   pane,
   workspaceId,
@@ -485,9 +509,29 @@ export function TerminalPane({
 
         {!pane.autostart && pane.status === 'idle' ? (
           <div className="pane-overlay">
-            <div className="overlay-card">
-              <p className="overlay-title">{title}</p>
-              <p className="overlay-sub">{`${pane.command} ${pane.args.join(' ')}`.trim()}</p>
+            <div className={`overlay-card${pane.needsReview ? ' overlay-card-review' : ''}`}>
+              {pane.needsReview ? (
+                <>
+                  <p className="overlay-title overlay-title-review">Review before starting</p>
+                  <p className="overlay-sub">
+                    This pane's command line doesn't come from a profile Harness Deck recognizes on
+                    this machine — check what it would run before starting it.
+                  </p>
+                  <dl className="overlay-fields">
+                    {reviewFields(pane).map((field) => (
+                      <div className="overlay-field" key={field.label}>
+                        <dt>{field.label}</dt>
+                        <dd>{field.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </>
+              ) : (
+                <>
+                  <p className="overlay-title">{title}</p>
+                  <p className="overlay-sub">{`${pane.command} ${pane.args.join(' ')}`.trim()}</p>
+                </>
+              )}
               <button className="btn primary" onClick={() => updatePane(paneId, { autostart: true })}>
                 Start
               </button>

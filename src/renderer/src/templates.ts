@@ -49,6 +49,12 @@ export function joinCwd(base: string, relative: string): string {
  * A pane about to appear in another workspace: the same launcher, none of the
  * live state. Duplicating a workspace and instantiating a template differ only
  * in where the folders come from, so this is the part they share.
+ *
+ * `needsReview` travels with the spread (a duplicated pane carries whatever
+ * `flagUntrustedPanes` last decided about it; a template-built one carries
+ * whatever the caller set below) and forces `autostart` off rather than
+ * letting a pane nobody has clicked Start on spawn on its own — "copy this" or
+ * "instantiate this template" is not "I approve what this pane runs".
  */
 export function freshPane(pane: CopyablePane, id: string): CopyablePane {
   return {
@@ -60,7 +66,7 @@ export function freshPane(pane: CopyablePane, id: string): CopyablePane {
     activity: false,
     bell: false,
     processTitle: undefined,
-    autostart: true
+    autostart: pane.needsReview ? false : true
   }
 }
 
@@ -136,6 +142,9 @@ export function workspaceFromTemplate(
     if (pane.viaShell) built.viaShell = true
     if (pane.env) built.env = { ...pane.env }
     if (pane.name) built.name = pane.name
+    // Carried over so `freshPane` below forces autostart off — a flagged
+    // template pane is exactly one this app's own UI would not have produced.
+    if (pane.needsReview) built.needsReview = true
     return freshPane(built, uid('pane'))
   })
 

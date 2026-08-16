@@ -133,6 +133,14 @@ export interface TemplatePane {
    * to avoid — so only the intent does, and a fresh one is made on the way in.
    */
   worktree?: boolean
+  /**
+   * Set by the main process: this template pane's command line does not
+   * re-derive from a built-in profile — see `Pane.needsReview`, whose rules
+   * `flagUntrustedPanes` applies here too. `workspaceFromTemplate` carries it
+   * onto the pane it builds, and `freshPane` forces that pane's `autostart`
+   * off. Recomputed on every load, never read back off disk.
+   */
+  needsReview?: true
 }
 
 export interface Settings {

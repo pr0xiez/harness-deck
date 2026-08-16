@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { paneLabel } from '../paneLabel'
+import { shortcutLabel } from '../shortcuts'
 import { useDeck, type DeckWorkspace } from '../store'
 import { TerminalPane } from './TerminalPane'
 import { ProfileMenu } from './ProfileMenu'
@@ -93,7 +94,11 @@ export function PaneArea({ workspace, visible }: Props): React.JSX.Element {
             )
           })}
           <div className="tab-add-anchor">
-            <button className="tab-add" title="New pane (Ctrl+Shift+T)" onClick={() => setAddOpen((v) => !v)}>
+            <button
+              className="tab-add"
+              title={`New pane (${shortcutLabel('new-pane')})`}
+              onClick={() => setAddOpen((v) => !v)}
+            >
               <Icon name="plus" size={12} />
             </button>
             {addOpen ? (

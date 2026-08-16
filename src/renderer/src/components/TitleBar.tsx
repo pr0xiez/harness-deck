@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { shortcutLabel } from '../shortcuts'
 import { isActionable, isLive, useDeck } from '../store'
 import { Icon } from './Icon'
 
@@ -59,7 +60,7 @@ export function TitleBar(): React.JSX.Element {
         {waitingCount ? (
           <button
             className="ghost-btn waiting"
-            title={`${waitingCount} pane${waitingCount === 1 ? '' : 's'} waiting for you — open the queue (Ctrl+Shift+U)`}
+            title={`${waitingCount} pane${waitingCount === 1 ? '' : 's'} waiting for you — open the queue (${shortcutLabel('toggle-waiting-queue')})`}
             onClick={() => setUi({ waitingQueue: true })}
           >
             <Icon name="bell" />
@@ -79,7 +80,7 @@ export function TitleBar(): React.JSX.Element {
         ) : null}
         <button
           className="ghost-btn"
-          title="Command palette (Ctrl+Shift+P)"
+          title={`Command palette (${shortcutLabel('toggle-palette')})`}
           onClick={() => setUi({ palette: true })}
         >
           <Icon name="command" />
@@ -87,12 +88,16 @@ export function TitleBar(): React.JSX.Element {
         </button>
         <button
           className="icon-btn"
-          title="Keyboard shortcuts (Ctrl+Shift+/)"
+          title={`Keyboard shortcuts (${shortcutLabel('open-help')})`}
           onClick={() => setUi({ help: true })}
         >
           <Icon name="help" />
         </button>
-        <button className="icon-btn" title="Settings (Ctrl+Shift+,)" onClick={() => setUi({ settings: true })}>
+        <button
+          className="icon-btn"
+          title={`Settings (${shortcutLabel('open-settings')})`}
+          onClick={() => setUi({ settings: true })}
+        >
           <Icon name="settings" />
         </button>
         {isMac ? null : (

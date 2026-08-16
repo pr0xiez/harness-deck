@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { shortcutLabel } from '../shortcuts'
 import { isActionable, isLive, useDeck, type DeckWorkspace } from '../store'
 import { ACCENTS } from '../theme'
 import { Dropdown } from './ui'
@@ -91,7 +92,7 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
         {waiting ? (
           <button
             className="count waiting"
-            title={`${waiting} pane${waiting === 1 ? '' : 's'} waiting for you — open the queue (Ctrl+Shift+U)`}
+            title={`${waiting} pane${waiting === 1 ? '' : 's'} waiting for you — open the queue (${shortcutLabel('toggle-waiting-queue')})`}
             onClick={(event) => {
               // The row underneath switches workspace; this opens the queue.
               event.stopPropagation()
@@ -242,7 +243,7 @@ export function Sidebar(): React.JSX.Element {
       <div className="sidebar-foot">
         <button
           className="btn subtle full"
-          title="New workspace (Ctrl+Shift+N)"
+          title={`New workspace (${shortcutLabel('new-workspace')})`}
           onClick={() => addWorkspace()}
         >
           <Icon name="plus" />

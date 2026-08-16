@@ -1,4 +1,5 @@
 import { paneLabel } from '../paneLabel'
+import { shortcutLabel } from '../shortcuts'
 import { isActionable, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
@@ -46,7 +47,7 @@ export function workspaceCommands(state: Deck): Command[] {
       id: `ws:${ws.id}`,
       group: 'Workspaces',
       label: `Switch to ${ws.name}`,
-      hint: index < 9 ? `Ctrl+${index + 1}` : undefined,
+      hint: index < 9 ? shortcutLabel('workspace-by-digit', index + 1) : undefined,
       run: () => state.setActiveWorkspace(ws.id)
     })
   })
@@ -56,7 +57,7 @@ export function workspaceCommands(state: Deck): Command[] {
       id: 'ws:new',
       group: 'Workspaces',
       label: 'New workspace',
-      hint: 'Ctrl+Shift+N',
+      hint: shortcutLabel('new-workspace'),
       run: () => state.addWorkspace()
     },
     {
@@ -145,14 +146,14 @@ export function activeWorkspaceCommands(state: Deck, workspace: DeckWorkspace): 
       id: 'ws:broadcast',
       group: 'Workspace',
       label: state.ui.broadcast ? 'Hide broadcast bar' : 'Broadcast a prompt to every pane',
-      hint: 'Ctrl+Shift+B',
+      hint: shortcutLabel('toggle-broadcast'),
       run: () => state.setUi({ broadcast: !state.ui.broadcast })
     },
     {
       id: 'ws:find-all',
       group: 'Workspace',
       label: 'Find across every pane…',
-      hint: 'Ctrl+Shift+Alt+F',
+      hint: shortcutLabel('find-all'),
       run: () => state.setUi({ findAll: true })
     },
     {
@@ -177,7 +178,7 @@ export function activeWorkspaceCommands(state: Deck, workspace: DeckWorkspace): 
       id: `ws:action:${action.id}`,
       group: 'Workspace',
       label: `Run ${action.label}`,
-      hint: index < 9 ? `Alt+Shift+${index + 1}` : action.command,
+      hint: index < 9 ? shortcutLabel('run-action-by-digit', index + 1) : action.command,
       run: () => state.runWorkspaceAction(workspace.id, action.id)
     })
   })
@@ -239,14 +240,14 @@ export function paneCommands(state: Deck, workspace: DeckWorkspace): Command[] {
       label: waiting
         ? `Jump to the next waiting pane (${waiting} waiting)`
         : 'Jump to the next waiting pane',
-      hint: 'Ctrl+Shift+J',
+      hint: shortcutLabel('focus-waiting'),
       run: () => state.focusNextWaiting()
     },
     {
       id: 'pane:waiting-queue',
       group: 'Panes',
       label: 'Waiting queue',
-      hint: 'Ctrl+Shift+U',
+      hint: shortcutLabel('toggle-waiting-queue'),
       run: () => state.setUi({ waitingQueue: true })
     }
   ]
@@ -257,7 +258,7 @@ export function paneCommands(state: Deck, workspace: DeckWorkspace): Command[] {
       id: `pane:focus:${pane.id}`,
       group: 'Panes',
       label: `Focus ${paneLabel(pane, profile)}`,
-      hint: index < 9 ? `Alt+${index + 1}` : undefined,
+      hint: index < 9 ? shortcutLabel('focus-pane-by-digit', index + 1) : undefined,
       run: () => state.setActivePane(workspace.id, pane.id)
     })
   })
@@ -296,7 +297,7 @@ export function activePaneCommands(
       id: 'pane:restart',
       group: 'Active pane',
       label: 'Restart process',
-      hint: 'Ctrl+Shift+R',
+      hint: shortcutLabel('restart-pane'),
       run: () => state.restartPane(activePane.id)
     },
     {
@@ -345,7 +346,7 @@ export function activePaneCommands(
       id: 'pane:send-selection',
       group: 'Active pane',
       label: 'Send the selection to the broadcast box',
-      hint: 'Ctrl+Shift+E',
+      hint: shortcutLabel('send-selection'),
       run: () => {
         const selection = getTerminal(activePane.id)?.term.getSelection() ?? ''
         if (!selection.trim()) return
@@ -377,14 +378,14 @@ export function activePaneCommands(
       id: 'pane:zoom',
       group: 'Active pane',
       label: 'Zoom / restore pane',
-      hint: 'Ctrl+Shift+Z',
+      hint: shortcutLabel('zoom-pane'),
       run: () => state.toggleZoom(workspace.id, activePane.id)
     },
     {
       id: 'pane:close',
       group: 'Active pane',
       label: 'Close pane',
-      hint: 'Ctrl+Shift+W',
+      hint: shortcutLabel('close-pane'),
       run: () => state.closePane(workspace.id, activePane.id)
     }
   ]
@@ -411,14 +412,14 @@ export function appCommands(state: Deck): Command[] {
       id: 'app:settings',
       group: 'Application',
       label: 'Settings',
-      hint: 'Ctrl+Shift+,',
+      hint: shortcutLabel('open-settings'),
       run: () => state.setUi({ settings: true })
     },
     {
       id: 'app:help',
       group: 'Application',
       label: 'Keyboard shortcuts',
-      hint: 'Ctrl+Shift+/',
+      hint: shortcutLabel('open-help'),
       run: () => state.setUi({ help: true })
     },
     {
@@ -428,7 +429,7 @@ export function appCommands(state: Deck): Command[] {
         useVoice.getState().status === 'listening'
           ? 'Stop dictating'
           : 'Dictate into the focused prompt',
-      hint: 'Ctrl+Shift+M',
+      hint: shortcutLabel('toggle-dictation'),
       run: () => useVoice.getState().toggle()
     },
     {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { WorkspaceAction } from '@shared/types'
+import { shortcutLabel } from '../shortcuts'
 import { isLive, onQuietPane, useDeck, type DeckWorkspace } from '../store'
 import { CompareView } from './CompareView'
 import { Icon } from './Icon'
@@ -14,7 +15,7 @@ const CHIP_LIMIT = 4
 
 /** What an action's chip says it will do, and how to fire it without the mouse. */
 const actionTitle = (action: WorkspaceAction, index: number): string =>
-  `${action.command}${index < 9 ? `\nAlt+Shift+${index + 1}` : ''}\nOpens a shell pane in the workspace folder`
+  `${action.command}${index < 9 ? `\n${shortcutLabel('run-action-by-digit', index + 1)}` : ''}\nOpens a shell pane in the workspace folder`
 
 interface Props {
   workspace: DeckWorkspace
@@ -161,7 +162,9 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
                     <span className="action-item-label">{action.label}</span>
                     <span className="action-item-command">{action.command}</span>
                     {index < 9 ? (
-                      <span className="action-item-key">Alt+Shift+{index + 1}</span>
+                      <span className="action-item-key">
+                        {shortcutLabel('run-action-by-digit', index + 1)}
+                      </span>
                     ) : null}
                   </button>
                 ))}
@@ -221,7 +224,7 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
 
         <button
           className={`ghost-btn ${ui.broadcast ? 'on' : ''}`}
-          title="Broadcast a prompt to every pane (Ctrl+Shift+B)"
+          title={`Broadcast a prompt to every pane (${shortcutLabel('toggle-broadcast')})`}
           onClick={() => setUi({ broadcast: !ui.broadcast })}
         >
           <Icon name="broadcast" />
@@ -229,7 +232,11 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
         </button>
 
         <div className="new-pane-anchor">
-          <button className="btn primary" title="New pane (Ctrl+Shift+T)" onClick={() => setMenuOpen(!menuOpen)}>
+          <button
+            className="btn primary"
+            title={`New pane (${shortcutLabel('new-pane')})`}
+            onClick={() => setMenuOpen(!menuOpen)}
+          >
             <Icon name="plus" />
             <span>New pane</span>
             <Icon name="chevronDown" size={12} />

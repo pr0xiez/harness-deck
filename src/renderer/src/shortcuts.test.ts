@@ -4,6 +4,7 @@ import {
   isReservedShortcut,
   matchShortcut,
   SHORTCUTS,
+  shortcutLabel,
   type ShortcutKeys
 } from './shortcuts'
 
@@ -18,6 +19,58 @@ const press = (over: Partial<ShortcutKeys>): ShortcutKeys => ({
   ...over
 })
 
+/**
+ * Key tokens that display text spells differently from the `key`/`code` a
+ * real KeyboardEvent would carry for them. A single letter or digit is
+ * handled generically below; everything else that appears in a `keys`
+ * string across SHORTCUTS needs an entry here.
+ */
+const KEY_TOKENS: Record<string, Pick<ShortcutKeys, 'key' | 'code'>> = {
+  ',': { key: ',', code: 'Comma' },
+  '/': { key: '/', code: 'Slash' },
+  '=': { key: '=', code: 'Equal' },
+  '-': { key: '-', code: 'Minus' },
+  '←': { key: 'ArrowLeft', code: 'ArrowLeft' },
+  '→': { key: 'ArrowRight', code: 'ArrowRight' },
+  Tab: { key: 'Tab', code: 'Tab' },
+  'Page Down': { key: 'PageDown', code: 'PageDown' },
+  'Page Up': { key: 'PageUp', code: 'PageUp' }
+}
+
+/**
+ * The inverse of the table's `keys` strings: turns a display chord like
+ * 'Ctrl+Shift+T' back into the KeyboardEvent-shaped object its own `when`
+ * predicate reads. Used by the round-trip test below so a row's predicate
+ * can drift from its own display string and fail loudly, instead of just
+ * pinning both to a third, independent, hardcoded copy.
+ */
+const parseChord = (display: string): ShortcutKeys => {
+  const parts = display.split('+')
+  const keyToken = parts.pop()
+  if (keyToken === undefined) throw new Error(`parseChord: empty chord`)
+  let ctrlKey = false
+  let shiftKey = false
+  let altKey = false
+  let metaKey = false
+  for (const modifier of parts) {
+    if (modifier === 'Ctrl') ctrlKey = true
+    else if (modifier === 'Shift') shiftKey = true
+    else if (modifier === 'Alt') altKey = true
+    else if (modifier === 'Cmd') metaKey = true
+    else throw new Error(`parseChord: unknown modifier "${modifier}" in "${display}"`)
+  }
+  const modifiers = { ctrlKey, shiftKey, altKey, metaKey }
+  if (/^[A-Za-z]$/.test(keyToken)) {
+    return press({ ...modifiers, key: keyToken.toLowerCase(), code: `Key${keyToken.toUpperCase()}` })
+  }
+  if (/^[0-9]$/.test(keyToken)) {
+    return press({ ...modifiers, key: keyToken, code: `Digit${keyToken}` })
+  }
+  const known = KEY_TOKENS[keyToken]
+  if (!known) throw new Error(`parseChord: unknown key "${keyToken}" in "${display}"`)
+  return press({ ...modifiers, ...known })
+}
+
 const ctrlShift = (key: string, over: Partial<ShortcutKeys> = {}): ShortcutKeys =>
   press({ key, ctrlKey: true, shiftKey: true, ...over })
 
@@ -25,6 +78,48 @@ describe('one table, no duplicates', () => {
   it('gives every shortcut its own id', () => {
     const ids = SHORTCUTS.map((s) => s.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('gives every shortcut display keys', () => {
+    for (const shortcut of SHORTCUTS) expect(shortcut.keys).toBeTruthy()
+  })
+})
+
+describe('display text', () => {
+  it('derives the label from the same table the matcher reads', () => {
+    expect(shortcutLabel('new-pane')).toBe('Ctrl+Shift+T')
+    expect(shortcutLabel('open-settings')).toBe('Ctrl+Shift+,')
+    expect(shortcutLabel('find-all')).toBe('Ctrl+Shift+Alt+F')
+    expect(shortcutLabel('move-pane-left')).toBe('Ctrl+Shift+←')
+    expect(shortcutLabel('next-workspace')).toBe('Ctrl+Page Down')
+  })
+
+  it('fills a digit into a digit chord, or keeps the placeholder for a range', () => {
+    expect(shortcutLabel('focus-pane-by-digit', 3)).toBe('Alt+3')
+    expect(shortcutLabel('run-action-by-digit', 1)).toBe('Alt+Shift+1')
+    expect(shortcutLabel('workspace-by-digit')).toBe('Ctrl+#')
+  })
+})
+
+/**
+ * The `ctrlShift()` family ties its own `keys` string to its own `when`
+ * predicate by construction (one argument drives both), so those rows can't
+ * drift from each other. The rest — 'Ctrl+Shift+,' beside a Comma/','/'<'
+ * check, 'Ctrl+0' beside a bespoke digit-and-flag check, and so on — spell
+ * the same chord out twice in two languages in the same object literal, and
+ * nothing before this test related the two spellings. This parses every
+ * row's own `keys` back into the event its own `when` reads, so an edited
+ * predicate (or an edited `keys` string) that stops agreeing with its
+ * sibling fails here, for every row, not just the hand-written ones.
+ */
+describe('every row answers the event its own keys spell out', () => {
+  it('round-trips keys through parseChord and back through matchShortcut', () => {
+    for (const shortcut of SHORTCUTS) {
+      // Digit rows carry a '#' placeholder; press digit 5 for all of them.
+      const display = shortcut.keys.includes('#') ? shortcut.keys.replace('#', '5') : shortcut.keys
+      const event = parseChord(display)
+      expect(matchShortcut(event, true)?.id, `keys: "${shortcut.keys}"`).toBe(shortcut.id)
+    }
   })
 })
 

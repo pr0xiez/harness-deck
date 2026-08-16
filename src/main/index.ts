@@ -27,6 +27,7 @@ import type {
   VoiceProvider,
   WorktreeRequest
 } from '@shared/types'
+import { IPC, type IpcChannel } from '@shared/ipc'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
@@ -201,7 +202,7 @@ function saveDir(): string {
   }
 }
 
-function send(channel: string, payload: unknown): void {
+function send(channel: IpcChannel, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload)
   }
@@ -285,12 +286,12 @@ function createWindow(): BrowserWindow {
       win.close()
     }
   })
-  win.on('maximize', () => send('window:maximized', true))
-  win.on('unmaximize', () => send('window:maximized', false))
-  win.on('enter-full-screen', () => send('window:fullscreen', true))
-  win.on('leave-full-screen', () => send('window:fullscreen', false))
-  win.on('focus', () => send('window:focus', true))
-  win.on('blur', () => send('window:focus', false))
+  win.on('maximize', () => send(IPC.windowMaximized, true))
+  win.on('unmaximize', () => send(IPC.windowMaximized, false))
+  win.on('enter-full-screen', () => send(IPC.windowFullscreen, true))
+  win.on('leave-full-screen', () => send(IPC.windowFullscreen, false))
+  win.on('focus', () => send(IPC.windowFocus, true))
+  win.on('blur', () => send(IPC.windowFocus, false))
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url)
@@ -430,7 +431,7 @@ const REMOTE_OFF: RemoteStatus = {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('app:info', () => ({
+  ipcMain.handle(IPC.appInfo, () => ({
     platform: process.platform,
     versions: {
       electron: process.versions.electron,
@@ -443,72 +444,72 @@ function registerIpc(): void {
     defaultCwd: process.env.HD_DEFAULT_CWD || homedir()
   }))
 
-  ipcMain.handle('state:load', () => {
+  ipcMain.handle(IPC.stateLoad, () => {
     const state = loadState()
     rememberAttention(state)
     return state
   })
-  ipcMain.on('state:save', (_e, state: PersistedState) => {
+  ipcMain.on(IPC.stateSave, (_e, state: PersistedState) => {
     rememberAttention(state)
     saveState(state)
   })
-  ipcMain.handle('state:location', () => stateLocation())
+  ipcMain.handle(IPC.stateLocation, () => stateLocation())
 
-  ipcMain.handle('profiles:list', () => detectProfiles())
+  ipcMain.handle(IPC.profilesList, () => detectProfiles())
   // Both hand back the whole merged list: the renderer keeps one array of
   // profiles, so a save that returned only the saved ones would leave it to
   // re-merge what detectProfiles() has already done.
-  ipcMain.handle('profiles:saveCustom', (_e, profile: SavedProfile) => {
+  ipcMain.handle(IPC.profilesSaveCustom, (_e, profile: SavedProfile) => {
     saveCustomProfile(profile)
     return detectProfiles()
   })
-  ipcMain.handle('profiles:removeCustom', (_e, id: string) => {
+  ipcMain.handle(IPC.profilesRemoveCustom, (_e, id: string) => {
     removeCustomProfile(id)
     return detectProfiles()
   })
 
-  ipcMain.handle('git:info', (_e, dir: string) => repoInfo(dir))
-  ipcMain.handle('git:addWorktree', (_e, req: WorktreeRequest) => addWorktree(req))
-  ipcMain.handle('git:removeWorktree', (_e, path: string) => removeWorktree(path))
-  ipcMain.handle('git:diffStat', (_e, dir: string) => diffStat(dir))
-  ipcMain.handle('git:diffRange', (_e, req: DiffRequest) => diffRange(req))
-  ipcMain.handle('git:forge', () => detectForge())
+  ipcMain.handle(IPC.gitInfo, (_e, dir: string) => repoInfo(dir))
+  ipcMain.handle(IPC.gitAddWorktree, (_e, req: WorktreeRequest) => addWorktree(req))
+  ipcMain.handle(IPC.gitRemoveWorktree, (_e, path: string) => removeWorktree(path))
+  ipcMain.handle(IPC.gitDiffStat, (_e, dir: string) => diffStat(dir))
+  ipcMain.handle(IPC.gitDiffRange, (_e, req: DiffRequest) => diffRange(req))
+  ipcMain.handle(IPC.gitForge, () => detectForge())
   // Stubs the later items replace — registered now so four parallel branches
   // build on a settled surface instead of each adding its own. See HD-14.
-  ipcMain.handle('git:checkpoint', () => undefined)
-  ipcMain.handle('git:checkpoints', () => [])
-  ipcMain.handle('git:restoreCheckpoint', () => ({ ok: false, error: 'not implemented' }))
-  ipcMain.handle('git:dropCheckpoints', () => undefined)
-  ipcMain.handle('git:deleteBranch', () => ({ ok: false, error: 'not implemented' }))
+  ipcMain.handle(IPC.gitCheckpoint, () => undefined)
+  ipcMain.handle(IPC.gitCheckpoints, () => [])
+  ipcMain.handle(IPC.gitRestoreCheckpoint, () => ({ ok: false, error: 'not implemented' }))
+  ipcMain.handle(IPC.gitDropCheckpoints, () => undefined)
+  ipcMain.handle(IPC.gitDeleteBranch, () => ({ ok: false, error: 'not implemented' }))
 
-  ipcMain.handle('update:state', () => currentState())
-  ipcMain.handle('update:check', () => checkNow())
-  ipcMain.handle('update:setChannel', (_e, channel: UpdateChannel) => setChannel(channel))
-  ipcMain.handle('update:install', () => install())
+  ipcMain.handle(IPC.updateState, () => currentState())
+  ipcMain.handle(IPC.updateCheck, () => checkNow())
+  ipcMain.handle(IPC.updateSetChannel, (_e, channel: UpdateChannel) => setChannel(channel))
+  ipcMain.handle(IPC.updateInstall, () => install())
 
-  ipcMain.handle('pty:ensure', (_e, spec: PaneSpec, cols: number, rows: number) =>
+  ipcMain.handle(IPC.ptyEnsure, (_e, spec: PaneSpec, cols: number, rows: number) =>
     ptys!.ensure(spec, cols, rows)
   )
-  ipcMain.on('pty:write', (_e, id: string, data: string) => ptys!.write(id, data))
-  ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) =>
+  ipcMain.on(IPC.ptyWrite, (_e, id: string, data: string) => ptys!.write(id, data))
+  ipcMain.on(IPC.ptyResize, (_e, id: string, cols: number, rows: number) =>
     ptys!.resize(id, cols, rows)
   )
-  ipcMain.on('pty:kill', (_e, id: string) => ptys!.kill(id))
-  ipcMain.on('pty:dispose', (_e, id: string) => ptys!.dispose(id))
-  ipcMain.handle('pty:status', (_e, id: string) => ptys!.status(id))
-  ipcMain.handle('pty:running', () => ptys!.runningIds())
-  ipcMain.handle('pty:transcript', (_e, id: string, strip?: boolean) => {
+  ipcMain.on(IPC.ptyKill, (_e, id: string) => ptys!.kill(id))
+  ipcMain.on(IPC.ptyDispose, (_e, id: string) => ptys!.dispose(id))
+  ipcMain.handle(IPC.ptyStatus, (_e, id: string) => ptys!.status(id))
+  ipcMain.handle(IPC.ptyRunning, () => ptys!.runningIds())
+  ipcMain.handle(IPC.ptyTranscript, (_e, id: string, strip?: boolean) => {
     const text = ptys!.transcript(id)
     return strip ? stripAnsi(text) : text
   })
-  ipcMain.handle('pty:tail', (_e, id: string, lines: number) => ptys!.tail(id, lines))
+  ipcMain.handle(IPC.ptyTail, (_e, id: string, lines: number) => ptys!.tail(id, lines))
 
-  ipcMain.handle('remote:status', () => REMOTE_OFF)
-  ipcMain.handle('remote:setEnabled', () => REMOTE_OFF)
-  ipcMain.handle('remote:setLan', () => REMOTE_OFF)
-  ipcMain.handle('remote:setAllowTyping', () => REMOTE_OFF)
+  ipcMain.handle(IPC.remoteStatus, () => REMOTE_OFF)
+  ipcMain.handle(IPC.remoteSetEnabled, () => REMOTE_OFF)
+  ipcMain.handle(IPC.remoteSetLan, () => REMOTE_OFF)
+  ipcMain.handle(IPC.remoteSetAllowTyping, () => REMOTE_OFF)
 
-  ipcMain.handle('fs:missingDirs', (_e, paths: string[]) =>
+  ipcMain.handle(IPC.fsMissingDirs, (_e, paths: string[]) =>
     (paths ?? []).filter((path) => {
       try {
         return !path || !statSync(path).isDirectory()
@@ -519,7 +520,7 @@ function registerIpc(): void {
     })
   )
 
-  ipcMain.handle('dialog:pickDirectory', async (_e, current?: string) => {
+  ipcMain.handle(IPC.dialogPickDirectory, async (_e, current?: string) => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Choose a working directory',
@@ -529,7 +530,7 @@ function registerIpc(): void {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle('dialog:confirm', async (_e, options: { title: string; message: string; detail?: string; confirmLabel?: string }) => {
+  ipcMain.handle(IPC.dialogConfirm, async (_e, options: { title: string; message: string; detail?: string; confirmLabel?: string }) => {
     if (!mainWindow) return false
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'question',
@@ -544,7 +545,7 @@ function registerIpc(): void {
     return response === 0
   })
 
-  ipcMain.handle('dialog:saveText', async (_e, req: SaveTextRequest): Promise<SaveTextResult> => {
+  ipcMain.handle(IPC.dialogSaveText, async (_e, req: SaveTextRequest): Promise<SaveTextResult> => {
     if (!mainWindow) return { ok: false, error: 'No window to hang the dialog off.' }
     try {
       const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
@@ -564,38 +565,38 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('voice:keyState', (_e, provider: VoiceProvider) => keyState(provider))
-  ipcMain.handle('voice:setKey', (_e, provider: VoiceProvider, key: string | null) =>
+  ipcMain.handle(IPC.voiceKeyState, (_e, provider: VoiceProvider) => keyState(provider))
+  ipcMain.handle(IPC.voiceSetKey, (_e, provider: VoiceProvider, key: string | null) =>
     setKey(provider, key)
   )
-  ipcMain.handle('voice:transcribe', (_e, req: TranscribeRequest) => transcribe(req))
-  ipcMain.handle('voice:micAccess', async () => {
+  ipcMain.handle(IPC.voiceTranscribe, (_e, req: TranscribeRequest) => transcribe(req))
+  ipcMain.handle(IPC.voiceMicAccess, async () => {
     if (process.platform !== 'darwin') return true
     if (systemPreferences.getMediaAccessStatus('microphone') === 'granted') return true
     return systemPreferences.askForMediaAccess('microphone')
   })
 
-  ipcMain.handle('clipboard:read', () => clipboard.readText())
-  ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text))
+  ipcMain.handle(IPC.clipboardRead, () => clipboard.readText())
+  ipcMain.on(IPC.clipboardWrite, (_e, text: string) => clipboard.writeText(text))
 
-  ipcMain.on('window:minimize', () => mainWindow?.minimize())
-  ipcMain.on('window:toggleMaximize', () => {
+  ipcMain.on(IPC.windowMinimize, () => mainWindow?.minimize())
+  ipcMain.on(IPC.windowToggleMaximize, () => {
     if (!mainWindow) return
     if (mainWindow.isMaximized()) mainWindow.unmaximize()
     else mainWindow.maximize()
   })
-  ipcMain.on('window:close', () => mainWindow?.close())
-  ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
+  ipcMain.on(IPC.windowClose, () => mainWindow?.close())
+  ipcMain.handle(IPC.windowIsMaximized, () => mainWindow?.isMaximized() ?? false)
 
   // `ms-settings:` is allowed so the app can send the user to the Windows
   // microphone privacy page when capture is blocked there.
-  ipcMain.on('app:openExternal', (_e, url: string) => {
+  ipcMain.on(IPC.appOpenExternal, (_e, url: string) => {
     if (/^(https?|ms-settings):/.test(url)) shell.openExternal(url)
   })
-  ipcMain.on('app:openPath', (_e, path: string) => shell.openPath(path))
-  ipcMain.on('app:setBadge', (_e, count: number) => setBadge(count))
+  ipcMain.on(IPC.appOpenPath, (_e, path: string) => shell.openPath(path))
+  ipcMain.on(IPC.appSetBadge, (_e, count: number) => setBadge(count))
 
-  ipcMain.handle('app:capture', async (_e, target: string) => {
+  ipcMain.handle(IPC.appCapture, async (_e, target: string) => {
     if (!mainWindow) return null
     const image = await mainWindow.webContents.capturePage()
     const file = resolve(target)
@@ -643,7 +644,7 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow = createWindow()
 
     initUpdater({
-      publish: (state) => send('update:changed', state),
+      publish: (state) => send(IPC.updateChanged, state),
       beforeInstallQuit: () => {
         quittingForUpdate = true
       }

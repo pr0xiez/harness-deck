@@ -11,6 +11,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { IPC } from '@shared/ipc'
 import type { PaneSpec, PersistedState, WorkspaceTemplate } from '@shared/types'
 import { addWorktree, diffRange, info as repoInfo, removeWorktree } from './git'
 import { PtyManager } from './pty'
@@ -196,13 +197,13 @@ function recordingManager(scrollback: ScrollbackStore | null = null): Recorder {
     mgr,
     dataFor: (id) =>
       messages
-        .filter((m) => m.channel === 'pty:data' && m.payload.id === id)
+        .filter((m) => m.channel === IPC.ptyData && m.payload.id === id)
         .map((m) => m.payload.data ?? '')
         .join(''),
-    exitsFor: (id) => messages.filter((m) => m.channel === 'pty:exit' && m.payload.id === id).length,
+    exitsFor: (id) => messages.filter((m) => m.channel === IPC.ptyExit && m.payload.id === id).length,
     quietFor: (id) =>
       messages
-        .filter((m) => m.channel === 'pty:quiet' && m.payload.id === id)
+        .filter((m) => m.channel === IPC.ptyQuiet && m.payload.id === id)
         .map((m) => Boolean(m.payload.quiet))
   }
 }

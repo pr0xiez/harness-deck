@@ -7,6 +7,7 @@ import type {
   PaneStatus,
   PersistedState,
   Profile,
+  RemoteSettings,
   RepoInfo,
   SavedProfile,
   Settings,
@@ -16,6 +17,7 @@ import type {
   WorkspaceTemplate
 } from '@shared/types'
 import { ACCENTS, MONO_STACK } from './theme'
+import { paneLabel } from './paneLabel'
 import {
   freshPane,
   templateDirs,
@@ -41,6 +43,14 @@ export const DEFAULT_ATTENTION: AttentionSettings = {
   badge: true
 }
 
+// Off, loopback-only, read-only: the server does not exist until each is
+// changed by hand. See HD-21.
+export const DEFAULT_REMOTE: RemoteSettings = {
+  enabled: false,
+  lan: false,
+  allowTyping: false
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 13,
   fontFamily: MONO_STACK,
@@ -55,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarCollapsed: false,
   voice: DEFAULT_VOICE,
   attention: DEFAULT_ATTENTION,
+  remote: DEFAULT_REMOTE,
   // Nothing reaches the network until this is changed by hand.
   updateChannel: 'local',
   broadcastHistory: [],
@@ -64,6 +75,9 @@ export const DEFAULT_SETTINGS: Settings = {
 /** How far back ↑ reaches in the broadcast box before prompts are forgotten. */
 const BROADCAST_HISTORY = 50
 
+/** The long leg of the snooze cycle. Long enough to be a decision, short enough to forget. */
+export const SNOOZE_MS = 60 * 60 * 1000
+
 /** Panes carry a bit of state we never want to write to disk. */
 interface StoredPane extends Omit<Pane, 'status' | 'exitCode' | 'activity' | 'bell' | 'processTitle'> {
   autostart?: boolean
@@ -72,11 +86,31 @@ interface StoredPane extends Omit<Pane, 'status' | 'exitCode' | 'activity' | 'be
 export interface PaneView extends Pane {
   autostart?: boolean
   /**
+   * Never written to disk — the pane exists for one run of one command (the
+   * ship pane, HD-18). A persisted copy would autostart on relaunch and run
+   * the command again against whatever the folder holds by then, which for a
+   * commit-and-push chain is a repo mutation nobody asked for.
+   */
+  transient?: boolean
+  /**
    * Auto-restarts spent on the crash loop the pane is in. Transient on purpose:
    * a pane that comes back with the app is starting fresh, not resuming a loop
    * whose process died before the window closed.
    */
   crashRestarts?: number
+  /**
+   * When the pane last went quiet — the queue's ordering, oldest first. The
+   * three fields below are the same bargain as `crashRestarts`: how you felt
+   * about a prompt an hour ago is not something a restart should inherit, so
+   * none of them are persisted. Only `attentionMuted` is, on `Pane`.
+   */
+  waitingSince?: number
+  /** Seen it. Cleared the next time the pane goes quiet — a fresh stop is fresh news. */
+  acknowledged?: boolean
+  /** Not now: until this pane next goes quiet, or until a wall-clock moment. */
+  snooze?: 'quiet' | number
+  /** The bell cut a snooze short: this pane raised its hand while you were away. */
+  woke?: boolean
 }
 
 export interface DeckWorkspace extends Workspace {
@@ -100,6 +134,24 @@ interface UiState {
   findAll: boolean
   /** The side-by-side diff over the active workspace's worktree panes. See HD-3. */
   compare: boolean
+  /**
+   * Text waiting for the broadcast box to pick it up — a pane's selection,
+   * already fenced. The bar clears it the moment it lands in the box, so the
+   * same selection can be sent again and land again.
+   */
+  pendingInsert: string | null
+  /** Every pane waiting for you, across all workspaces, with its last lines. See HD-15. */
+  waitingQueue: boolean
+  /** Workspace whose setup command and actions are being edited. See HD-16. */
+  workspaceDialogFor: string | null
+  /** Pane whose ship dialog is open — a worktree pane, always. See HD-18. */
+  shipFor: string | null
+}
+
+/** A background failure the user was never going to see in a console. */
+export interface DeckNotice {
+  title: string
+  body: string
 }
 
 interface DeckState {
@@ -122,6 +174,8 @@ interface DeckState {
   /** Why the last install attempt did not get off the ground. */
   updateError: string | null
   updateInstalling: boolean
+  /** Shown bottom-right until waved off. Never saved. */
+  notice: DeckNotice | null
 
   hydrate: () => Promise<void>
   refreshProfiles: () => Promise<void>
@@ -155,6 +209,12 @@ interface DeckState {
   cycleWorkspace: (delta: number) => void
 
   addPane: (workspaceId: string, profile: Profile, overrides?: Partial<PaneView>) => string
+  /**
+   * Opens one of the workspace's saved commands as an ordinary shell pane in the
+   * workspace folder. Returns the new pane's id, or '' when there is nothing at
+   * that id to run. See HD-16.
+   */
+  runWorkspaceAction: (workspaceId: string, actionId: string) => string
   closePane: (workspaceId: string, paneId: string) => void
   /** Close, asking first when the pane still has a live process. */
   requestClosePane: (workspaceId: string, paneId: string) => Promise<void>
@@ -164,8 +224,19 @@ interface DeckState {
   setPaneStatus: (paneId: string, status: PaneStatus, exitCode?: number | null) => void
   setActivePane: (workspaceId: string, paneId: string) => void
   cyclePane: (delta: number) => void
-  /** Focuses the next pane that has gone quiet; returns its id, or null. */
+  /** Focuses the pane that has been waiting longest; returns its id, or null. */
   focusNextWaiting: () => string | null
+  /**
+   * The pane rang the terminal bell. A raised hand outranks a snooze — Claude
+   * Code rings it at permission prompts — so this is also what wakes one.
+   */
+  ringBell: (paneId: string) => void
+  /** Seen it, or un-seen it. Reversible, like all three attention verbs. */
+  toggleAcknowledged: (paneId: string) => void
+  /** Cycles the snooze: off → until this pane next goes quiet → for an hour → off. */
+  cycleSnooze: (paneId: string) => void
+  /** Never count this pane. Persisted, unlike the rest of the attention state. */
+  toggleMuted: (paneId: string) => void
   movePane: (workspaceId: string, paneId: string, delta: number) => void
   toggleZoom: (workspaceId: string, paneId: string) => void
   setLayout: (workspaceId: string, layout: LayoutMode) => void
@@ -177,6 +248,7 @@ interface DeckState {
   /** Files a sent prompt at the front of the broadcast history. */
   rememberBroadcast: (prompt: string) => void
   setUi: (patch: Partial<UiState>) => void
+  setNotice: (notice: DeckNotice | null) => void
 }
 
 let idCounter = 0
@@ -247,12 +319,17 @@ export const useDeck = create<DeckState>((set, get) => ({
     templateSaveFor: null,
     templatePicker: false,
     findAll: false,
-    compare: false
+    compare: false,
+    pendingInsert: null,
+    waitingQueue: false,
+    workspaceDialogFor: null,
+    shipFor: null
   },
   update: null,
   updateDismissed: null,
   updateError: null,
   updateInstalling: false,
+  notice: null,
 
   hydrate: async () => {
     const [info, profiles, saved] = await Promise.all([
@@ -268,7 +345,8 @@ export const useDeck = create<DeckState>((set, get) => ({
       defaultCwd,
       // Nested, so a state file written before a field existed still gets it.
       voice: { ...DEFAULT_VOICE, ...saved?.settings?.voice },
-      attention: { ...DEFAULT_ATTENTION, ...saved?.settings?.attention }
+      attention: { ...DEFAULT_ATTENTION, ...saved?.settings?.attention },
+      remote: { ...DEFAULT_REMOTE, ...saved?.settings?.remote }
     }
 
     let workspaces: DeckWorkspace[] = (saved?.workspaces ?? []).map((ws) => ({
@@ -517,6 +595,28 @@ export const useDeck = create<DeckState>((set, get) => ({
     return pane.id
   },
 
+  // Nothing special about the pane this makes: the bare `custom` launcher, the
+  // workspace folder, the command line through a login shell. A chip is a
+  // shortcut for typing it, not a second kind of pane — so it restarts, closes
+  // and hands over a transcript like any other.
+  runWorkspaceAction: (workspaceId, actionId) => {
+    const { workspaces, profiles } = get()
+    const workspace = workspaces.find((w) => w.id === workspaceId)
+    const action = workspace?.actions?.find((a) => a.id === actionId)
+    const custom = profiles.find((p) => p.id === 'custom')
+    if (!workspace || !action || !custom) return ''
+    return get().addPane(workspaceId, custom, {
+      command: action.command,
+      args: [],
+      viaShell: true,
+      cwd: workspace.cwd,
+      // Explicit so the pane can never inherit env from whatever profile
+      // resolved as `custom` — a chip runs in the workspace's own environment.
+      env: undefined,
+      name: action.label
+    })
+  },
+
   closePane: (workspaceId, paneId) => {
     api.pty.dispose(paneId)
     set({
@@ -545,7 +645,7 @@ export const useDeck = create<DeckState>((set, get) => ({
       const profile = state.profiles.find((p) => p.id === pane.profileId)
       const ok = await api.confirm({
         title: 'Close pane',
-        message: `${pane.name || pane.processTitle || profile?.name || pane.command} is still running.`,
+        message: `${paneLabel(pane, profile)} is still running.`,
         detail: 'The process will be terminated.',
         confirmLabel: 'Close pane'
       })
@@ -576,44 +676,67 @@ export const useDeck = create<DeckState>((set, get) => ({
     // already on its way out before git tries to take the directory away.
     if (remove && pane.worktree) {
       const result = await api.git.removeWorktree(pane.worktree)
-      if (!result.ok) console.warn(`[worktree] ${result.error}`)
+      if (!result.ok) {
+        console.warn(`[worktree] ${result.error}`)
+        set({
+          notice: {
+            title: 'Worktree not removed',
+            body: `${pane.worktree} is still on disk: ${result.error}`
+          }
+        })
+      }
     }
   },
 
   restartPane: (paneId) => {
     api.pty.dispose(paneId)
+    const { workspaces } = get()
+    const owner = workspaces.find((w) => w.panes.some((p) => p.id === paneId))
+    if (!owner) return
     set({
-      workspaces: get().workspaces.map((w) => ({
-        ...w,
-        panes: w.panes.map((p) =>
-          p.id === paneId
-            ? {
-                ...p,
-                epoch: p.epoch + 1,
-                status: 'idle' as PaneStatus,
-                exitCode: null,
-                autostart: true,
-                activity: false,
-                bell: false,
-                // A person starting the pane by hand is not the crash loop
-                // continuing, whatever auto-restart had already spent on it.
-                crashRestarts: 0
-              }
-            : p
-        )
-      }))
+      workspaces: workspaces.map((w) =>
+        w === owner
+          ? {
+              ...w,
+              panes: w.panes.map((p) =>
+                p.id === paneId
+                  ? {
+                      ...p,
+                      epoch: p.epoch + 1,
+                      status: 'idle' as PaneStatus,
+                      exitCode: null,
+                      autostart: true,
+                      activity: false,
+                      bell: false,
+                      // A person starting the pane by hand is not the crash loop
+                      // continuing, whatever auto-restart had already spent on it.
+                      crashRestarts: 0
+                    }
+                  : p
+              )
+            }
+          : w
+      )
     })
   },
 
   killPane: (paneId) => api.pty.kill(paneId),
 
-  updatePane: (paneId, patch) =>
+  // A pane lives in exactly one workspace, so only that workspace is rebuilt;
+  // every other workspace keeps its identity, which is what keeps a pane event
+  // from re-rendering the whole deck.
+  updatePane: (paneId, patch) => {
+    const { workspaces } = get()
+    const owner = workspaces.find((w) => w.panes.some((p) => p.id === paneId))
+    if (!owner) return
     set({
-      workspaces: get().workspaces.map((w) => ({
-        ...w,
-        panes: w.panes.map((p) => (p.id === paneId ? { ...p, ...patch } : p))
-      }))
-    }),
+      workspaces: workspaces.map((w) =>
+        w === owner
+          ? { ...w, panes: w.panes.map((p) => (p.id === paneId ? { ...p, ...patch } : p)) }
+          : w
+      )
+    })
+  },
 
   setPaneStatus: (paneId, status, exitCode = null) => get().updatePane(paneId, { status, exitCode }),
 
@@ -644,17 +767,61 @@ export const useDeck = create<DeckState>((set, get) => ({
   focusNextWaiting: () => {
     const { workspaces, activeWorkspaceId } = get()
     const active = workspaces.find((w) => w.id === activeWorkspaceId)
-    const flat = workspaces.flatMap((ws) => ws.panes.map((pane) => ({ ws, pane })))
-    // Start just after the focused pane, so pressing it again walks the queue
-    // rather than landing on the same pane every time.
-    const from =
-      flat.findIndex(({ ws, pane }) => ws.id === active?.id && pane.id === active?.activePaneId) + 1
-    const ordered = [...flat.slice(from), ...flat.slice(0, from)]
-    const next = ordered.find(({ pane }) => pane.status === 'waiting')
+    const now = Date.now()
+    // Oldest first: with six panes, "which one next" has an answer, and it is
+    // whichever agent has been sitting at its prompt longest. Muted, snoozed
+    // and acknowledged panes are not answers to that question.
+    const queue = workspaces
+      .flatMap((ws) => ws.panes.map((pane) => ({ ws, pane })))
+      .filter(({ pane }) => isActionable(pane, now))
+      .sort((a, b) => (a.pane.waitingSince ?? 0) - (b.pane.waitingSince ?? 0))
+    // Start just after the pane already in front, and never offer it back, so
+    // pressing the key again walks the queue rather than bouncing between two.
+    const at = queue.findIndex(
+      ({ ws, pane }) => ws.id === active?.id && pane.id === active?.activePaneId
+    )
+    const next = (at < 0 ? queue : [...queue.slice(at + 1), ...queue.slice(0, at)])[0]
     if (!next) return null
     if (next.ws.id !== activeWorkspaceId) get().setActiveWorkspace(next.ws.id)
     get().setActivePane(next.ws.id, next.pane.id)
     return next.pane.id
+  },
+
+  ringBell: (paneId) => {
+    const pane = get()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === paneId)
+    // `woke` is only news when there was a snooze to cut short; setting it on
+    // every bell would flag panes nobody had put off in the first place.
+    get().updatePane(paneId, {
+      bell: true,
+      ...(pane && isSnoozed(pane) ? { snooze: undefined, woke: true } : {})
+    })
+  },
+
+  toggleAcknowledged: (paneId) => {
+    const pane = get()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === paneId)
+    if (pane) get().updatePane(paneId, { acknowledged: !pane.acknowledged })
+  },
+
+  cycleSnooze: (paneId) => {
+    const pane = get()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === paneId)
+    if (!pane) return
+    const next =
+      pane.snooze === undefined ? 'quiet' : pane.snooze === 'quiet' ? Date.now() + SNOOZE_MS : undefined
+    // Snoozing is saying "not now", so it also un-flags the bell that said now.
+    get().updatePane(paneId, { snooze: next, woke: false })
+  },
+
+  toggleMuted: (paneId) => {
+    const pane = get()
+      .workspaces.flatMap((w) => w.panes)
+      .find((p) => p.id === paneId)
+    if (pane) get().updatePane(paneId, { attentionMuted: !pane.attentionMuted })
   },
 
   movePane: (workspaceId, paneId, delta) =>
@@ -705,7 +872,9 @@ export const useDeck = create<DeckState>((set, get) => ({
     set({ settings: { ...settings, broadcastHistory: broadcastHistory.slice(0, BROADCAST_HISTORY) } })
   },
 
-  setUi: (patch) => set({ ui: { ...get().ui, ...patch } })
+  setUi: (patch) => set({ ui: { ...get().ui, ...patch } }),
+
+  setNotice: (notice) => set({ notice })
 }))
 
 /**
@@ -715,6 +884,38 @@ export const useDeck = create<DeckState>((set, get) => ({
  */
 export const isLive = (pane: { status: PaneStatus }): boolean =>
   pane.status === 'running' || pane.status === 'waiting'
+
+/**
+ * Is this pane's snooze still in force? "Until next quiet" runs until the quiet
+ * handler lifts it; an hour-long one expires on its own, and is re-read rather
+ * than cleared on a timer — nothing else in the app is waiting on the moment it
+ * lapses, and the next thing that touches the store notices.
+ */
+export function isSnoozed(pane: PaneView, now: number = Date.now()): boolean {
+  if (pane.snooze === undefined) return false
+  return pane.snooze === 'quiet' || pane.snooze > now
+}
+
+/**
+ * The one question every aggregate is really asking: does this pane want you,
+ * *and* have you not already said otherwise? The dock badge, the sidebar counts,
+ * the title-bar Waiting button, the palette hint and Ctrl+Shift+J all run on
+ * this, so muting a pane, snoozing it or acknowledging it takes it out of all
+ * five at once.
+ *
+ * The waiting queue itself is deliberately looser — it still shows what you
+ * acknowledged, dimmed — and a pane's own amber header dot is looser still: that
+ * is the local truth, and muting is about the aggregates, not about lying to the
+ * pane you are looking at.
+ */
+export function isActionable(pane: PaneView, now: number = Date.now()): boolean {
+  return (
+    pane.status === 'waiting' &&
+    !pane.attentionMuted &&
+    !pane.acknowledged &&
+    !isSnoozed(pane, now)
+  )
+}
 
 export const activeWorkspace = (state: DeckState): DeckWorkspace | undefined =>
   state.workspaces.find((w) => w.id === state.activeWorkspaceId)
@@ -728,42 +929,129 @@ export function serialize(state: DeckState): PersistedState {
     activeWorkspaceId: state.activeWorkspaceId,
     settings: state.settings,
     templates: state.templates,
-    workspaces: state.workspaces.map((ws) => ({
-      ...ws,
-      zoomedPaneId: null,
-      panes: ws.panes.map(
-        ({
-          id,
-          profileId,
-          command,
-          args,
-          cwd,
-          viaShell,
-          name,
-          env,
-          worktree,
-          autoRestart,
-          readOnly
-        }) => ({
-          id,
-          profileId,
-          command,
-          args,
-          cwd,
-          viaShell,
-          name,
-          env,
-          // Kept, or a restart would forget that this folder is ours to remove.
-          worktree,
-          autoRestart,
-          readOnly,
-          status: 'idle' as PaneStatus,
-          exitCode: null,
-          epoch: 0
-        })
-      )
-    }))
+    workspaces: state.workspaces.map((ws) => {
+      // A transient pane (the ship pane) is one run of one command; writing it
+      // to disk would make relaunch run the command again.
+      const kept = ws.panes.filter((p) => !p.transient)
+      return {
+        ...ws,
+        zoomedPaneId: null,
+        activePaneId: kept.some((p) => p.id === ws.activePaneId)
+          ? ws.activePaneId
+          : (kept[kept.length - 1]?.id ?? null),
+        panes: kept.map(
+          ({
+            id,
+            profileId,
+            command,
+            args,
+            cwd,
+            viaShell,
+            name,
+            env,
+            setup,
+            worktree,
+            autoRestart,
+            readOnly,
+            attentionMuted
+          }) => ({
+            id,
+            profileId,
+            command,
+            args,
+            cwd,
+            viaShell,
+            name,
+            env,
+            // Kept for the same reason as `worktree`: a restart re-runs the setup,
+            // and a pane that forgot it would put the agent in a tree nothing has
+            // installed into since the app was last quit.
+            setup,
+            // Kept, or a restart would forget that this folder is ours to remove.
+            worktree,
+            autoRestart,
+            readOnly,
+            // The build pane that goes quiet all day is still that pane tomorrow.
+            // Snoozes and acknowledgements are not: those expire with the session.
+            attentionMuted,
+            status: 'idle' as PaneStatus,
+            exitCode: null,
+            epoch: 0
+          })
+        )
+      }
+    })
   }
+}
+
+/** What a quiet subscriber is told: the event, and the pane it was about. */
+export interface QuietPaneEvent {
+  id: string
+  quiet: boolean
+  pane: PaneView
+}
+
+const quietSubscribers = new Set<(event: QuietPaneEvent) => void>()
+
+/**
+ * Also told when a pane falls quiet. Three things want that moment — the
+ * toolbar's git refresh, the attention state above, and HD-20's checkpoints —
+ * and each one subscribing to the bridge separately would mean three copies of
+ * the "is this the transition or a repeat?" rule. `startAttention` owns the rule
+ * and hands on what survived it.
+ */
+export function onQuietPane(handler: (event: QuietPaneEvent) => void): () => void {
+  quietSubscribers.add(handler)
+  return () => quietSubscribers.delete(handler)
+}
+
+/**
+ * The single subscription to `pty:quiet`, started once from main.tsx.
+ *
+ * Output *stopping* is the signal worth having: the agent has hit a prompt, an
+ * approval gate, or finished. The main process owns the clock; all that is left
+ * here is turning it into a status the UI can route on — and, for a window
+ * nobody is looking at, one notification per pane per stop.
+ */
+export function startAttention(): () => void {
+  return api.pty.onQuiet(({ id, quiet }) => {
+    const state = useDeck.getState()
+    const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === id)
+    // An exit is the newer truth — a dead pane is not waiting for you — and
+    // the guard doubles as the once-per-transition rule for the notification.
+    if (!pane || pane.status !== (quiet ? 'running' : 'waiting')) return
+
+    // Read before the transition lifts it: "until next quiet" ends *at* this
+    // quiet, which is exactly the moment the pane becomes news again. An
+    // hour-long one that has not yet run out still holds.
+    const stillSnoozed = quiet && pane.snooze !== 'quiet' && isSnoozed(pane)
+    if (quiet) {
+      state.updatePane(id, {
+        status: 'waiting',
+        exitCode: null,
+        waitingSince: Date.now(),
+        // A fresh stop is fresh news, so having been seen last time counts for
+        // nothing — and a hand raised during the last stop has been answered.
+        acknowledged: false,
+        woke: false,
+        snooze: pane.snooze === 'quiet' ? undefined : pane.snooze
+      })
+    } else {
+      state.setPaneStatus(id, 'running')
+    }
+
+    if (quiet && state.settings.attention.notify && !document.hasFocus()) {
+      // Muted and snoozed panes reach no aggregate, and a notification is the
+      // loudest aggregate there is.
+      if (!pane.attentionMuted && !stillSnoozed) {
+        new Notification('Harness Deck', {
+          body: `${pane.name || pane.processTitle || pane.command} is waiting for you`
+        })
+      }
+    }
+
+    for (const handler of [...quietSubscribers]) handler({ id, quiet, pane })
+  })
 }
 
 let saveTimer: number | undefined
@@ -782,22 +1070,4 @@ export function startPersistence(): () => void {
       api.saveState(payload)
     }, 400)
   })
-}
-
-/**
- * Writes the current state now, skipping the debounce. Called right before a
- * pane asks the main process to spawn: the main process only launches specs it
- * can find in the persisted state (or the profile list), so a brand-new pane's
- * save has to be on the other side of the bridge before `pty.ensure` is.
- */
-export function flushPersistence(): void {
-  const state = useDeck.getState()
-  if (!state.hydrated) return
-  window.clearTimeout(saveTimer)
-  saveTimer = undefined
-  const payload = serialize(state)
-  const snapshot = JSON.stringify(payload)
-  if (snapshot === lastSnapshot) return
-  lastSnapshot = snapshot
-  api.saveState(payload)
 }

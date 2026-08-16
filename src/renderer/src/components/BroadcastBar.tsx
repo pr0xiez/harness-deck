@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { paneLabel } from '../paneLabel'
 import { isLive, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { registerVoiceSink } from '../voice'
 import { Icon } from './Icon'
@@ -23,6 +24,30 @@ const chosenTargets = new Map<string, Record<string, boolean>>()
 const NOTHING_CHOSEN: Record<string, boolean> = {}
 
 /**
+ * A fence the text inside cannot close: backticks normally, tildes once the
+ * selection carries backtick fences of its own — terminal output of a README
+ * is the ordinary case — and a longer run of backticks when it carries both.
+ */
+function fenceFor(selection: string): string {
+  if (!selection.includes('```')) return '```'
+  if (!selection.includes('~~~')) return '~~~'
+  const longest = Math.max(...Array.from(selection.matchAll(/`+/g), (run) => run[0].length))
+  return '`'.repeat(longest + 1)
+}
+
+/**
+ * Wraps a pane's selection for the prompt box (HD-17). Newline-led because
+ * `insert()` joins with a space and a fence that does not start its own line is
+ * not a fence; the trailing newline leaves the caret below the block, which is
+ * where the instruction goes.
+ */
+export function fencedBlock(selection: string): string {
+  const body = selection.trimEnd()
+  const fence = fenceFor(body)
+  return `\n${fence}\n${body}\n${fence}\n`
+}
+
+/**
  * Types one prompt into every live pane of a workspace — the reason to have
  * several agents side by side in the first place.
  */
@@ -33,6 +58,7 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
   const snippets = useDeck((s) => s.settings.broadcastSnippets)
   const rememberBroadcast = useDeck((s) => s.rememberBroadcast)
   const updateSettings = useDeck((s) => s.updateSettings)
+  const pendingInsert = useDeck((s) => s.ui.pendingInsert)
 
   const [text, setText] = useState('')
   const [sendEnter, setSendEnter] = useState(true)
@@ -67,6 +93,17 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
   }
 
   useEffect(() => inputRef.current?.focus(), [])
+
+  // Keyed on the fragment rather than run once on mount: the bar stays mounted
+  // for as long as it is open, so a second selection sent to an open bar would
+  // otherwise arrive after the component's one chance to look had passed.
+  useEffect(() => {
+    if (pendingInsert === null) return
+    // Nothing to separate a fragment from in an empty box — its leading newline
+    // would only push the block off the first line.
+    insert(textRef.current.trim() ? pendingInsert : pendingInsert.trimStart())
+    setUi({ pendingInsert: null })
+  }, [pendingInsert])
 
   useEffect(
     () =>
@@ -191,7 +228,7 @@ export function BroadcastBar({ workspace }: Props): React.JSX.Element {
                   }
                   onClick={() => choose({ ...chosen, [pane.id]: !on })}
                 >
-                  {profile?.icon ?? '»'} {pane.name || pane.processTitle || profile?.name}
+                  {profile?.icon ?? '»'} {paneLabel(pane, profile)}
                 </button>
               )
             })

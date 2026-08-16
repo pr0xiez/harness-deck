@@ -1,35 +1,43 @@
-import type { PaneSpec, PersistedState, Profile } from '@shared/types'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import type { PaneSpec, Profile } from '@shared/types'
 
 /**
  * The gate `pty:ensure` runs behind. The renderer used to hand over a full
  * PaneSpec — command, args, cwd, viaShell, env — and the main process spawned
  * it verbatim, which made one IPC message equal to arbitrary shell execution
- * (issue #18). The renderer is the least-trusted process in the app, so nothing
- * it says about *what to run* is taken at face value any more.
+ * (issue #18). An earlier version of this file re-checked the spec against
+ * `workspaces.json`, but that file is itself written by an unvalidated
+ * `state:save` IPC call — the renderer authors the very record the guard was
+ * reading, so that "trust source" was the attacker's own input reflected back.
+ * Nothing the renderer can write (`state:save`, `profiles:saveCustom`) or
+ * click (any DOM element) is a trust anchor here any more.
  *
- * What is trusted instead are the main process's own records of what the user
- * configured:
+ * What main actually owns instead:
  *
- *   - the persisted deck state (`workspaces.json`, written via `state:save`) —
- *     a spec must match its pane, found by id, field for field; the spawn then
- *     uses the persisted copy, not the renderer's;
- *   - the profile registry (`detectProfiles()`: detected harnesses, shells,
- *     WSL entries and saved launchers) — for a pane so fresh the debounced
- *     save has not landed yet, the spec must be exactly some profile's
- *     command line (only the working directory is the caller's to choose).
- *
- * Free-form custom commands remain a real feature: they exist as panes in the
- * saved state (the renderer flushes its save before asking for a spawn) or as
- * saved launchers, and both routes verify here. What no longer works is a spec
- * that corresponds to nothing the user ever configured.
+ *   - `detectProfiles()`'s BUILT-IN entries — the agents, shells and WSL
+ *     targets this machine actually has, discovered by main itself. A spec
+ *     that is exactly one of those command lines runs without asking.
+ *     Saved launchers (`custom:*`) and the "Custom command…" sentinel are
+ *     excluded: both live in `custom-profiles.json`, written verbatim by the
+ *     renderer-facing `profiles:saveCustom` IPC call, so they carry no more
+ *     authority than the spec itself;
+ *   - a native `dialog.showMessageBox` click. A compromised renderer can send
+ *     any IPC message it likes, but it cannot forge a click on an OS-drawn
+ *     button. Anything that is not a bare built-in profile — a custom pane, a
+ *     saved launcher, a workspace action, a `setup` line, extra `env` — needs
+ *     one of these once, and only once: the answer is cached by a digest of
+ *     the exact spec and remembered in a file main alone writes.
  *
  * `env` is additionally sanitised on every route: pane-level variables are a
  * user feature with user-chosen names, so there is no allowlist to derive —
  * but keys that would hijack the app, the loader or the shell's startup are
  * dropped unconditionally, wherever they came from.
  *
- * No `electron` import here: this runs under plain-Node unit tests, and every
- * source of truth is injected.
+ * No `electron` import here: this runs under plain-Node unit tests. The one
+ * genuinely Electron-only step — showing the dialog — is injected as
+ * `GuardSources.approve`, so a test can drive it without a window.
  */
 
 /**
@@ -76,29 +84,6 @@ export function sanitizeEnv(
   return Object.keys(clean).length ? clean : undefined
 }
 
-/** Where the truth about panes and profiles comes from — injected, for tests. */
-export interface GuardSources {
-  /** The persisted deck state, re-read per call: `state:save` is the writer. */
-  state: () => PersistedState | null
-  /** Detected harnesses + shells + saved launchers. Only consulted on a miss by id. */
-  profiles: () => Profile[] | Promise<Profile[]>
-  /**
-   * True when a live session already exists for this id. `ensure` on a live
-   * session only re-attaches — it reads nothing from the spec but the id — so
-   * a window reload may re-attach to a pane the state file has not caught up
-   * with yet.
-   */
-  attached?: (id: string) => boolean
-  /**
-   * One retry, this long after a miss, before refusing. The renderer flushes
-   * its save before asking for a spawn, but the two messages ride different
-   * IPC channels — this absorbs the save landing a beat late.
-   */
-  retryMs?: number
-}
-
-export type GuardVerdict = { ok: true; spec: PaneSpec } | { ok: false; reason: string }
-
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string')
 
@@ -120,76 +105,179 @@ function isSpecShaped(value: unknown): value is PaneSpec {
       isStringArray(spec.args) &&
       typeof spec.cwd === 'string' &&
       (spec.viaShell === undefined || typeof spec.viaShell === 'boolean') &&
-      (spec.env === undefined || isEnvRecord(spec.env))
+      (spec.env === undefined || isEnvRecord(spec.env)) &&
+      (spec.setup === undefined || typeof spec.setup === 'string')
   )
 }
 
 const sameArgs = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((item, i) => item === b[i])
 
-function sameEnv(a: Record<string, string> = {}, b: Record<string, string> = {}): boolean {
-  const keys = Object.keys(a)
-  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key])
+/**
+ * Every key `spec` names must equal what `known` has for it. `spec` may name
+ * fewer keys than `known` offers — asking for less than a profile provides is
+ * fine — but never a key `known` lacks, or a different value for one it has.
+ * Absent entirely is a subset of anything, including nothing.
+ */
+function envIsSubset(
+  spec: Record<string, string> | undefined,
+  known: Record<string, string> | undefined
+): boolean {
+  if (!spec) return true
+  const has = known ?? {}
+  return Object.entries(spec).every(([key, value]) => has[key] === value)
 }
 
-/** The renderer's spec against a record the main process holds. cwd optional: a
- *  profile pins no folder, so any directory is the user's to pick. */
+/**
+ * Whether `spec` is a bare re-derivation of a detected profile: the same
+ * command line, the same shell-or-not, its folder free unless the profile
+ * pins one, its env (if any) a subset of the profile's, and no `setup` — a
+ * profile never carries one, so a spec that adds one is asking to run
+ * something the profile never offered.
+ */
 function matches(
   spec: PaneSpec,
-  known: Pick<PaneSpec, 'command' | 'args' | 'viaShell' | 'env'> & { cwd?: string },
+  profile: Pick<Profile, 'command' | 'args' | 'viaShell' | 'env' | 'cwd'>,
   checkCwd: boolean
 ): boolean {
   return (
-    spec.command === known.command &&
-    sameArgs(spec.args, known.args) &&
-    Boolean(spec.viaShell) === Boolean(known.viaShell) &&
-    sameEnv(spec.env, known.env) &&
-    (!checkCwd || spec.cwd === (known.cwd ?? spec.cwd))
+    spec.command === profile.command &&
+    sameArgs(spec.args, profile.args) &&
+    Boolean(spec.viaShell) === Boolean(profile.viaShell) &&
+    envIsSubset(spec.env, profile.env) &&
+    (!checkCwd || spec.cwd === profile.cwd) &&
+    !spec.setup?.trim()
   )
 }
 
-/** One pass over both sources. Returns the verified spec, rebuilt from the
- *  matching record rather than the renderer's copy, or null. */
-async function findMatch(spec: PaneSpec, sources: GuardSources): Promise<PaneSpec | null> {
-  const state = sources.state()
-  const pane = state?.workspaces.flatMap((w) => w.panes).find((p) => p.id === spec.id)
-  if (pane && matches(spec, pane, true)) {
-    return {
-      id: spec.id,
-      command: pane.command,
-      args: [...pane.args],
-      cwd: pane.cwd,
-      ...(pane.viaShell ? { viaShell: true } : {}),
-      ...(pane.env ? { env: pane.env } : {})
-    }
+/**
+ * A spec that matches some BUILT-IN profile exactly, or null. Saved launchers
+ * and the "Custom command…" sentinel (`kind: 'custom'`) are never consulted
+ * here — see the module doc comment for why.
+ */
+async function findBuiltinMatch(
+  spec: PaneSpec,
+  sources: Pick<GuardSources, 'profiles'>
+): Promise<PaneSpec | null> {
+  if (!spec.command) return null
+  const profiles = await sources.profiles()
+  const profile = profiles.find(
+    (p) => p.kind !== 'custom' && p.command && matches(spec, p, Boolean(p.cwd))
+  )
+  if (!profile) return null
+  return {
+    id: spec.id,
+    command: profile.command,
+    args: [...profile.args],
+    cwd: profile.cwd ?? spec.cwd,
+    ...(profile.viaShell ? { viaShell: true } : {}),
+    env: sanitizeEnv(profile.env)
   }
+}
 
-  // Not in the state file (or the file is behind): a brand-new pane opened
-  // straight from a profile. The command line must be some profile's, exactly;
-  // the folder is free — that is the one thing a user picks per pane.
-  if (spec.command) {
-    const profiles = await sources.profiles()
-    const profile = profiles.find((p) => p.command && matches(spec, p, false))
-    if (profile) {
-      return {
-        id: spec.id,
-        command: profile.command,
-        args: [...profile.args],
-        cwd: spec.cwd,
-        ...(profile.viaShell ? { viaShell: true } : {}),
-        ...(profile.env ? { env: profile.env } : {})
+/** What the approval dialog is shown, and what the digest below is over. */
+export interface ApprovalCandidate {
+  command: string
+  args: string[]
+  cwd: string
+  viaShell: boolean
+  setup?: string
+  env?: Record<string, string>
+}
+
+/**
+ * Stable across process restarts and independent of object key order, so the
+ * same spec always lands on the same digest and a request that only reorders
+ * its own env never re-prompts.
+ */
+export function approvalDigest(candidate: ApprovalCandidate): string {
+  const env = Object.entries(candidate.env ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const normalized = JSON.stringify([
+    candidate.command,
+    candidate.args,
+    candidate.cwd,
+    candidate.viaShell,
+    candidate.setup ?? '',
+    env
+  ])
+  return createHash('sha256').update(normalized).digest('hex')
+}
+
+/** Where a digest that has already cleared the dialog once is remembered. */
+export interface ApprovalStore {
+  has: (digest: string) => boolean
+  remember: (digest: string) => void
+}
+
+/**
+ * Backed by a JSON file of previously approved digests. Written by main only
+ * — no IPC channel writes this file, so a compromised renderer cannot grant
+ * itself a standing approval the way it could when the guard trusted
+ * `workspaces.json`. Read once at construction; every new `remember` rewrites
+ * the file through a temp-then-rename, the same crash-safe pattern
+ * `store.ts`'s `writeJsonAtomic` uses (not imported from there, so this file
+ * stays free of the `electron` import that pulls in).
+ */
+export function loadApprovalStore(filePath: string): ApprovalStore {
+  const digests = new Set<string>()
+  try {
+    if (existsSync(filePath)) {
+      const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as unknown
+      if (Array.isArray(parsed)) {
+        for (const entry of parsed) if (typeof entry === 'string') digests.add(entry)
+      }
+    }
+  } catch (err) {
+    console.error(`[pane-guard] ignoring unreadable approvals at ${filePath}:`, err)
+  }
+  return {
+    has: (digest) => digests.has(digest),
+    remember: (digest) => {
+      if (digests.has(digest)) return
+      digests.add(digest)
+      try {
+        mkdirSync(dirname(filePath), { recursive: true })
+        const tmp = `${filePath}.tmp`
+        writeFileSync(tmp, JSON.stringify([...digests], null, 2), 'utf8')
+        renameSync(tmp, filePath)
+      } catch (err) {
+        console.error(`[pane-guard] failed to persist approvals at ${filePath}:`, err)
       }
     }
   }
-  return null
 }
 
-const wait = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms))
+/** Where the truth about panes and profiles comes from — injected, for tests. */
+export interface GuardSources {
+  /** Detected harnesses + shells + WSL entries + saved launchers + the
+   *  sentinel. Only entries with `kind !== 'custom'` can vouch for a spec
+   *  without asking (see `findBuiltinMatch`). */
+  profiles: () => Profile[] | Promise<Profile[]>
+  /**
+   * True when a live session already exists for this id. `ensure` on a live
+   * session only re-attaches — it reads nothing from the spec but the id — so
+   * a window reload may re-attach to a pane no other source has caught up
+   * with yet.
+   */
+  attached?: (id: string) => boolean
+  /**
+   * Shows the native "Start this pane?" dialog and resolves true on approval.
+   * Only called once per distinct digest — see `approvals`. A compromised
+   * renderer can call `pty:ensure` any number of times, but cannot click an
+   * OS-drawn button on main's behalf.
+   */
+  approve: (candidate: ApprovalCandidate) => Promise<boolean>
+  /** Digests already approved, so the same spec is never asked twice. */
+  approvals: ApprovalStore
+}
+
+export type GuardVerdict = { ok: true; spec: PaneSpec } | { ok: false; reason: string }
 
 /**
  * Decides whether `pty:ensure` may act on a renderer-supplied spec. On success
- * the spec handed back is rebuilt from the matching main-process record with
- * its env sanitised — the renderer's inline copy is never what gets spawned.
+ * the spec handed back is rebuilt from the matching profile or the approved
+ * candidate — never the renderer's raw object verbatim — with its env
+ * sanitised.
  */
 export async function verifyPaneSpec(raw: unknown, sources: GuardSources): Promise<GuardVerdict> {
   if (!isSpecShaped(raw)) return { ok: false, reason: 'malformed pane spec' }
@@ -200,18 +288,40 @@ export async function verifyPaneSpec(raw: unknown, sources: GuardSources): Promi
     return { ok: true, spec: { ...spec, env: sanitizeEnv(spec.env) } }
   }
 
-  let match = await findMatch(spec, sources)
-  if (!match) {
-    // The state save and the spawn request race once per brand-new pane; give
-    // the save one chance to land before calling the spec unknown.
-    await wait(sources.retryMs ?? 300)
-    match = await findMatch(spec, sources)
+  const builtin = await findBuiltinMatch(spec, sources)
+  if (builtin) return { ok: true, spec: builtin }
+
+  // Not a bare built-in: a custom pane, a saved launcher, a workspace action,
+  // or anything carrying `setup` or env a profile did not offer. One human
+  // click, remembered by digest so it only happens once for this exact spec.
+  const candidate: ApprovalCandidate = {
+    command: spec.command,
+    args: [...spec.args],
+    cwd: spec.cwd,
+    viaShell: Boolean(spec.viaShell),
+    ...(spec.setup?.trim() ? { setup: spec.setup } : {}),
+    ...(spec.env ? { env: spec.env } : {})
   }
-  if (!match) {
+  const digest = approvalDigest(candidate)
+  const approved = sources.approvals.has(digest) || (await sources.approve(candidate))
+  if (!approved) {
     return {
       ok: false,
-      reason: `pane ${spec.id} does not correspond to any configured pane or profile`
+      reason: `pane ${spec.id} was not approved to run ${spec.command || '(empty command)'}`
     }
   }
-  return { ok: true, spec: { ...match, env: sanitizeEnv(match.env) } }
+  sources.approvals.remember(digest)
+
+  return {
+    ok: true,
+    spec: {
+      id: spec.id,
+      command: candidate.command,
+      args: candidate.args,
+      cwd: candidate.cwd,
+      ...(candidate.viaShell ? { viaShell: true } : {}),
+      ...(candidate.setup ? { setup: candidate.setup } : {}),
+      env: sanitizeEnv(candidate.env)
+    }
+  }
 }

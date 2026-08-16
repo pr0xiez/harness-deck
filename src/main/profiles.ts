@@ -1,9 +1,9 @@
-import { execFile } from 'node:child_process'
 import { accessSync, constants, existsSync } from 'node:fs'
 import { basename, delimiter, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { ForgeCli, Profile, SavedProfile } from '@shared/types'
 import { flavourOf, type ShellFlavour } from '@shared/shell'
+import { runProcess } from './process'
 import { loadCustomProfiles } from './profiles-store'
 import { defaultShell, shellEnv } from './shell-env'
 
@@ -107,16 +107,14 @@ export function findExecutable(command: string, env = shellEnv()): string | null
   return null
 }
 
-function exec(cmd: string, args: string[], timeout: number): Promise<Buffer | null> {
-  return new Promise((resolve) => {
-    const child = execFile(
-      cmd,
-      args,
-      { timeout, windowsHide: true, encoding: 'buffer', maxBuffer: 1024 * 1024 },
-      (err, stdout) => resolve(err && !stdout?.length ? null : stdout)
-    )
-    child.on('error', () => resolve(null))
-  })
+/**
+ * Bytes rather than text, because the caller has to sniff the encoding (see
+ * `decodeWsl`). Output that arrived before an error is still an answer — a WSL
+ * that listed its distros and then dawdled past the timeout did list them.
+ */
+async function exec(cmd: string, args: string[], timeout: number): Promise<Buffer | null> {
+  const ran = await runProcess(cmd, args, { timeout, maxBuffer: 1024 * 1024, encoding: 'buffer' })
+  return ran.error && !ran.stdout.length ? null : ran.stdout
 }
 
 /** wsl.exe still speaks UTF-16LE for some subcommands. */

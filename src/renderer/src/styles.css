@@ -2632,6 +2632,16 @@ button.count.waiting:hover {
   }
 }
 
+.toast.notice {
+  z-index: 51;
+  border-color: color-mix(in srgb, var(--bad) 34%, var(--line-2));
+}
+
+.toast.notice .toast-dot {
+  background: var(--bad);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 20%, transparent);
+}
+
 .toast-head {
   display: flex;
   align-items: center;

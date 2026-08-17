@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { isActionable, useDeck, type DeckWorkspace } from './store'
+import { totalActionableCount, useDeck, type DeckWorkspace } from './store'
 import { digitOf, matchShortcut, type ShortcutId } from './shortcuts'
 import { getTerminal, refitAll } from './terminals'
 import { TitleBar } from './components/TitleBar'
@@ -33,9 +33,7 @@ export function App(): React.JSX.Element {
   const updateChannel = useDeck((s) => s.settings.updateChannel)
   const addWorkspace = useDeck((s) => s.addWorkspace)
   const badgeEnabled = useDeck((s) => s.settings.attention.badge)
-  const waitingCount = useDeck((s) =>
-    s.workspaces.reduce((total, ws) => total + ws.panes.filter((p) => isActionable(p)).length, 0)
-  )
+  const waitingCount = useDeck((s) => totalActionableCount(s.workspaces))
 
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
 

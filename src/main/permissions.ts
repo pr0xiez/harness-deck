@@ -45,6 +45,16 @@ export function originOf(rawUrl: string | undefined): string | null {
 }
 
 /**
+ * The dev-server origin to trust, or null. A packaged build never follows the
+ * dev-server variable (#51) — anyone who can set the app's environment could
+ * otherwise point the trust at an origin of their choosing — so the gate here
+ * must match the navigation guard in createWindow exactly.
+ */
+export function devOriginFor(isPackaged: boolean, rendererUrl: string | undefined): string | null {
+  return isPackaged ? null : originOf(rendererUrl)
+}
+
+/**
  * Is this URL the app's own page? For file: URLs the whole path must match the
  * bundled index.html — every file: URL shares one origin, so an origin check
  * would trust any local file that found its way into the window. For the dev

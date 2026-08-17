@@ -32,7 +32,7 @@ import { IPC, type IpcChannel } from '@shared/ipc'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
 import { PasteGate } from './paste-gate'
 import { resolveWithin } from './paths'
-import { decidePermission, originOf, type TrustedPage } from './permissions'
+import { decidePermission, devOriginFor, type TrustedPage } from './permissions'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -322,6 +322,11 @@ function createWindow(): BrowserWindow {
   win.webContents.on('will-frame-navigate', (event) => {
     if (!isAllowedNavigation(event.url)) event.preventDefault()
   })
+  // An allowed navigation can still be carried elsewhere mid-flight by a 3xx
+  // redirect, and will-navigate does not re-fire for that hop.
+  win.webContents.on('will-redirect', (event, url) => {
+    if (!isAllowedNavigation(url)) event.preventDefault()
+  })
 
   // The renderer's paste path (Ctrl/Cmd+Shift+V, see shortcuts.ts) asks the
   // main process for the clipboard over IPC. The chord is recorded here, off
@@ -435,7 +440,7 @@ function createWindow(): BrowserWindow {
 function restrictPermissions(): void {
   const trust: TrustedPage = {
     bundledPage: pathToFileURL(join(__dirname, '../renderer/index.html')).href,
-    devOrigin: originOf(process.env['ELECTRON_RENDERER_URL'])
+    devOrigin: devOriginFor(app.isPackaged, process.env['ELECTRON_RENDERER_URL'])
   }
   const decide = (
     contents: Electron.WebContents | null,

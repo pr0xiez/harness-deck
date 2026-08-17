@@ -1,5 +1,5 @@
 import { paneLabel } from '../paneLabel'
-import { isActionable, useDeck, type DeckWorkspace, type PaneView } from '../store'
+import { totalActionableCount, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
 import { getTerminal } from '../terminals'
@@ -228,10 +228,7 @@ export function newPaneCommands(state: Deck, workspace: DeckWorkspace): Command[
 
 /** Moving between panes: the waiting queue, and focus by name. */
 export function paneCommands(state: Deck, workspace: DeckWorkspace): Command[] {
-  const waiting = state.workspaces.reduce(
-    (total, ws) => total + ws.panes.filter((p) => isActionable(p)).length,
-    0
-  )
+  const waiting = totalActionableCount(state.workspaces)
   const list: Command[] = [
     {
       id: 'pane:next-waiting',

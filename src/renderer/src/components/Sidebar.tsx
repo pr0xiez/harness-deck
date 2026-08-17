@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { isActionable, isLive, useDeck, type DeckWorkspace } from '../store'
+import { actionableCount, liveCount, useDeck, type DeckWorkspace } from '../store'
 import { ACCENTS } from '../theme'
 import { Dropdown } from './ui'
 import { Icon } from './Icon'
@@ -43,7 +43,7 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
 
   // A pane you muted, snoozed or already looked at is not something this row
   // should still be asking you about.
-  const waiting = workspace.panes.filter((p) => isActionable(p)).length
+  const waiting = actionableCount(workspace.panes)
   const running = workspace.panes.filter((p) => p.status === 'running').length
   const exited = workspace.panes.filter((p) => p.status === 'exited').length
 
@@ -175,7 +175,7 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
                 className="menu-item danger"
                 onClick={async () => {
                   setMenuOpen(false)
-                  const live = workspace.panes.filter(isLive).length
+                  const live = liveCount(workspace.panes)
                   if (
                     live &&
                     !(await api.confirm({

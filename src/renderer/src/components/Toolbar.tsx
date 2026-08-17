@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { WorkspaceAction } from '@shared/types'
-import { isLive, onQuietPane, useDeck, type DeckWorkspace } from '../store'
+import { liveCount, onQuietPane, useDeck, type DeckWorkspace } from '../store'
 import { CompareView } from './CompareView'
 import { Icon } from './Icon'
 import { MicButton } from './MicButton'
@@ -41,7 +41,7 @@ export function Toolbar({ workspace }: Props): React.JSX.Element {
   const displayCwd =
     home && workspace.cwd.startsWith(home) ? `~${workspace.cwd.slice(home.length)}` : workspace.cwd
   // The chip says "live", and a pane that has gone quiet still has a process.
-  const running = workspace.panes.filter(isLive).length
+  const running = liveCount(workspace.panes)
   // One worktree has nothing to be compared against; the offer only makes sense
   // once two agents have been sent at the same task.
   const worktrees = workspace.panes.filter((pane) => pane.worktree).length

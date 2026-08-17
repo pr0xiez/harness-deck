@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { decidePermission, isTrustedPageUrl, originOf, type TrustedPage } from './permissions'
+import {
+  decidePermission,
+  devOriginFor,
+  isTrustedPageUrl,
+  originOf,
+  type TrustedPage
+} from './permissions'
 
 const BUNDLED = 'file:///opt/harness-deck/resources/app/out/renderer/index.html'
 
@@ -69,6 +75,22 @@ describe('decidePermission', () => {
     expect(decidePermission('media', 'https://example.com/', packaged)).toBe(false)
     expect(decidePermission('audioCapture', 'file:///tmp/dropped.html', packaged)).toBe(false)
     expect(decidePermission('notifications', undefined, packaged)).toBe(false)
+  })
+})
+
+describe('devOriginFor', () => {
+  it('trusts the dev-server origin only in a dev build', () => {
+    expect(devOriginFor(false, 'http://localhost:5173/')).toBe('http://localhost:5173')
+  })
+
+  it('ignores ELECTRON_RENDERER_URL entirely when packaged — the env is attacker-settable', () => {
+    expect(devOriginFor(true, 'http://localhost:5173/')).toBe(null)
+    expect(devOriginFor(true, 'https://evil.example/')).toBe(null)
+  })
+
+  it('returns null when the variable is unset or malformed', () => {
+    expect(devOriginFor(false, undefined)).toBe(null)
+    expect(devOriginFor(false, 'not a url')).toBe(null)
   })
 })
 

@@ -430,7 +430,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   installUpdate: async () => {
     const { update, updateInstalling, settings, workspaces } = get()
     if (!update?.available || updateInstalling) return
-    const running = workspaces.reduce((total, ws) => total + ws.panes.filter(isLive).length, 0)
+    const running = totalLiveCount(workspaces)
     if (running && settings.confirmCloseRunning) {
       const ok = await api.confirm({
         title: 'Install update',
@@ -936,6 +936,34 @@ export function isActionable(pane: PaneView, now: number = Date.now()): boolean 
     !pane.acknowledged &&
     !isSnoozed(pane, now)
   )
+}
+
+/** How many of one workspace's panes still have a process on the end of them. */
+export const liveCount = (panes: PaneView[]): number => panes.filter(isLive).length
+
+/**
+ * Live panes across the whole deck — the number the "still running" prompts
+ * quote before anything that would take every process down at once.
+ */
+export const totalLiveCount = (workspaces: DeckWorkspace[]): number =>
+  workspaces.reduce((total, ws) => total + liveCount(ws.panes), 0)
+
+/** How many of one workspace's panes are actionable: `isActionable`, counted. */
+export function actionableCount(panes: PaneView[], now: number = Date.now()): number {
+  return panes.filter((p) => isActionable(p, now)).length
+}
+
+/**
+ * Actionable panes across the whole deck. The dock badge, the title-bar Waiting
+ * button and the palette hint all read this one number, so they never disagree
+ * with each other — or with the per-workspace sidebar counts, which are the
+ * same rule summed one workspace at a time.
+ */
+export function totalActionableCount(
+  workspaces: DeckWorkspace[],
+  now: number = Date.now()
+): number {
+  return workspaces.reduce((total, ws) => total + actionableCount(ws.panes, now), 0)
 }
 
 export const activeWorkspace = (state: DeckState): DeckWorkspace | undefined =>

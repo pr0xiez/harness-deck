@@ -2,13 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PaneStatus, PersistedState, PtyQuietEvent } from '@shared/types'
 import { harness } from './test/harness'
 import {
+  actionableCount,
   activeWorkspace,
   DEFAULT_SETTINGS,
   isActionable,
   isLive,
+  liveCount,
   onQuietPane,
   serialize,
   startAttention,
+  totalActionableCount,
+  totalLiveCount,
   useDeck,
   type DeckWorkspace,
   type PaneView
@@ -1079,6 +1083,50 @@ describe('isActionable', () => {
     expect(isActionable(pane('a', 'waiting', { snooze: 'quiet' }), now)).toBe(false)
     expect(isActionable(pane('a', 'waiting', { snooze: now + 60_000 }), now)).toBe(false)
     expect(isActionable(pane('a', 'waiting', { snooze: now - 1 }), now)).toBe(true)
+  })
+})
+
+/** The shared reductions every running and waiting number on screen goes through. */
+describe('pane counts', () => {
+  it('counts live panes per workspace and across the deck', () => {
+    const one = workspace('one', [pane('a', 'running'), pane('b', 'waiting'), pane('c', 'exited')])
+    const two = workspace('two', [pane('d', 'idle'), pane('e', 'running')])
+
+    expect(liveCount(one.panes)).toBe(2)
+    expect(liveCount(two.panes)).toBe(1)
+    expect(totalLiveCount([one, two])).toBe(3)
+  })
+
+  it('counts only the waiting panes still speaking to the aggregates', () => {
+    const one = workspace('one', [
+      pane('a', 'waiting'),
+      pane('b', 'waiting', { attentionMuted: true }),
+      pane('c', 'running')
+    ])
+    const two = workspace('two', [
+      pane('d', 'waiting', { acknowledged: true }),
+      pane('e', 'waiting')
+    ])
+
+    expect(actionableCount(one.panes)).toBe(1)
+    expect(actionableCount(two.panes)).toBe(1)
+    expect(totalActionableCount([one, two])).toBe(2)
+  })
+
+  it('lets a lapsed snooze back into the count as of the moment asked about', () => {
+    const now = Date.now()
+    const one = workspace('one', [
+      pane('a', 'waiting', { snooze: now + 60_000 }),
+      pane('b', 'waiting', { snooze: now - 1 })
+    ])
+
+    expect(actionableCount(one.panes, now)).toBe(1)
+    expect(totalActionableCount([one], now)).toBe(1)
+  })
+
+  it('is zero on an empty deck', () => {
+    expect(totalLiveCount([])).toBe(0)
+    expect(totalActionableCount([])).toBe(0)
   })
 })
 

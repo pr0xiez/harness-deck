@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isActionable, isLive, useDeck } from '../store'
+import { totalActionableCount, totalLiveCount, useDeck } from '../store'
 import { Icon } from './Icon'
 
 const api = window.harness
@@ -16,12 +16,9 @@ export function TitleBar(): React.JSX.Element {
   const updateReady = update?.stage === 'available' ? update.available : null
   const active = workspaces.find((w) => w.id === activeId)
   // Waiting counts as running: the process is alive, it has just stopped talking.
-  const runningCount = workspaces.reduce((total, ws) => total + ws.panes.filter(isLive).length, 0)
+  const runningCount = totalLiveCount(workspaces)
   // Same rule as the dock badge and the sidebar counts, so the three never disagree.
-  const waitingCount = workspaces.reduce(
-    (total, ws) => total + ws.panes.filter((p) => isActionable(p)).length,
-    0
-  )
+  const waitingCount = totalActionableCount(workspaces)
 
   useEffect(() => {
     void api.window.isMaximized().then(setMaximized)

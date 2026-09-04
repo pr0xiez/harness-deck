@@ -2884,3 +2884,57 @@ button.count.waiting:hover {
   background: #3a4453;
   background-clip: content-box;
 }
+
+/* opencode pane dialog */
+
+.oc-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.oc-session {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-1);
+}
+
+.oc-session:hover {
+  border-color: var(--line-2);
+}
+
+.oc-session.on {
+  background: color-mix(in srgb, var(--ws-accent) 14%, var(--bg-2));
+  border-color: color-mix(in srgb, var(--ws-accent) 45%, transparent);
+}
+
+.oc-session-title {
+  font-size: 12px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oc-session-meta {
+  font-size: 11px;
+  color: var(--fg-2);
+}
+
+.oc-note {
+  font-size: 12px;
+  color: var(--fg-2);
+  padding: 6px 0;
+}
+
+.oc-note.bad {
+  color: color-mix(in srgb, var(--bad) 80%, var(--fg-1));
+}

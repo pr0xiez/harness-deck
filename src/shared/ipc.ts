@@ -26,6 +26,9 @@ export const IPC = {
   profilesSaveCustom: 'profiles:saveCustom',
   profilesRemoveCustom: 'profiles:removeCustom',
 
+  // opencode — the lists the pane dialog picks from
+  opencodeQuery: 'opencode:query',
+
   // git
   gitInfo: 'git:info',
   gitAddWorktree: 'git:addWorktree',

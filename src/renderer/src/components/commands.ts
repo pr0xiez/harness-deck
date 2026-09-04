@@ -1,5 +1,6 @@
 import { paneLabel } from '../paneLabel'
 import { isActionable, useDeck, type DeckWorkspace, type PaneView } from '../store'
+import { isOpencodeProfile } from '@shared/opencode'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
 import { getTerminal } from '../terminals'
@@ -220,7 +221,10 @@ export function newPaneCommands(state: Deck, workspace: DeckWorkspace): Command[
     hint: profile.kind === 'agent' ? 'agent' : profile.kind,
     run: () => {
       // The bare `custom` entry has no command line yet — it needs the dialog.
+      // OpenCode has one too, for its model, agent and session options.
       if (profile.id === 'custom') state.setUi({ profileMenu: true })
+      else if (isOpencodeProfile(profile.id))
+        state.setUi({ opencodeFor: { workspaceId: workspace.id, profileId: profile.id } })
       else state.addPane(workspace.id, profile)
     }
   }))

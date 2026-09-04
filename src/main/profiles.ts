@@ -118,7 +118,7 @@ async function exec(cmd: string, args: string[], timeout: number): Promise<Buffe
 }
 
 /** wsl.exe still speaks UTF-16LE for some subcommands. */
-function decodeWsl(buf: Buffer): string {
+export function decodeWsl(buf: Buffer): string {
   const nulls = buf.subarray(0, Math.min(buf.length, 64)).filter((b) => b === 0).length
   const text = nulls > 4 ? buf.toString('utf16le') : buf.toString('utf8')
   return text.replace(/\r/g, '').replace(/\u0000/g, '')

@@ -149,6 +149,30 @@ export interface Settings {
   broadcastSnippets: string[]
 }
 
+/** One resumable opencode session, as `opencode session list --format json` reports it. */
+export interface OpencodeSession {
+  id: string
+  /** What the session was about; the CLI may leave it blank. */
+  title: string
+  /** Epoch milliseconds of the last turn, when the CLI said. */
+  updated?: number
+  /** Folder the session ran in, when the CLI said. */
+  directory?: string
+}
+
+/**
+ * What the opencode pane dialog offers to pick from. Any list may come back
+ * empty — a CLI that would not answer still leaves every field usable as free
+ * text, which is all it ever was to opencode.
+ */
+export interface OpencodeInfo {
+  models: string[]
+  agents: string[]
+  sessions: OpencodeSession[]
+  /** Why the lists are empty, when the CLI could not be asked at all. */
+  error?: string
+}
+
 /** When a quiet pane counts as wanting attention, and how loudly it says so. */
 export interface AttentionSettings {
   /** Milliseconds of silence from a running process before it counts as waiting. */

@@ -7,6 +7,7 @@ import type {
   EnsureResult,
   ForgeCli,
   InstallResult,
+  OpencodeInfo,
   PaneSpec,
   PaneStatus,
   PersistedState,
@@ -56,6 +57,12 @@ const api = {
       ipcRenderer.invoke(IPC.profilesSaveCustom, profile),
     removeCustom: (id: string): Promise<Profile[]> =>
       ipcRenderer.invoke(IPC.profilesRemoveCustom, id)
+  },
+
+  /** The lists the opencode pane dialog picks from — models, agents, sessions. */
+  opencode: {
+    query: (profileId: string, cwd?: string): Promise<OpencodeInfo> =>
+      ipcRenderer.invoke(IPC.opencodeQuery, profileId, cwd)
   },
 
   git: {

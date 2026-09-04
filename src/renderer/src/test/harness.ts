@@ -49,6 +49,10 @@ export const harness = {
     removeCustom: vi.fn()
   },
 
+  opencode: {
+    query: vi.fn()
+  },
+
   git: {
     info: vi.fn(),
     addWorktree: vi.fn(),

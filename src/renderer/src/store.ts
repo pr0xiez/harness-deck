@@ -146,6 +146,8 @@ interface UiState {
   workspaceDialogFor: string | null
   /** Pane whose ship dialog is open — a worktree pane, always. See HD-18. */
   shipFor: string | null
+  /** The opencode pane dialog: the workspace it opens into, and the profile. */
+  opencodeFor: { workspaceId: string; profileId: string } | null
 }
 
 /** A background failure the user was never going to see in a console. */
@@ -335,7 +337,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     pendingInsert: null,
     waitingQueue: false,
     workspaceDialogFor: null,
-    shipFor: null
+    shipFor: null,
+    opencodeFor: null
   },
   update: null,
   updateDismissed: null,

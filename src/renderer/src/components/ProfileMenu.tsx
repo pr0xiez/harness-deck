@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { RemoteKind } from '@shared/remote'
 import type { Profile } from '@shared/types'
+import { isOpencodeProfile } from '@shared/opencode'
 import { worktreeBranch, worktreePath } from '@shared/worktree'
 import { useDeck } from '../store'
 import { Dropdown } from './ui'
@@ -31,6 +32,7 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
   const addPane = useDeck((s) => s.addPane)
   const refreshProfiles = useDeck((s) => s.refreshProfiles)
   const removeLauncher = useDeck((s) => s.removeLauncher)
+  const setUi = useDeck((s) => s.setUi)
   const [dialogFor, setDialogFor] = useState<'local' | RemoteKind | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -144,6 +146,21 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
                   }}
                 >
                   <Icon name="branch" size={11} />
+                </span>
+              ) : null}
+              {isOpencodeProfile(profile.id) ? (
+                // OpenCode's options are worth showing before the pane opens;
+                // a plain click on the row launches exactly as it always has.
+                <span
+                  className="icon-btn tiny menu-worktree"
+                  role="button"
+                  title={`Open ${profile.name} with options — model, agent, session, prompt`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setUi({ opencodeFor: { workspaceId, profileId: profile.id } })
+                  }}
+                >
+                  <Icon name="settings" size={11} />
                 </span>
               ) : null}
               {profile.id.startsWith('custom:') ? (

@@ -12,6 +12,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { WaitingQueue } from './components/WaitingQueue'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
+import { OpencodePaneDialog } from './components/OpencodePaneDialog'
 import { UpdateToast } from './components/UpdateToast'
 import { SaveErrorToast } from './components/SaveErrorToast'
 import { NoticeToast } from './components/NoticeToast'
@@ -30,6 +31,7 @@ export function App(): React.JSX.Element {
   const activeWorkspaceId = useDeck((s) => s.activeWorkspaceId)
   const mounted = useDeck((s) => s.mounted)
   const ui = useDeck((s) => s.ui)
+  const setUi = useDeck((s) => s.setUi)
   const updateChannel = useDeck((s) => s.settings.updateChannel)
   const addWorkspace = useDeck((s) => s.addWorkspace)
   const badgeEnabled = useDeck((s) => s.settings.attention.badge)
@@ -365,6 +367,13 @@ export function App(): React.JSX.Element {
       {ui.palette ? <CommandPalette /> : null}
       {ui.settings ? <SettingsDialog /> : null}
       {ui.help ? <HelpDialog /> : null}
+      {ui.opencodeFor ? (
+        <OpencodePaneDialog
+          workspaceId={ui.opencodeFor.workspaceId}
+          profileId={ui.opencodeFor.profileId}
+          onClose={() => setUi({ opencodeFor: null })}
+        />
+      ) : null}
     </div>
   )
 }

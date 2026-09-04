@@ -33,6 +33,7 @@ import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } fr
 import { PasteGate } from './paste-gate'
 import { resolveWithin } from './paths'
 import { decidePermission, originOf, type TrustedPage } from './permissions'
+import { queryOpencode } from './opencode'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -509,6 +510,10 @@ function registerIpc(): void {
     removeCustomProfile(id)
     return detectProfiles()
   })
+
+  ipcMain.handle(IPC.opencodeQuery, (_e, profileId: string, cwd?: string) =>
+    queryOpencode(profileId, cwd)
+  )
 
   ipcMain.handle(IPC.gitInfo, (_e, dir: string) => repoInfo(dir))
   ipcMain.handle(IPC.gitAddWorktree, (_e, req: WorktreeRequest) => addWorktree(req))

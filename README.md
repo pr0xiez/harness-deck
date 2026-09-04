@@ -24,6 +24,15 @@ Windows it also looks inside WSL and offers those as separate profiles, so
 agents installed in your Linux home are one click away. Anything it can't find
 is still listed with the command to install it.
 
+**OpenCode options** — OpenCode's row in the harness menu (and the palette's
+"New pane" entries) carries a small sliders control that opens a dialog before
+the pane spawns: pick a model and an agent, resume the last session or pick one
+from a list, type the prompt the TUI should open with, or let it auto-approve.
+The model, agent and session lists are asked of the `opencode` CLI itself, and
+are suggestions only — an unreachable CLI leaves every field as free text, and
+a plain click on the row launches OpenCode exactly as it always has. Whatever
+you launched is remembered and offered back next time.
+
 **Layouts** — An even grid (1–4 columns) or tabs, per workspace. Any pane can
 be zoomed to full size with `Ctrl+Shift+Z` and restored again; the process is
 resized properly, so TUIs reflow instead of corrupting.
@@ -228,6 +237,7 @@ src/
     index.ts       window, IPC, smoke-test flags
     pty.ts         PTY sessions: spawn, batched output, replay buffer, resize
     profiles.ts    harness detection (PATH scan + WSL probe)
+    opencode.ts    models/agents/sessions for the opencode pane dialog
     shell-env.ts   login-shell environment resolution
     store.ts       atomic JSON persistence
     updater.ts     watches the release channel, runs the installer
@@ -241,6 +251,7 @@ src/
     voice.ts       microphone capture, level metering, transcript delivery
     components/    title bar, sidebar, toolbar, panes, palette, dialogs
   shared/        types shared across the process boundary
+    opencode.ts    launch options → opencode's own argv / WSL script
 scripts/
   release.mjs    cuts a release and publishes its manifest
   make-icons.mjs rasterises build/icon.svg into .icns/.ico/.png

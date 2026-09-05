@@ -124,7 +124,7 @@ export function App(): React.JSX.Element {
         const text = inTerminal
           ? (paneId ? getTerminal(paneId)?.term.getSelection() ?? '' : '')
           : selected || window.getSelection()?.toString() || ''
-        if (text) api.clipboard.write(text)
+        if (text) void api.clipboard.write(text)
       },
       'open-settings': ({ state, take }) => {
         take()
@@ -203,7 +203,7 @@ export function App(): React.JSX.Element {
       'copy-selection': ({ paneId, take }) => {
         take()
         const selection = paneId ? getTerminal(paneId)?.term.getSelection() : ''
-        if (selection) api.clipboard.write(selection)
+        if (selection) void api.clipboard.write(selection)
       },
       'paste': ({ workspace, paneId, take }) => {
         take()

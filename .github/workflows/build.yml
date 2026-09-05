@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: .node-version
 
       # A release is named from package.json, not from the tag, so a mismatch
       # would publish under the wrong version. Written in node to stay shell
@@ -68,15 +68,16 @@ jobs:
       # ship with no pty at all. Pull it in explicitly. Drop this step (and x64
       # from electron-builder.yml) if Intel Macs stop being worth supporting.
       #
-      # --os/--cpu only steer which optional dependencies get resolved; a
-      # package asked for by name is still checked against the real host, so
+      # A package asked for by name is still checked against the real host, so
       # this is EBADPLATFORM without --force, which is what downgrades that
-      # error to a warning. Both flavours end up in node_modules and asarUnpack
-      # ships both, which is why the arm64 dmg is a few MB heavier than it needs
-      # to be — node-pty picks the right one at runtime.
+      # error to a warning. Do not set --cpu here: npm 11 would re-resolve every
+      # optional dependency for x64 and remove the arm64 build tools. Both pty
+      # flavours end up in node_modules and asarUnpack ships both, which is why
+      # the arm64 dmg is a few MB heavier than it needs to be — node-pty picks
+      # the right one at runtime.
       - name: Add the Intel pty prebuild
         if: runner.os == 'macOS'
-        run: npm i --no-save --force --os=darwin --cpu=x64 @lydell/node-pty-darwin-x64@1.2.0-beta.12
+        run: npm i --no-save --force @lydell/node-pty-darwin-x64@$(node -p "require('./node_modules/@lydell/node-pty/package.json').version")
 
       - run: npm run build
 

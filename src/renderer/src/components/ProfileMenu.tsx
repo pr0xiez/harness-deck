@@ -32,6 +32,8 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
   const addPane = useDeck((s) => s.addPane)
   const refreshProfiles = useDeck((s) => s.refreshProfiles)
   const removeLauncher = useDeck((s) => s.removeLauncher)
+  const favoriteProfileIds = useDeck((s) => s.settings.favoriteProfileIds)
+  const updateSettings = useDeck((s) => s.updateSettings)
   const setUi = useDeck((s) => s.setUi)
   const [dialogFor, setDialogFor] = useState<'local' | RemoteKind | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -50,13 +52,25 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
     // menu, not a launcher anyone saved.
     const saved = profiles.filter((p) => p.id.startsWith('custom:'))
     const shells = profiles.filter((p) => p.kind === 'shell')
+    const favorites = favoriteProfileIds
+      .map((id) => profiles.find((profile) => profile.id === id))
+      .filter((profile): profile is Profile => Boolean(profile))
     return [
+      ...(favorites.length ? [{ label: 'Favorites', profiles: favorites }] : []),
       { label: 'Coding agents', profiles: native },
       ...(wsl.length ? [{ label: 'Inside WSL', profiles: wsl }] : []),
       ...(saved.length ? [{ label: 'Saved launchers', profiles: saved }] : []),
       { label: 'Shells', profiles: shells }
     ]
-  }, [profiles])
+  }, [favoriteProfileIds, profiles])
+
+  const toggleFavorite = (profileId: string): void => {
+    updateSettings({
+      favoriteProfileIds: favoriteProfileIds.includes(profileId)
+        ? favoriteProfileIds.filter((id) => id !== profileId)
+        : [...favoriteProfileIds, profileId]
+    })
+  }
 
   const add = (profile: Profile): void => {
     addPane(workspaceId, profile)
@@ -133,51 +147,65 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
                   {profile.available ? profile.detail : 'not installed — opens anyway'}
                 </span>
               </span>
-              {repo && profile.kind === 'agent' ? (
-                // A span, because the row is itself a button — same reason the
-                // forget control below is one.
+              <span className="menu-actions">
                 <span
-                  className={`icon-btn tiny menu-worktree ${busy === profile.id ? 'busy' : ''}`}
+                  className={`icon-btn tiny menu-favorite ${favoriteProfileIds.includes(profile.id) ? 'on' : ''}`}
                   role="button"
-                  title={`Open ${profile.name} in a worktree of its own, branched off ${repo.branch}`}
+                  aria-label={`${favoriteProfileIds.includes(profile.id) ? 'Remove' : 'Add'} ${profile.name} ${
+                    favoriteProfileIds.includes(profile.id) ? 'from' : 'to'
+                  } favorites`}
+                  title={`${favoriteProfileIds.includes(profile.id) ? 'Remove from' : 'Add to'} favorites`}
                   onClick={(event) => {
                     event.stopPropagation()
-                    void addInWorktree(profile)
+                    toggleFavorite(profile.id)
                   }}
                 >
-                  <Icon name="branch" size={11} />
+                  <Icon name="star" size={11} />
                 </span>
-              ) : null}
-              {isOpencodeProfile(profile.id) ? (
-                // OpenCode's options are worth showing before the pane opens;
-                // a plain click on the row launches exactly as it always has.
-                <span
-                  className="icon-btn tiny menu-worktree"
-                  role="button"
-                  title={`Open ${profile.name} with options — model, agent, session, prompt`}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    setUi({ opencodeFor: { workspaceId, profileId: profile.id } })
-                  }}
-                >
-                  <Icon name="settings" size={11} />
-                </span>
-              ) : null}
-              {profile.id.startsWith('custom:') ? (
-                // A span, because a launcher row is itself a button — and
-                // forgetting the launcher leaves any pane opened from it alone.
-                <span
-                  className="icon-btn tiny danger menu-forget"
-                  role="button"
-                  title={`Forget ${profile.name}`}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void removeLauncher(profile.id)
-                  }}
-                >
-                  <Icon name="trash" size={11} />
-                </span>
-              ) : null}
+                {repo && profile.kind === 'agent' ? (
+                  // Spans, because the row is itself a button.
+                  <span
+                    className={`icon-btn tiny menu-worktree ${busy === profile.id ? 'busy' : ''}`}
+                    role="button"
+                    title={`Open ${profile.name} in a worktree of its own, branched off ${repo.branch}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void addInWorktree(profile)
+                    }}
+                  >
+                    <Icon name="branch" size={11} />
+                  </span>
+                ) : null}
+                {isOpencodeProfile(profile.id) ? (
+                  // OpenCode's options are worth showing before the pane opens;
+                  // a plain click on the row launches exactly as it always has.
+                  <span
+                    className="icon-btn tiny menu-worktree"
+                    role="button"
+                    title={`Open ${profile.name} with options — model, agent, session, prompt`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setUi({ opencodeFor: { workspaceId, profileId: profile.id } })
+                    }}
+                  >
+                    <Icon name="settings" size={11} />
+                  </span>
+                ) : null}
+                {profile.id.startsWith('custom:') ? (
+                  // Forgetting the launcher leaves any pane opened from it alone.
+                  <span
+                    className="icon-btn tiny danger menu-forget"
+                    role="button"
+                    title={`Forget ${profile.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void removeLauncher(profile.id)
+                    }}
+                  >
+                    <Icon name="trash" size={11} />
+                  </span>
+                ) : null}
+              </span>
             </button>
           ))}
         </div>

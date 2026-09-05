@@ -500,8 +500,9 @@ async function transcribeAndDeliver(recording: Recording, recorded: Blob): Promi
 }
 
 function copyInstead(text: string, why: string): void {
-  api.clipboard.write(text)
-  fail(`${why} — the transcript is on the clipboard.`)
+  void api.clipboard.write(text).then((copied) =>
+    fail(copied ? `${why} — the transcript is on the clipboard.` : `${why} — copying the transcript failed.`)
+  )
 }
 
 function deliver(target: VoiceTarget, raw: string): void {

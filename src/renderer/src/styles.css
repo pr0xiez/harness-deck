@@ -1642,26 +1642,36 @@ button.count.waiting:hover {
 
 .menu-forget {
   flex: 0 0 auto;
-  margin-left: auto;
 }
 
 .menu-worktree {
   flex: 0 0 auto;
+}
+
+.menu-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
   margin-left: auto;
 }
 
-.menu-item:hover .menu-worktree {
+.menu-item:hover .menu-worktree,
+.menu-item:hover .menu-favorite {
   color: var(--fg);
   background: var(--bg-3);
 }
 
-.menu-worktree.busy {
-  opacity: 0.5;
+.menu-favorite.on {
+  color: color-mix(in srgb, var(--warn) 82%, #fff);
 }
 
-/* The forget control keeps the right-hand edge when both are on a row. */
-.menu-worktree + .menu-forget {
-  margin-left: 2px;
+.menu-favorite.on .icon {
+  fill: currentColor;
+}
+
+.menu-worktree.busy {
+  opacity: 0.5;
 }
 
 .menu-note {

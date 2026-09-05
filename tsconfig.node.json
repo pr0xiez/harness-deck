@@ -19,7 +19,6 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "baseUrl": ".",
-    "paths": { "@shared/*": ["src/shared/*"] }
+    "paths": { "@shared/*": ["./src/shared/*"] }
   }
 }

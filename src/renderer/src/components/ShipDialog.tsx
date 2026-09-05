@@ -187,9 +187,8 @@ export function ShipDialog({ workspaceId, pane, diff, onClose }: Props): React.J
   const cmdHazard = messageHazard || branchHazard
   const canRun = Boolean(chain) && !needsMessage && !cmdHazard && !busy
 
-  const copy = (): void => {
-    api.clipboard.write(chain)
-    setCopied(true)
+  const copy = async (): Promise<void> => {
+    if (await api.clipboard.write(chain)) setCopied(true)
   }
 
   const run = async (): Promise<void> => {

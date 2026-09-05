@@ -33,9 +33,12 @@ export default defineConfig({
     },
     projects: [
       {
+        extends: false,
         resolve: { alias: { '@shared': shared } },
         test: {
           name: 'node',
+          // Preserve Vitest 4's default for tests that do not share the renderer bridge.
+          clearMocks: false,
           // The main process and the code it shares run in plain Node, so
           // nothing either of them reaches may import `electron` — there is no
           // Electron runtime here to satisfy it.
@@ -44,6 +47,7 @@ export default defineConfig({
         }
       },
       {
+        extends: false,
         resolve: { alias: { '@shared': shared, '@': resolve(__dirname, 'src/renderer/src') } },
         // esbuild reads the `jsx` setting from the nearest tsconfig, and the one
         // beside this file only holds project references — so say it outright.

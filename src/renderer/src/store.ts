@@ -39,7 +39,6 @@ export const DEFAULT_VOICE: VoiceSettings = {
 
 export const DEFAULT_ATTENTION: AttentionSettings = {
   quietMs: 2500,
-  notify: true,
   badge: true
 }
 
@@ -61,7 +60,6 @@ export const DEFAULT_SETTINGS: Settings = {
   confirmCloseRunning: true,
   autoStartPanes: true,
   defaultCwd: '',
-  bellNotifications: true,
   sidebarCollapsed: false,
   voice: DEFAULT_VOICE,
   attention: DEFAULT_ATTENTION,
@@ -69,7 +67,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // Nothing reaches the network until this is changed by hand.
   updateChannel: 'local',
   broadcastHistory: [],
-  broadcastSnippets: []
+  broadcastSnippets: [],
+  favoriteProfileIds: []
 }
 
 /** How far back ↑ reaches in the broadcast box before prompts are forgotten. */
@@ -356,13 +355,25 @@ export const useDeck = create<DeckState>((set, get) => ({
     ])
 
     const defaultCwd = saved?.settings?.defaultCwd || info.defaultCwd
+    // Drop native-notification preferences written by older versions instead
+    // of carrying dead settings forward forever.
+    const legacySettings = (saved?.settings ?? {}) as Partial<Settings> & {
+      bellNotifications?: boolean
+      attention?: Partial<AttentionSettings> & { notify?: boolean }
+    }
+    const {
+      bellNotifications: _legacyBellNotifications,
+      attention: legacyAttention,
+      ...savedSettings
+    } = legacySettings
+    const { notify: _legacyNotify, ...savedAttention } = legacyAttention ?? {}
     const settings: Settings = {
       ...DEFAULT_SETTINGS,
-      ...saved?.settings,
+      ...savedSettings,
       defaultCwd,
       // Nested, so a state file written before a field existed still gets it.
       voice: { ...DEFAULT_VOICE, ...saved?.settings?.voice },
-      attention: { ...DEFAULT_ATTENTION, ...saved?.settings?.attention },
+      attention: { ...DEFAULT_ATTENTION, ...savedAttention },
       remote: { ...DEFAULT_REMOTE, ...saved?.settings?.remote }
     }
 
@@ -424,7 +435,17 @@ export const useDeck = create<DeckState>((set, get) => ({
   // Both hand back the whole merged list, detected launchers included.
   saveLauncher: async (profile) => set({ profiles: await api.profiles.saveCustom(profile) }),
 
-  removeLauncher: async (id) => set({ profiles: await api.profiles.removeCustom(id) }),
+  removeLauncher: async (id) => {
+    const profiles = await api.profiles.removeCustom(id)
+    const settings = get().settings
+    set({
+      profiles,
+      settings: {
+        ...settings,
+        favoriteProfileIds: settings.favoriteProfileIds.filter((profileId) => profileId !== id)
+      }
+    })
+  },
 
   setUpdate: (update) => set({ update }),
 
@@ -1034,21 +1055,19 @@ export function onQuietPane(handler: (event: QuietPaneEvent) => void): () => voi
  *
  * Output *stopping* is the signal worth having: the agent has hit a prompt, an
  * approval gate, or finished. The main process owns the clock; all that is left
- * here is turning it into a status the UI can route on — and, for a window
- * nobody is looking at, one notification per pane per stop.
+ * here is turning it into a status the UI can route on.
  */
 export function startAttention(): () => void {
   return api.pty.onQuiet(({ id, quiet }) => {
     const state = useDeck.getState()
     const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === id)
     // An exit is the newer truth — a dead pane is not waiting for you — and
-    // the guard doubles as the once-per-transition rule for the notification.
+    // repeated events must not re-date an existing stop.
     if (!pane || pane.status !== (quiet ? 'running' : 'waiting')) return
 
     // Read before the transition lifts it: "until next quiet" ends *at* this
     // quiet, which is exactly the moment the pane becomes news again. An
     // hour-long one that has not yet run out still holds.
-    const stillSnoozed = quiet && pane.snooze !== 'quiet' && isSnoozed(pane)
     if (quiet) {
       state.updatePane(id, {
         status: 'waiting',
@@ -1062,16 +1081,6 @@ export function startAttention(): () => void {
       })
     } else {
       state.setPaneStatus(id, 'running')
-    }
-
-    if (quiet && state.settings.attention.notify && !document.hasFocus()) {
-      // Muted and snoozed panes reach no aggregate, and a notification is the
-      // loudest aggregate there is.
-      if (!pane.attentionMuted && !stillSnoozed) {
-        new Notification('Harness Deck', {
-          body: `${pane.name || pane.processTitle || pane.command} is waiting for you`
-        })
-      }
     }
 
     for (const handler of [...quietSubscribers]) handler({ id, quiet, pane })

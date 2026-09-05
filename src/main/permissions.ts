@@ -14,16 +14,15 @@
  */
 
 /**
- * Dictation needs the microphone and the pane bell needs notifications;
- * nothing else has a reason to ask. Clipboard writes are deliberately absent:
+ * Dictation needs the microphone; nothing else has a reason to ask. Clipboard
+ * writes are deliberately absent:
  * the app's own code writes through the harness.clipboard IPC bridge, never
  * `navigator.clipboard`, so a Web-API clipboard grant would serve only
  * whatever untrusted content ends up in the session.
  */
 export const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set([
   'media',
-  'audioCapture',
-  'notifications'
+  'audioCapture'
 ])
 
 /** Where the app's own page legitimately lives. */

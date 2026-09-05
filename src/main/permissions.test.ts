@@ -49,8 +49,8 @@ describe('isTrustedPageUrl', () => {
 })
 
 describe('decidePermission', () => {
-  it('grants microphone and notifications to the app page', () => {
-    for (const permission of ['media', 'audioCapture', 'notifications']) {
+  it('grants microphone access to the app page', () => {
+    for (const permission of ['media', 'audioCapture']) {
       expect(decidePermission(permission, BUNDLED, packaged)).toBe(true)
     }
   })
@@ -60,7 +60,7 @@ describe('decidePermission', () => {
   })
 
   it('denies unlisted permissions to everyone', () => {
-    for (const permission of ['geolocation', 'camera', 'midi', 'pointerLock']) {
+    for (const permission of ['geolocation', 'camera', 'midi', 'pointerLock', 'notifications']) {
       expect(decidePermission(permission, BUNDLED, packaged)).toBe(false)
     }
   })
@@ -68,7 +68,6 @@ describe('decidePermission', () => {
   it('denies allow-listed permissions to pages that are not the app', () => {
     expect(decidePermission('media', 'https://example.com/', packaged)).toBe(false)
     expect(decidePermission('audioCapture', 'file:///tmp/dropped.html', packaged)).toBe(false)
-    expect(decidePermission('notifications', undefined, packaged)).toBe(false)
   })
 })
 

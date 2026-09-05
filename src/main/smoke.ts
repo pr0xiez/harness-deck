@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
@@ -165,6 +166,7 @@ function seedRepo(root: string): void {
   git('symbolic-ref', 'HEAD', 'refs/heads/main')
   git('config', 'user.email', 'smoke@harness.deck')
   git('config', 'user.name', 'Harness Deck Smoke')
+  git('config', 'core.autocrlf', 'false')
   git('config', 'commit.gpgsign', 'false')
   writeFileSync(join(root, 'shared.txt'), 'base\n')
   git('add', '-A')
@@ -659,7 +661,7 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
       return (await repoInfo(base)) === null ? null : 'a folder that is not a repo reported one'
     } finally {
       // A failed assertion above must not leave a repo in the temp directory.
-      rmSync(base, { recursive: true, force: true })
+      await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 
@@ -700,7 +702,7 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
       return diff.patchLines > 4000 ? null : `it reported only ${diff.patchLines} lines in full`
     } finally {
       // A failed assertion above must not leave a repo in the temp directory.
-      rmSync(base, { recursive: true, force: true })
+      await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 

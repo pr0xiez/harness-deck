@@ -30,6 +30,7 @@ export type IconName =
   | 'branch'
   | 'lock'
   | 'bell'
+  | 'star'
 
 const PATHS: Record<IconName, React.JSX.Element> = {
   search: (
@@ -149,7 +150,8 @@ const PATHS: Record<IconName, React.JSX.Element> = {
       <path d="M3 11.2h10c-.9-.9-1.5-2.1-1.5-4.4A3.5 3.5 0 0 0 8 3.2a3.5 3.5 0 0 0-3.5 3.6c0 2.3-.6 3.5-1.5 4.4z" />
       <path d="M6.7 13.2a1.4 1.4 0 0 0 2.6 0" />
     </>
-  )
+  ),
+  star: <path d="m8 2 1.8 3.7 4.1.6-3 2.9.7 4.1L8 11.4l-3.6 1.9.7-4.1-3-2.9 4.1-.6z" />
 }
 
 interface Props {

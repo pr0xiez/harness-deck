@@ -47,7 +47,7 @@ const LOCK_HINT = 'Read-only: typing, paste, broadcast and dictation are refused
  * what this pane is doing is never something the app should misreport. Muting is
  * about the counts that speak for every pane at once.
  */
-const MUTE_HINT = 'Never count this pane as waiting — no badge, sidebar count, notification or queue'
+const MUTE_HINT = 'Never count this pane as waiting — no badge, sidebar count or queue'
 
 export function TerminalPane({
   pane,
@@ -174,21 +174,14 @@ export function TerminalPane({
       }),
       term.onTitleChange((next) => updatePane(paneId, { processTitle: next.trim() || undefined })),
       term.onBell(() => {
-        const state = useDeck.getState()
         // Not a plain `bell: true`: a pane ringing is a raised hand, and the
         // store is where a raised hand outranks a snooze someone put on it.
-        state.ringBell(paneId)
-        if (state.settings.bellNotifications && !document.hasFocus()) {
-          const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === paneId)
-          new Notification('Harness Deck', {
-            body: `${pane?.name || pane?.processTitle || pane?.command} wants your attention`
-          })
-        }
+        useDeck.getState().ringBell(paneId)
       }),
       term.onSelectionChange(() => {
         if (!useDeck.getState().settings.copyOnSelect) return
         const selection = term.getSelection()
-        if (selection) api.clipboard.write(selection)
+        if (selection) void api.clipboard.write(selection)
       })
     ]
 
@@ -340,8 +333,8 @@ export function TerminalPane({
   // The header button copies the readable form; the palette has the raw stream
   // and the save dialog for the cases where that is the wrong answer.
   const copyTranscript = useCallback(async (): Promise<void> => {
-    api.clipboard.write(await api.pty.transcript(paneId, true))
-    setCopied(true)
+    const copied = await api.clipboard.write(await api.pty.transcript(paneId, true))
+    if (copied) setCopied(true)
   }, [paneId])
 
   // The tick is the only acknowledgement — a clipboard write is otherwise

@@ -279,8 +279,9 @@ export function activePaneCommands(
     activePane,
     state.profiles.find((p) => p.id === activePane.profileId)
   )
-  const copyTranscript = async (strip: boolean): Promise<void> =>
-    api.clipboard.write(await api.pty.transcript(activePane.id, strip))
+  const copyTranscript = async (strip: boolean): Promise<void> => {
+    await api.clipboard.write(await api.pty.transcript(activePane.id, strip))
+  }
   const saveTranscript = async (strip: boolean): Promise<void> => {
     await api.saveText({
       defaultName: transcriptName(workspace.name, activeLabel, new Date()),
@@ -320,7 +321,7 @@ export function activePaneCommands(
         : 'Never count this pane as waiting',
       hint: activePane.attentionMuted
         ? 'muted'
-        : 'no badge, sidebar count, notification or queue',
+        : 'no badge, sidebar count or queue',
       run: () => state.updatePane(activePane.id, { attentionMuted: !activePane.attentionMuted })
     },
     {

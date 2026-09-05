@@ -16,6 +16,13 @@ import type { SaveStateResult } from '@shared/types'
  */
 
 type HarnessApi = Window['harness']
+type DeepMock<T> = {
+  [K in keyof T]: T[K] extends (...args: infer Args) => infer Result
+    ? Mock<(...args: Args) => Result>
+    : T[K] extends object
+      ? DeepMock<T[K]>
+      : T[K]
+}
 
 /**
  * Subscriptions hand back their own unsubscribe, and callers return it straight
@@ -31,7 +38,7 @@ type Subscribe = Mock<(handler: unknown) => () => void>
 
 const subscribe = (): Subscribe => vi.fn((_handler: unknown) => vi.fn())
 
-export const harness = {
+export const harness: DeepMock<HarnessApi> = {
   info: vi.fn(),
 
   loadState: vi.fn(),
@@ -135,6 +142,6 @@ export const harness = {
   openExternal: vi.fn(),
   openPath: vi.fn(),
   capture: vi.fn()
-} satisfies HarnessApi
+}
 
 window.harness = harness

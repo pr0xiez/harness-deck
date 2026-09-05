@@ -53,6 +53,7 @@ beforeEach(() => {
   git(['symbolic-ref', 'HEAD', 'refs/heads/main'], root)
   git(['config', 'user.email', 'test@harness.deck'], root)
   git(['config', 'user.name', 'Harness Deck Test'], root)
+  git(['config', 'core.autocrlf', 'false'], root)
   // A developer machine with commit signing on would otherwise ask for a key.
   git(['config', 'commit.gpgsign', 'false'], root)
 

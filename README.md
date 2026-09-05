@@ -54,9 +54,8 @@ pane says what Claude is doing, not just "claude").
 **Attention routing** — A running pane that stops producing output has hit a
 prompt, an approval gate, or finished, so it turns amber and the workspace it
 lives in shows a waiting count. `Ctrl+Shift+J` jumps to the next one, an amber
-**Waiting** button appears in the title bar, the dock badge counts them, and a
-background window notifies once as each goes quiet. How long the silence has to
-last, and whether it notifies or badges at all, are in Settings.
+**Waiting** button appears in the title bar, and the dock badge counts them. How
+long the silence has to last, and whether it badges at all, are in Settings.
 
 **The waiting queue** — `Ctrl+Shift+U`, the title bar's **Waiting** button, or
 the amber count on a sidebar workspace lists every waiting pane across every
@@ -76,8 +75,8 @@ app offers it in a toast; one click restarts into the new version. See
 
 ## Requirements
 
-- Node.js 20+ and npm (for development)
-- Windows, macOS or Linux
+- Node.js 24.15+ within Node 24 and npm (for development)
+- Windows, macOS 13+ or Linux
 - At least one agent CLI on your `PATH` — or WSL with one installed
 
 ## Getting started

@@ -156,7 +156,7 @@ export async function info(dir: string): Promise<RepoInfo | null> {
   if (!isDir(dir)) return null
 
   const top = await run(['rev-parse', '--show-toplevel'], dir)
-  const root = top.stdout.trim()
+  const root = resolve(top.stdout.trim())
   if (!top.ok || !root) return null
 
   const [branch, status, common] = await Promise.all([

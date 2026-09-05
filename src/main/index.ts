@@ -630,7 +630,15 @@ function registerIpc(): void {
   // channel that answered unconditionally was a side door around it. An
   // unprompted caller gets an empty string, not what the user last copied.
   ipcMain.handle(IPC.clipboardRead, () => (pasteGate.allows() ? clipboard.readText() : ''))
-  ipcMain.on(IPC.clipboardWrite, (_e, text: string) => clipboard.writeText(text))
+  ipcMain.handle(IPC.clipboardWrite, async (_e, text: string) => {
+    try {
+      await clipboard.writeText(text)
+      return true
+    } catch (err) {
+      console.error('clipboard write failed', err)
+      return false
+    }
+  })
 
   ipcMain.on(IPC.windowMinimize, () => mainWindow?.minimize())
   ipcMain.on(IPC.windowToggleMaximize, () => {

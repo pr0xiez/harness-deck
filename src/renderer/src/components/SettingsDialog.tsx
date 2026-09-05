@@ -125,12 +125,6 @@ export function SettingsDialog(): React.JSX.Element {
             checked={settings.confirmCloseRunning}
             onChange={(confirmCloseRunning) => updateSettings({ confirmCloseRunning })}
           />
-          <Toggle
-            label="Notify on terminal bell"
-            hint="Agents ring the bell when they need you."
-            checked={settings.bellNotifications}
-            onChange={(bellNotifications) => updateSettings({ bellNotifications })}
-          />
         </section>
 
         <section>
@@ -150,12 +144,6 @@ export function SettingsDialog(): React.JSX.Element {
               }
             />
           </Field>
-          <Toggle
-            label="Notify when a pane starts waiting"
-            hint="Once per pane, and only while the window is in the background."
-            checked={settings.attention.notify}
-            onChange={(notify) => updateAttention({ notify })}
-          />
           <Toggle
             label="Count waiting panes on the app icon"
             hint="A dock badge on macOS and Linux; a flashing taskbar button on Windows."

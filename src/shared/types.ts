@@ -60,7 +60,7 @@ export interface Pane extends PaneSpec {
   /** Set when the pane's cwd is a worktree this app created for it. */
   worktree?: string
   /**
-   * Never reaches an attention aggregate — badge, queue, notification, jump.
+   * Never reaches an attention aggregate — badge, queue or jump.
    * The pane's own header dot stays: local truth survives the mute. See HD-15.
    */
   attentionMuted?: boolean
@@ -136,7 +136,6 @@ export interface Settings {
   /** Start every pane of a workspace as soon as it is first opened. */
   autoStartPanes: boolean
   defaultCwd: string
-  bellNotifications: boolean
   sidebarCollapsed: boolean
   voice: VoiceSettings
   attention: AttentionSettings
@@ -147,6 +146,8 @@ export interface Settings {
   broadcastHistory: string[]
   /** Prompts the user keeps around to send again. */
   broadcastSnippets: string[]
+  /** Profile ids shown again at the top of the new-pane menu. */
+  favoriteProfileIds: string[]
 }
 
 /** One resumable opencode session, as `opencode session list --format json` reports it. */
@@ -177,8 +178,7 @@ export interface OpencodeInfo {
 export interface AttentionSettings {
   /** Milliseconds of silence from a running process before it counts as waiting. */
   quietMs: number
-  notify: boolean
-  /** Bounce the dock / flash the taskbar as well as notifying. */
+  /** Count waiting panes on the dock icon or flash the taskbar. */
   badge: boolean
 }
 

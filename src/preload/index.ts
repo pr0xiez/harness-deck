@@ -155,7 +155,7 @@ const api = {
   clipboard: {
     /** Empty unless invoked within a moment of the paste chord (paste-gate.ts). */
     read: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardRead),
-    write: (text: string): void => ipcRenderer.send(IPC.clipboardWrite, text)
+    write: (text: string): Promise<boolean> => ipcRenderer.invoke(IPC.clipboardWrite, text)
   },
 
   voice: {

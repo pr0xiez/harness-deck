@@ -49,8 +49,8 @@ export function App(): React.JSX.Element {
 
   // Route pty output into the matching terminal and track background activity.
   useEffect(() => {
-    const offData = api.pty.onData(({ id, data }) => {
-      getTerminal(id)?.write(data)
+    const offData = api.pty.onData(({ id, data, flowId, offset }) => {
+      getTerminal(id)?.write(data, () => api.pty.acknowledge(id, flowId, offset))
       const state = useDeck.getState()
       const workspace = state.workspaces.find((w) => w.panes.some((p) => p.id === id))
       if (!workspace) return

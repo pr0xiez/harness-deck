@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { IPty } from '@lydell/node-pty'
 import { homedir } from 'node:os'
 import type { PaneSpec } from '@shared/types'
-import { PtyManager, stripAnsi, type Spawn } from './pty'
+import { OUTPUT_HIGH_WATER, OUTPUT_LOW_WATER, PtyManager, stripAnsi, type Spawn } from './pty'
 import { ScrollbackStore, SCROLLBACK_LIMIT } from './scrollback'
 
 /** Matches FLUSH_MS in pty.ts — output is coalesced into one message per tick. */
@@ -30,6 +30,8 @@ class FakePty {
   rows = 24
   process = 'fake'
   killed = false
+  pause = vi.fn()
+  resume = vi.fn()
   written: string[] = []
   resized: Array<[number, number]> = []
 
@@ -194,7 +196,7 @@ describe('output', () => {
 
     const messages = sent.filter((m) => m.channel === 'pty:data')
     expect(messages).toHaveLength(1)
-    expect(messages[0].payload).toEqual({ id: 'a', data: 'one two three' })
+    expect(messages[0].payload).toEqual({ id: 'a', data: 'one two three', flowId: 1, offset: 13 })
   })
 
   it('caps the replay buffer but keeps the newest output', () => {
@@ -207,6 +209,122 @@ describe('output', () => {
     const { replay } = mgr.ensure(spec('a'), 100, 40)
     expect(replay.length).toBeLessThanOrEqual(REPLAY_LIMIT)
     expect(replay.endsWith('LATEST')).toBe(true)
+  })
+})
+
+describe('output backpressure', () => {
+  function flowing() {
+    const h = harness()
+    h.mgr.ensure(spec('a'), 80, 24)
+    return h
+  }
+
+  it('pauses before IPC flush and resumes only after parsing below the low watermark', () => {
+    const { mgr, spawned, sent } = flowing()
+    const proc = spawned[0]
+    proc.emit('x'.repeat(OUTPUT_HIGH_WATER))
+    expect(proc.pause).toHaveBeenCalledTimes(1)
+    expect(proc.resume).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(FLUSH_MS)
+    const { flowId, offset } = sent.find((e) => e.channel === 'pty:data')!.payload
+    expect(offset).toBe(OUTPUT_HIGH_WATER)
+    mgr.acknowledge('a', Number(flowId), OUTPUT_HIGH_WATER - OUTPUT_LOW_WATER - 1)
+    expect(proc.resume).not.toHaveBeenCalled()
+    mgr.acknowledge('a', Number(flowId), OUTPUT_HIGH_WATER - OUTPUT_LOW_WATER)
+    expect(proc.resume).toHaveBeenCalledTimes(1)
+    proc.emit('y'.repeat(OUTPUT_HIGH_WATER))
+    expect(proc.pause).toHaveBeenCalledTimes(2)
+  })
+
+  it('counts UTF-8 bytes, including output already sent but not parsed', () => {
+    const { mgr, spawned, sent } = flowing()
+    spawned[0].emit('é'.repeat(OUTPUT_HIGH_WATER / 4))
+    vi.advanceTimersByTime(FLUSH_MS)
+    spawned[0].emit('é'.repeat(OUTPUT_HIGH_WATER / 4))
+    expect(spawned[0].pause).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(FLUSH_MS)
+    const last = sent.filter((e) => e.channel === 'pty:data').at(-1)!.payload
+    expect(last.offset).toBe(OUTPUT_HIGH_WATER)
+    mgr.acknowledge('a', Number(last.flowId), Number(last.offset))
+    expect(spawned[0].resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores invalid, duplicated, and stale acknowledgements', () => {
+    const { mgr, spawned } = flowing()
+    spawned[0].emit('x'.repeat(OUTPUT_HIGH_WATER))
+    vi.advanceTimersByTime(FLUSH_MS)
+    for (const offset of [NaN, Infinity, -1, 1.5, OUTPUT_HIGH_WATER + 1]) mgr.acknowledge('a', 1, offset)
+    mgr.acknowledge('a', 999, OUTPUT_HIGH_WATER)
+    mgr.acknowledge('missing', 1, OUTPUT_HIGH_WATER)
+    expect(spawned[0].resume).not.toHaveBeenCalled()
+    mgr.acknowledge('a', 1, OUTPUT_HIGH_WATER)
+    spawned[0].emit('x'.repeat(OUTPUT_HIGH_WATER))
+    vi.advanceTimersByTime(FLUSH_MS)
+    mgr.acknowledge('a', 1, OUTPUT_HIGH_WATER)
+    expect(spawned[0].resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('resumes on detach and keeps only replay while the window is absent', () => {
+    const { mgr, spawned, sent } = flowing()
+    spawned[0].emit('x'.repeat(OUTPUT_HIGH_WATER))
+    mgr.detachAll()
+    expect(spawned[0].resume).toHaveBeenCalledTimes(1)
+    for (let n = 0; n < 8; n++) spawned[0].emit('y'.repeat(OUTPUT_HIGH_WATER))
+    vi.advanceTimersByTime(FLUSH_MS)
+    expect(sent.filter((e) => e.channel === 'pty:data')).toHaveLength(0)
+    expect(mgr.transcript('a').length).toBeLessThanOrEqual(REPLAY_LIMIT)
+    mgr.ensure(spec('a'), 80, 24)
+    spawned[0].emit('z'.repeat(OUTPUT_HIGH_WATER))
+    vi.advanceTimersByTime(FLUSH_MS)
+    mgr.acknowledge('a', 1, OUTPUT_HIGH_WATER)
+    expect(spawned[0].resume).toHaveBeenCalledTimes(1)
+    mgr.acknowledge('a', 2, OUTPUT_HIGH_WATER)
+    expect(spawned[0].resume).toHaveBeenCalledTimes(2)
+  })
+
+  it('reattaches with pending output in replay only, and a fresh acknowledgement generation', () => {
+    const { mgr, spawned, sent } = flowing()
+    spawned[0].emit('pending')
+    expect(mgr.ensure(spec('a'), 80, 24).replay).toBe('pending')
+    vi.advanceTimersByTime(FLUSH_MS)
+    expect(sent.filter((e) => e.channel === 'pty:data')).toHaveLength(0)
+    spawned[0].emit('x'.repeat(OUTPUT_HIGH_WATER))
+    vi.advanceTimersByTime(FLUSH_MS)
+    mgr.acknowledge('a', 1, OUTPUT_HIGH_WATER)
+    expect(spawned[0].resume).not.toHaveBeenCalled()
+    mgr.acknowledge('a', 2, OUTPUT_HIGH_WATER)
+    expect(spawned[0].resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not apply callbacks from a killed session to its replacement', () => {
+    const { mgr, spawned } = flowing()
+    spawned[0].emit('x'.repeat(OUTPUT_HIGH_WATER))
+    vi.advanceTimersByTime(FLUSH_MS)
+    mgr.dispose('a')
+    mgr.ensure(spec('a'), 80, 24)
+    spawned[1].emit('x'.repeat(OUTPUT_HIGH_WATER))
+    vi.advanceTimersByTime(FLUSH_MS)
+    mgr.acknowledge('a', 1, OUTPUT_HIGH_WATER)
+    expect(spawned[1].resume).not.toHaveBeenCalled()
+    mgr.acknowledge('a', 2, OUTPUT_HIGH_WATER)
+    expect(spawned[1].resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not announce a throttled producer as waiting for user input', () => {
+    const { mgr, spawned, quietFor } = flowing()
+    spawned[0].emit('x'.repeat(OUTPUT_HIGH_WATER))
+    vi.advanceTimersByTime(QUIET_MS * 2)
+    expect(quietFor('a')).toEqual([])
+    mgr.acknowledge('a', 1, OUTPUT_HIGH_WATER)
+    vi.advanceTimersByTime(QUIET_MS)
+    expect(quietFor('a')).toEqual([true])
+  })
+
+  it('caps replay even when one callback exceeds the limit', () => {
+    const { mgr, spawned } = flowing()
+    spawned[0].emit('x'.repeat(REPLAY_LIMIT * 2) + 'end')
+    expect(mgr.transcript('a').length).toBe(REPLAY_LIMIT)
+    expect(mgr.transcript('a').endsWith('end')).toBe(true)
   })
 })
 

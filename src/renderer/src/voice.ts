@@ -311,7 +311,7 @@ async function beginRecording(): Promise<void> {
 
   useVoice.setState({ status: 'starting', message: null, failed: false, action: null, target })
 
-  const keyState = await api.voice.keyState(voice.provider)
+  const keyState = await api.voice.keyState(voice.provider, voiceBaseUrl(voice))
   if (!keyState.hasKey && voice.provider !== 'custom') {
     fail('Dictation needs a transcription API key.', 'settings')
     return
@@ -599,7 +599,7 @@ async function runVoiceCheck(
       baseUrl: voiceBaseUrl(voice),
       model: voiceModel(voice),
       format: `${format.mimeType || '(browser default)'}${wantsWav(voice) ? ' → 16 kHz mono WAV' : ''}`,
-      keyState: await api.voice.keyState(voice.provider),
+      keyState: await api.voice.keyState(voice.provider, voiceBaseUrl(voice)),
       micAccess: await api.voice.requestMicAccess()
     }
 

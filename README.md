@@ -191,6 +191,16 @@ was started from, it picks that up and nothing needs saving. Audio is posted
 straight to the service and is not written to disk; the **vocabulary hint** field
 is worth filling in with the project nouns your model keeps mangling.
 
+Hosted-service keys are sent only to that service's HTTPS origin. To use a
+different host, select **Custom** and supply a separate key. Custom keys saved
+in Settings are bound to the endpoint's origin (scheme, host and port); after
+changing the origin, save its key again. Custom keys saved by older versions
+also need to be saved again before use. For custom credentials from the shell,
+export both `HD_CUSTOM_VOICE_API_KEY` and `HD_CUSTOM_VOICE_BASE_URL`; the latter
+must match the configured endpoint's origin. Custom services never inherit
+`HD_VOICE_API_KEY` or another provider's key. Endpoints require HTTPS except on
+localhost, and transcription requests do not follow redirects.
+
 Windows only asks for the microphone once, at the OS level: if capture is
 blocked, the pill offers a shortcut to the privacy page. macOS prompts on first
 use.

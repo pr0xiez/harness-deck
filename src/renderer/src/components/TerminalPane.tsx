@@ -10,7 +10,12 @@ import { paneLabel } from '../paneLabel'
 import { useDeck, type PaneView } from '../store'
 import { isReservedShortcut } from '../shortcuts'
 import { decideRestart, RESTART_CAP, type RestartDecision } from '../restart'
-import { registerTerminal, unregisterTerminal, type TerminalHandle } from '../terminals'
+import {
+  createTerminalOutput,
+  registerTerminal,
+  unregisterTerminal,
+  type TerminalHandle
+} from '../terminals'
 import { terminalTheme } from '../theme'
 import { PaneSearch } from './PaneSearch'
 import { Icon } from './Icon'
@@ -138,19 +143,7 @@ export function TerminalPane({
       term,
       fit,
       search,
-      attached: false,
-      queue: [],
-      write: (data) => {
-        if (handle.attached) term.write(data)
-        else handle.queue.push(data)
-      },
-      attach: () => {
-        handle.attached = true
-        if (handle.queue.length) {
-          term.write(handle.queue.join(''))
-          handle.queue = []
-        }
-      },
+      ...createTerminalOutput(term),
       refit: () => {
         if (!host.isConnected || host.clientWidth < 8 || host.clientHeight < 8) return
         try {

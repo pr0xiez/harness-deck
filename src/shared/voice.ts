@@ -79,7 +79,7 @@ export const VOICE_PROVIDERS: VoiceProviderInfo[] = [
     models: [],
     api: 'transcriptions',
     audio: 'webm',
-    envVars: ['HD_VOICE_API_KEY'],
+    envVars: ['HD_CUSTOM_VOICE_API_KEY'],
     hint: 'Anything serving /audio/transcriptions — e.g. http://127.0.0.1:8000/v1 for a local Whisper.'
   }
 ]

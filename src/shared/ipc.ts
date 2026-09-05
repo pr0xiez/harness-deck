@@ -53,6 +53,7 @@ export const IPC = {
   // pty sessions
   ptyEnsure: 'pty:ensure',
   ptyWrite: 'pty:write',
+  ptyAcknowledge: 'pty:acknowledge',
   ptyResize: 'pty:resize',
   ptyKill: 'pty:kill',
   ptyDispose: 'pty:dispose',

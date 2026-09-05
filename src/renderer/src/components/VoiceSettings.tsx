@@ -15,6 +15,9 @@ function keyLine(state: VoiceKeyState | null, provider: VoiceProvider): string {
       : 'saved to this machine — no keychain available, so it is only obfuscated'
   }
   const info = voiceProvider(provider)
+  if (provider === 'custom') {
+    return 'Save a key for this endpoint, or export HD_CUSTOM_VOICE_API_KEY and HD_CUSTOM_VOICE_BASE_URL. Existing custom keys must be saved again.'
+  }
   return `not set — paste one, or export ${info.envVars.join(' / ')}`
 }
 
@@ -24,18 +27,31 @@ export function VoiceSettings(): React.JSX.Element {
   const updateVoice = useDeck((s) => s.updateVoice)
   const [keyState, setKeyState] = useState<VoiceKeyState | null>(null)
   const [draftKey, setDraftKey] = useState('')
+  const [keyError, setKeyError] = useState<string | null>(null)
   const info = voiceProvider(voice.provider)
   const keysUrl = info.keysUrl
 
   useEffect(() => {
     setKeyState(null)
     setDraftKey('')
-    void api.voice.keyState(voice.provider).then(setKeyState)
-  }, [voice.provider])
+    setKeyError(null)
+    let cancelled = false
+    void api.voice.keyState(voice.provider, voice.baseUrl).then((state) => {
+      if (!cancelled) setKeyState(state)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [voice.provider, voice.baseUrl])
 
   const saveKey = async (value: string | null): Promise<void> => {
-    setKeyState(await api.voice.setKey(voice.provider, value))
-    setDraftKey('')
+    try {
+      setKeyState(await api.voice.setKey(voice.provider, value, voice.baseUrl))
+      setDraftKey('')
+      setKeyError(null)
+    } catch (err) {
+      setKeyError(err instanceof Error ? err.message : 'Could not save the key.')
+    }
   }
 
   return (
@@ -83,7 +99,7 @@ export function VoiceSettings(): React.JSX.Element {
           />
         </Field>
 
-        <Field label="API key" hint={keyLine(keyState, voice.provider)}>
+        <Field label="API key" hint={keyError ?? keyLine(keyState, voice.provider)}>
           <div className="row">
             <input
               type="password"

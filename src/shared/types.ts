@@ -297,6 +297,9 @@ export interface EnsureResult {
 export interface PtyDataEvent {
   id: string
   data: string
+  /** Attachment generation and cumulative UTF-8 bytes sent on it. */
+  flowId: number
+  offset: number
 }
 
 export interface PtyExitEvent {

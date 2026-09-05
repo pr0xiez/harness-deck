@@ -11,12 +11,29 @@ export interface TerminalHandle {
   term: Terminal
   fit: FitAddon
   search: SearchAddon
-  /** Output is queued until the replay buffer has been painted. */
-  attached: boolean
-  queue: string[]
-  write: (data: string) => void
+  /** Acknowledges only after xterm has parsed the output. */
+  write: (data: string, onParsed?: () => void) => void
   attach: () => void
   refit: () => void
+}
+
+/** Hold live output behind the replay, preserving its parse acknowledgements. */
+export function createTerminalOutput(
+  term: Pick<Terminal, 'write'>
+): Pick<TerminalHandle, 'write' | 'attach'> {
+  let attached = false
+  let queue: Array<{ data: string; onParsed?: () => void }> = []
+  return {
+    write(data, onParsed) {
+      if (attached) term.write(data, onParsed)
+      else queue.push({ data, onParsed })
+    },
+    attach() {
+      attached = true
+      for (const { data, onParsed } of queue) term.write(data, onParsed)
+      queue = []
+    }
+  }
 }
 
 const handles = new Map<string, TerminalHandle>()

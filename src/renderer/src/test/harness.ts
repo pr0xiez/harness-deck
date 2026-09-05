@@ -92,6 +92,7 @@ export const harness: DeepMock<HarnessApi> = {
 
   pty: {
     ensure: vi.fn(),
+    acknowledge: vi.fn(),
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),

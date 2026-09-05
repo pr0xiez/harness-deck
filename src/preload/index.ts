@@ -116,6 +116,8 @@ const api = {
     ensure: (spec: PaneSpec, cols: number, rows: number): Promise<EnsureResult> =>
       ipcRenderer.invoke(IPC.ptyEnsure, spec, cols, rows),
     write: (id: string, data: string): void => ipcRenderer.send(IPC.ptyWrite, id, data),
+    acknowledge: (id: string, flowId: number, offset: number): void =>
+      ipcRenderer.send(IPC.ptyAcknowledge, id, flowId, offset),
     resize: (id: string, cols: number, rows: number): void =>
       ipcRenderer.send(IPC.ptyResize, id, cols, rows),
     kill: (id: string): void => ipcRenderer.send(IPC.ptyKill, id),
@@ -159,11 +161,11 @@ const api = {
   },
 
   voice: {
-    keyState: (provider: VoiceProvider): Promise<VoiceKeyState> =>
-      ipcRenderer.invoke(IPC.voiceKeyState, provider),
+    keyState: (provider: VoiceProvider, baseUrl?: string): Promise<VoiceKeyState> =>
+      ipcRenderer.invoke(IPC.voiceKeyState, provider, baseUrl),
     /** Pass null to forget the stored key. */
-    setKey: (provider: VoiceProvider, key: string | null): Promise<VoiceKeyState> =>
-      ipcRenderer.invoke(IPC.voiceSetKey, provider, key),
+    setKey: (provider: VoiceProvider, key: string | null, baseUrl?: string): Promise<VoiceKeyState> =>
+      ipcRenderer.invoke(IPC.voiceSetKey, provider, key, baseUrl),
     transcribe: (req: TranscribeRequest): Promise<TranscribeResult> =>
       ipcRenderer.invoke(IPC.voiceTranscribe, req),
     /** macOS only; elsewhere the OS has no per-app microphone gate. */

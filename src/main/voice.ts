@@ -7,7 +7,7 @@ import type {
   VoiceKeyState,
   VoiceProvider
 } from '@shared/types'
-import { voiceProvider } from '@shared/voice'
+import { voiceProvider, VOICE_PROVIDERS } from '@shared/voice'
 import { shellEnv } from './shell-env'
 
 /**
@@ -23,6 +23,8 @@ const MIN_AUDIO_BYTES = 1200
 interface StoredSecret {
   encrypted: boolean
   value: string
+  /** Custom credentials are valid only at the origin chosen when saving. */
+  origin?: string
 }
 
 /** One secret per provider, so switching services keeps both keys. */
@@ -44,9 +46,35 @@ function readStore(): KeyStore {
   }
 }
 
-function storedKey(provider: VoiceProvider): { key: string; encrypted: boolean } | null {
+function endpointOrigin(baseUrl: string): string {
+  const url = new URL(baseUrl)
+  if (
+    !['https:', 'http:'].includes(url.protocol) ||
+    url.username || url.password || url.search || url.hash
+  ) {
+    throw new Error('Use an HTTP(S) endpoint without credentials, query parameters or a fragment.')
+  }
+  if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+    throw new Error('Transcription endpoints must use HTTPS, except on the local machine.')
+  }
+  return url.origin
+}
+
+function customOrigin(baseUrl?: string): string | undefined {
+  try {
+    return baseUrl ? endpointOrigin(baseUrl) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function storedKey(
+  provider: VoiceProvider,
+  baseUrl?: string
+): { key: string; encrypted: boolean } | null {
   const entry = readStore()[provider]
   if (!entry?.value) return null
+  if (provider === 'custom' && (!entry.origin || entry.origin !== customOrigin(baseUrl))) return null
   try {
     const key = entry.encrypted
       ? safeStorage.decryptString(Buffer.from(entry.value, 'base64'))
@@ -60,8 +88,12 @@ function storedKey(provider: VoiceProvider): { key: string; encrypted: boolean }
 }
 
 /** Keys exported in the user's shell profile, so no copy needs to be stored. */
-function envKey(provider: VoiceProvider): { key: string; envVar: string } | null {
+function envKey(provider: VoiceProvider, baseUrl?: string): { key: string; envVar: string } | null {
   const env = shellEnv()
+  if (provider === 'custom') {
+    const origin = customOrigin(baseUrl)
+    if (!origin || origin !== customOrigin(env.HD_CUSTOM_VOICE_BASE_URL)) return null
+  }
   for (const envVar of voiceProvider(provider).envVars) {
     const key = env[envVar]?.trim()
     if (key) return { key, envVar }
@@ -69,20 +101,22 @@ function envKey(provider: VoiceProvider): { key: string; envVar: string } | null
   return null
 }
 
-function resolveKey(provider: VoiceProvider): string | null {
-  return storedKey(provider)?.key ?? envKey(provider)?.key ?? null
+function resolveKey(provider: VoiceProvider, baseUrl: string): string | null {
+  return storedKey(provider, baseUrl)?.key ?? envKey(provider, baseUrl)?.key ?? null
 }
 
-export function keyState(provider: VoiceProvider): VoiceKeyState {
-  const stored = storedKey(provider)
+export function keyState(provider: VoiceProvider, baseUrl?: string): VoiceKeyState {
+  const stored = storedKey(provider, baseUrl)
   if (stored) return { hasKey: true, source: 'stored', encrypted: stored.encrypted }
-  const fromEnv = envKey(provider)
+  const fromEnv = envKey(provider, baseUrl)
   if (fromEnv) return { hasKey: true, source: 'env', envVar: fromEnv.envVar }
   return { hasKey: false, source: 'none' }
 }
 
 /** Stores (or, with null, forgets) a key. Encrypted when the OS allows it. */
-export function setKey(provider: VoiceProvider, key: string | null): VoiceKeyState {
+export function setKey(provider: VoiceProvider, key: string | null, baseUrl?: string): VoiceKeyState {
+  if (!VOICE_PROVIDERS.some((p) => p.id === provider)) throw new Error('Unknown voice provider.')
+  const origin = provider === 'custom' && key?.trim() ? endpointOrigin(baseUrl ?? '') : undefined
   const file = keyPath()
   const trimmed = key?.trim()
   try {
@@ -93,6 +127,7 @@ export function setKey(provider: VoiceProvider, key: string | null): VoiceKeySta
       const encrypted = safeStorage.isEncryptionAvailable()
       store[provider] = {
         encrypted,
+        ...(origin ? { origin } : {}),
         value: encrypted
           ? safeStorage.encryptString(trimmed).toString('base64')
           : Buffer.from(trimmed, 'utf8').toString('base64')
@@ -107,7 +142,7 @@ export function setKey(provider: VoiceProvider, key: string | null): VoiceKeySta
   } catch (err) {
     console.error('[voice] failed to store the key:', err)
   }
-  return keyState(provider)
+  return keyState(provider, baseUrl)
 }
 
 function extractError(body: string, status: number): string {
@@ -224,14 +259,25 @@ export async function transcribe(req: TranscribeRequest): Promise<TranscribeResu
     ms: Date.now() - started
   })
 
-  if (!/^https?:\/\//i.test(req.baseUrl)) {
-    return done({ error: 'No transcription URL configured — set one in Settings › Voice input.' })
+  try {
+    const provider = VOICE_PROVIDERS.find((p) => p.id === req.provider)
+    if (!provider) throw new Error('Unknown voice provider.')
+    const origin = endpointOrigin(req.baseUrl)
+    if (provider.id !== 'custom' && origin !== new URL(provider.baseUrl).origin) {
+      throw new Error(
+        `Use ${new URL(provider.baseUrl).origin} for ${provider.name}, ` +
+        'or select Custom and save a separate key.'
+      )
+    }
+    req = { ...req, baseUrl: req.baseUrl.trim().replace(/\/+$/, '') }
+  } catch (err) {
+    return done({ error: err instanceof Error ? err.message : 'Invalid transcription endpoint.' })
   }
   if (req.audio.byteLength < MIN_AUDIO_BYTES) {
     return done({ error: 'That was too short to transcribe.' })
   }
 
-  const key = resolveKey(req.provider)
+  const key = resolveKey(req.provider, req.baseUrl)
   if (!key && req.provider !== 'custom') {
     return done({ error: 'No API key for transcription — add one in Settings › Voice input.' })
   }
@@ -242,6 +288,8 @@ export async function transcribe(req: TranscribeRequest): Promise<TranscribeResu
   try {
     const response = await fetch(url, {
       ...init,
+      // Do not forward audio or credentials through an unvalidated redirect.
+      redirect: 'error',
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     })
 

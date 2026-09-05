@@ -14,6 +14,9 @@ import { defaultShell, shellEnv } from './shell-env'
 const REPLAY_LIMIT = 512 * 1024
 /** Coalesce pty output into one IPC message per tick to keep the UI cheap. */
 const FLUSH_MS = 8
+/** Includes output waiting for IPC and output xterm has not parsed yet. */
+export const OUTPUT_HIGH_WATER = 256 * 1024
+export const OUTPUT_LOW_WATER = 64 * 1024
 /** Silence from a running process before it counts as waiting, absent a setting. */
 export const DEFAULT_QUIET_MS = 2500
 /** Floor for the setting: a quiet window near zero would fire on every burst. */
@@ -44,6 +47,11 @@ interface Session {
   /** The previous run's tail, while it is still the head of `chunks`. */
   restored: string | null
   persistTimer: NodeJS.Timeout | null
+  flowId: number
+  sentBytes: number
+  ackedBytes: number
+  pendingBytes: number
+  paused: boolean
 }
 
 type Sender = (channel: IpcChannel, payload: unknown) => void
@@ -53,6 +61,7 @@ export type Spawn = typeof nodePty.spawn
 
 export class PtyManager {
   private sessions = new Map<string, Session>()
+  private nextFlowId = 0
 
   /**
    * `quietMs` is read per timer rather than captured, because the user owns it:
@@ -76,6 +85,9 @@ export class PtyManager {
   ensure(spec: PaneSpec, cols: number, rows: number): EnsureResult {
     const existing = this.sessions.get(spec.id)
     if (existing) {
+      // The new terminal gets the replay, including anything not flushed yet.
+      // Old write callbacks must not acknowledge bytes on this attachment.
+      this.resetFlow(existing, ++this.nextFlowId)
       if (existing.proc && (existing.cols !== cols || existing.rows !== rows)) {
         this.resize(spec.id, cols, rows)
       }
@@ -110,7 +122,12 @@ export class PtyManager {
       quiet: false,
       quietTimer: null,
       restored: null,
-      persistTimer: null
+      persistTimer: null,
+      flowId: ++this.nextFlowId,
+      sentBytes: 0,
+      ackedBytes: 0,
+      pendingBytes: 0,
+      paused: false
     }
     this.sessions.set(spec.id, session)
     this.seed(session)
@@ -184,6 +201,54 @@ export class PtyManager {
   write(id: string, data: string): void {
     const session = this.sessions.get(id)
     session?.proc?.write(data)
+  }
+
+  acknowledge(id: string, flowId: number, offset: number): void {
+    const session = this.sessions.get(id)
+    if (
+      !session || !session.flowId || session.flowId !== flowId ||
+      !Number.isSafeInteger(offset) || offset <= session.ackedBytes || offset > session.sentBytes
+    ) return
+    session.ackedBytes = offset
+    if (session.paused && this.backlog(session) <= OUTPUT_LOW_WATER) {
+      session.paused = false
+      session.proc?.resume()
+      // Time spent throttled is not evidence that the agent needs attention.
+      if (session.status === 'running') this.armQuiet(session)
+    }
+  }
+
+  /** No renderer can acknowledge now; keep only the bounded replay until reattach. */
+  detachAll(): void {
+    for (const session of this.sessions.values()) this.resetFlow(session, 0)
+  }
+
+  private resetFlow(session: Session, flowId: number): void {
+    if (session.flushTimer) clearTimeout(session.flushTimer)
+    session.flushTimer = null
+    session.pending = []
+    session.pendingBytes = 0
+    session.sentBytes = 0
+    session.ackedBytes = 0
+    session.flowId = flowId
+    if (session.paused) {
+      session.paused = false
+      session.proc?.resume()
+      if (session.status === 'running') this.armQuiet(session)
+    }
+  }
+
+  private backlog(session: Session): number {
+    return session.pendingBytes + session.sentBytes - session.ackedBytes
+  }
+
+  private throttle(session: Session): void {
+    if (!session.paused && session.proc && this.backlog(session) >= OUTPUT_HIGH_WATER) {
+      session.paused = true
+      session.proc.pause()
+      if (session.quietTimer) clearTimeout(session.quietTimer)
+      session.quietTimer = null
+    }
   }
 
   resize(id: string, cols: number, rows: number): void {
@@ -318,10 +383,13 @@ export class PtyManager {
       session.quiet = false
       this.send(IPC.ptyQuiet, { id: session.id, quiet: false })
     }
-    this.armQuiet(session)
+    if (!session.paused) this.armQuiet(session)
     this.armPersist(session)
-    session.pending.push(data)
     this.record(session, data)
+    if (!session.flowId) return
+    session.pending.push(data)
+    session.pendingBytes += Buffer.byteLength(data, 'utf8')
+    this.throttle(session)
     if (session.flushTimer) return
     session.flushTimer = setTimeout(() => this.flush(session), FLUSH_MS)
   }
@@ -386,17 +454,27 @@ export class PtyManager {
     if (!session.pending.length || !this.isCurrent(session)) return
     const data = session.pending.join('')
     session.pending = []
-    this.send(IPC.ptyData, { id: session.id, data })
+    session.pendingBytes = 0
+    this.sendData(session, data)
+  }
+
+  private sendData(session: Session, data: string): void {
+    if (!session.flowId) return
+    session.sentBytes += Buffer.byteLength(data, 'utf8')
+    this.send(IPC.ptyData, { id: session.id, data, flowId: session.flowId, offset: session.sentBytes })
+    this.throttle(session)
   }
 
   /** Writes a message that came from us (not the child) into the pane. */
   private appendLocal(session: Session, text: string): void {
     if (!this.isCurrent(session)) return
     this.record(session, text)
-    this.send(IPC.ptyData, { id: session.id, data: text })
+    this.sendData(session, text)
   }
 
   private record(session: Session, data: string): void {
+    // A single oversized callback must not defeat the replay limit either.
+    if (data.length > REPLAY_LIMIT) data = data.slice(-REPLAY_LIMIT)
     session.chunks.push(data)
     session.chunkLen += data.length
     while (session.chunkLen > REPLAY_LIMIT && session.chunks.length > 1) {

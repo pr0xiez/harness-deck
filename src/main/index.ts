@@ -280,6 +280,11 @@ function createWindow(): BrowserWindow {
   })
 
   win.on('ready-to-show', () => win.show())
+  win.webContents.on('render-process-gone', () => ptys?.detachAll())
+  win.on('closed', () => {
+    ptys?.detachAll()
+    if (mainWindow === win) mainWindow = null
+  })
 
   // Closing the window kills every agent, so check first — except on macOS,
   // where the sessions outlive the window and the warning moves to quit.
@@ -316,6 +321,12 @@ function createWindow(): BrowserWindow {
   const appUrl = pathToFileURL(join(__dirname, '../renderer/index.html')).href
   const isAllowedNavigation = (url: string): boolean =>
     devUrl ? new URL(url).origin === new URL(devUrl).origin : url === appUrl
+  win.webContents.on('did-start-navigation', (event) => {
+    // Blocked navigation and fragment changes leave the current terminal alive.
+    if (event.isMainFrame && !event.isSameDocument && isAllowedNavigation(event.url)) {
+      ptys?.detachAll()
+    }
+  })
   win.webContents.on('will-navigate', (event, url) => {
     if (!isAllowedNavigation(url)) event.preventDefault()
   })
@@ -538,6 +549,10 @@ function registerIpc(): void {
     ptys!.ensure(spec, cols, rows)
   )
   ipcMain.on(IPC.ptyWrite, (_e, id: string, data: string) => ptys!.write(id, data))
+  ipcMain.on(IPC.ptyAcknowledge, (event, id: string, flowId: number, offset: number) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) return
+    ptys!.acknowledge(id, flowId, offset)
+  })
   ipcMain.on(IPC.ptyResize, (_e, id: string, cols: number, rows: number) =>
     ptys!.resize(id, cols, rows)
   )
@@ -614,9 +629,11 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle(IPC.voiceKeyState, (_e, provider: VoiceProvider) => keyState(provider))
-  ipcMain.handle(IPC.voiceSetKey, (_e, provider: VoiceProvider, key: string | null) =>
-    setKey(provider, key)
+  ipcMain.handle(IPC.voiceKeyState, (_e, provider: VoiceProvider, baseUrl?: string) =>
+    keyState(provider, baseUrl)
+  )
+  ipcMain.handle(IPC.voiceSetKey, (_e, provider: VoiceProvider, key: string | null, baseUrl?: string) =>
+    setKey(provider, key, baseUrl)
   )
   ipcMain.handle(IPC.voiceTranscribe, (_e, req: TranscribeRequest) => transcribe(req))
   ipcMain.handle(IPC.voiceMicAccess, async () => {

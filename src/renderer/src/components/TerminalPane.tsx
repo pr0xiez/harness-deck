@@ -6,6 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { Profile } from '@shared/types'
+import { agentLaunch } from '@shared/agent-session'
 import { paneLabel } from '../paneLabel'
 import { useDeck, type PaneView } from '../store'
 import { isReservedShortcut } from '../shortcuts'
@@ -216,7 +217,8 @@ export function TerminalPane({
           cwd: pane.cwd,
           viaShell: pane.viaShell,
           env: pane.env,
-          setup: pane.setup
+          setup: pane.setup,
+          sessionGeneration: pane.sessionGeneration
         },
         Math.max(term.cols, 20),
         Math.max(term.rows, 5)
@@ -438,11 +440,20 @@ export function TerminalPane({
           </button>
           <button
             className="icon-btn"
-            title="Restart process (Ctrl+Shift+R)"
+            title={agentLaunch(pane) ? 'Restart and resume session (Ctrl+Shift+R)' : 'Restart process (Ctrl+Shift+R)'}
             onClick={() => restartPane(paneId)}
           >
             <Icon name="restart" />
           </button>
+          {agentLaunch(pane) ? (
+            <button
+              className="icon-btn"
+              title="Start new session"
+              onClick={() => restartPane(paneId, true)}
+            >
+              <Icon name="plus" />
+            </button>
+          ) : null}
           <button
             className="icon-btn danger"
             title="Close pane (Ctrl+Shift+W)"

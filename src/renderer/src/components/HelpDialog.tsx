@@ -16,7 +16,7 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
     [
       ['Ctrl+Shift+T', 'New pane (harness picker)'],
       ['Ctrl+Shift+W', 'Close focused pane'],
-      ['Ctrl+Shift+R', 'Restart the process in the focused pane'],
+      ['Ctrl+Shift+R', 'Restart the focused pane; resume supported agent sessions'],
       ['Ctrl+Shift+Z', 'Zoom / restore the focused pane'],
       ['Ctrl+Shift+J', 'Jump to the next pane waiting for you'],
       ['Ctrl+Shift+U', 'The waiting queue — every pane waiting, and what it last said'],

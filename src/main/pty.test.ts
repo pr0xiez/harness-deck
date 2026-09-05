@@ -7,6 +7,7 @@ import { homedir } from 'node:os'
 import type { PaneSpec } from '@shared/types'
 import { OUTPUT_HIGH_WATER, OUTPUT_LOW_WATER, PtyManager, stripAnsi, type Spawn } from './pty'
 import { ScrollbackStore, SCROLLBACK_LIMIT } from './scrollback'
+import { AgentSessions } from './agent-sessions'
 
 /** Matches FLUSH_MS in pty.ts — output is coalesced into one message per tick. */
 const FLUSH_MS = 8
@@ -81,7 +82,8 @@ interface Harness {
 function harness(
   spawnImpl?: () => never,
   quietMs = QUIET_MS,
-  scrollback: ScrollbackStore | null = null
+  scrollback: ScrollbackStore | null = null,
+  agentSessions: AgentSessions | null = null
 ): Harness {
   const sent: Harness['sent'] = []
   const spawned: FakePty[] = []
@@ -102,7 +104,8 @@ function harness(
     (channel, payload) => sent.push({ channel, payload: payload as Record<string, unknown> }),
     spawn,
     () => quietMs,
-    scrollback
+    scrollback,
+    agentSessions
   )
   return {
     mgr,
@@ -139,6 +142,30 @@ afterEach(() => {
 })
 
 describe('ensure', () => {
+  it('reattaches without replacing the agent session record, then resumes after restart', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hd-pty-agent-'))
+    const id = '550e8400-e29b-41d4-a716-446655440000'
+    const h = harness(undefined, QUIET_MS, null, new AgentSessions(dir))
+    const launch = spec('agent', { command: 'codex' })
+    try {
+      h.mgr.ensure(launch, 80, 24)
+      const record = h.calls[0].env.HD_SESSION_FILE!
+      writeFileSync(record, JSON.stringify({ session_id: id }))
+      expect(h.mgr.ensure(launch, 90, 30).created).toBe(false)
+      expect(h.calls).toHaveLength(1)
+      h.mgr.dispose('agent')
+      expect(h.mgr.ensure(launch, 80, 24).status).toBe('running')
+      expect(h.calls[1].args.slice(0, 2)).toEqual(['resume', id])
+      h.mgr.disposeAll()
+      const nextApp = harness(undefined, QUIET_MS, null, new AgentSessions(dir))
+      nextApp.mgr.ensure(launch, 80, 24)
+      expect(nextApp.calls[0].args.slice(0, 2)).toEqual(['resume', id])
+      nextApp.mgr.disposeAll()
+    } finally {
+      h.mgr.disposeAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
   it('spawns a process and reports it running', () => {
     const { mgr, spawned } = harness()
     const result = mgr.ensure(spec('a'), 100, 40)

@@ -231,7 +231,7 @@ interface DeckState {
   closePane: (workspaceId: string, paneId: string) => void
   /** Close, asking first when the pane still has a live process. */
   requestClosePane: (workspaceId: string, paneId: string) => Promise<void>
-  restartPane: (paneId: string) => void
+  restartPane: (paneId: string, freshSession?: boolean) => void
   killPane: (paneId: string) => void
   updatePane: (paneId: string, patch: Partial<PaneView>) => void
   setPaneStatus: (paneId: string, status: PaneStatus, exitCode?: number | null) => void
@@ -733,7 +733,7 @@ export const useDeck = create<DeckState>((set, get) => ({
     }
   },
 
-  restartPane: (paneId) => {
+  restartPane: (paneId, freshSession = false) => {
     api.pty.dispose(paneId)
     const { workspaces } = get()
     const owner = workspaces.find((w) => w.panes.some((p) => p.id === paneId))
@@ -747,6 +747,7 @@ export const useDeck = create<DeckState>((set, get) => ({
                 p.id === paneId
                   ? {
                       ...p,
+                      ...(freshSession ? { sessionGeneration: uid('session'), processTitle: undefined } : {}),
                       epoch: p.epoch + 1,
                       status: 'idle' as PaneStatus,
                       exitCode: null,
@@ -995,6 +996,7 @@ export function serialize(state: DeckState): PersistedState {
             name,
             env,
             setup,
+            sessionGeneration,
             worktree,
             autoRestart,
             readOnly,
@@ -1012,6 +1014,7 @@ export function serialize(state: DeckState): PersistedState {
             // and a pane that forgot it would put the agent in a tree nothing has
             // installed into since the app was last quit.
             setup,
+            sessionGeneration,
             // Kept, or a restart would forget that this folder is ours to remove.
             worktree,
             autoRestart,

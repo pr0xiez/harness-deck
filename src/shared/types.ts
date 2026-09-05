@@ -37,6 +37,8 @@ export interface PaneSpec {
   env?: Record<string, string>
   /** Runs before the command line, through a shell, in the same pane. See HD-16. */
   setup?: string
+  /** Changes only for an explicit fresh conversation; stable across process/app restarts. */
+  sessionGeneration?: string
 }
 
 export interface Pane extends PaneSpec {

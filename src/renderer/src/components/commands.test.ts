@@ -116,6 +116,7 @@ describe('activePaneCommands', () => {
     expect(activePaneCommands(deck(), ...ws()).map((c) => c.id)).toEqual([
       'pane:edit',
       'pane:restart',
+      'pane:new-session',
       'pane:read-only',
       'pane:mute-attention',
       'pane:auto-restart',
@@ -128,6 +129,13 @@ describe('activePaneCommands', () => {
       'pane:zoom',
       'pane:close'
     ])
+  })
+
+  it('offers new sessions only for supported interactive agents', () => {
+    expect(activePaneCommands(deck(), ...ws({ command: 'bash' })).map((c) => c.id))
+      .not.toContain('pane:new-session')
+    expect(activePaneCommands(deck(), ...ws()).find((c) => c.id === 'pane:restart')?.label)
+      .toBe('Restart and resume session')
   })
 
   /** The workspace's own tree is the user's; only worktree panes get shipped. */

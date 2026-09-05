@@ -69,6 +69,40 @@ that rings the terminal bell comes back at once.
 `workspaces.json` in the app's user-data folder. Reloading the window
 re-attaches to the running processes and repaints the last ~512 KB of output.
 
+**Resume agent conversations** — Codex, Claude Code and OpenCode panes resume
+their own recorded conversation when the app or pane process restarts. The
+restart button and `Ctrl+Shift+R` resume; the pane's **Start new session** (`+`)
+button starts a separate conversation. Previously visited workspaces start
+again as you open them, subject to the autostart setting. Starting a new
+session keeps the old conversation in the harness's own history. Duplicated
+workspaces and panes created from templates get new conversations.
+
+Session IDs are recorded under `<userData>/agent-sessions`, separately from
+terminal scrollback. Each pane and process invocation has its own record, so
+two panes in the same folder cannot accidentally choose each other's latest
+conversation. Restarts preserve launch options such as model and permissions,
+without repeating the initial prompt or forking the conversation again.
+
+Codex and Claude report IDs through a `SessionStart` hook. **Codex asks you to
+review and trust the hook** (its command writes `HD_SESSION_FILE`); approve that
+hook in the CLI to enable tracking. Codex records it when the first prompt
+starts the conversation. Claude also receives a unique initial session UUID.
+Keep lifecycle hooks enabled to track subsequent `/clear` or `/resume` changes.
+OpenCode uses a local plugin, loaded only for that pane, to record new root
+sessions and the session used when you submit a message. Keep plugins enabled.
+The app adds these integrations at launch; it does not install global hooks or
+plugins or bypass the harness's permission settings.
+
+This supports direct native launches and the app's generated WSL launchers.
+Custom shell expressions, SSH/container commands and non-interactive CLI
+subcommands keep their existing process behavior. Conversations from before
+tracking was added must first be selected with the harness's resume command.
+If a previous launch has no recorded ID (including an unused Codex pane), the
+app shows a resume error and **Start new session** remains available. It never
+guesses the latest conversation or silently replaces a missing session. A
+resumed conversation restores context; an interrupted command is not kept
+running across a full app quit.
+
 **In-place updates** — `npm run release` builds a new installer and the running
 app offers it in a toast; one click restarts into the new version. See
 [Releasing and updating](#releasing-and-updating).

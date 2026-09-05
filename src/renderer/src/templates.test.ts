@@ -14,6 +14,11 @@ type Deck = Omit<Workspace, 'panes'> & { panes: Array<Pane & { autostart?: boole
 let seq = 0
 const uid = (prefix: string): string => `${prefix}_${(seq += 1)}`
 
+it('copied agent panes request a fresh conversation instead of the source session', () => {
+  const copied = freshPane(pane({ command: 'opencode', args: ['--session', 'ses_source'] }), 'copy')
+  expect(copied.sessionGeneration).toBe('copy:copy')
+})
+
 function pane(patch: Partial<Pane> = {}): Pane {
   return {
     id: uid('pane'),

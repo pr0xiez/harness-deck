@@ -1,4 +1,5 @@
 import type { Pane, PaneStatus, TemplatePane, Workspace, WorkspaceTemplate } from '@shared/types'
+import { agentLaunch } from '@shared/agent-session'
 
 /**
  * Everything a template is, as plain data transformation. It lives beside the
@@ -54,6 +55,7 @@ export function freshPane(pane: CopyablePane, id: string): CopyablePane {
   return {
     ...pane,
     id,
+    ...(agentLaunch(pane) ? { sessionGeneration: `copy:${id}` } : {}),
     status: 'idle' as PaneStatus,
     exitCode: null,
     epoch: 0,

@@ -9,6 +9,7 @@ import type { EnsureResult, PaneSpec, PaneStatus } from '@shared/types'
 import { shellCommandLine, shellFlavour, type ShellFlavour } from './profiles'
 import type { ScrollbackStore } from './scrollback'
 import { defaultShell, shellEnv } from './shell-env'
+import type { AgentSessions, PreparedAgent } from './agent-sessions'
 
 /** How much output we keep per pane so a reloaded window can be repainted. */
 const REPLAY_LIMIT = 512 * 1024
@@ -75,7 +76,8 @@ export class PtyManager {
     private send: Sender,
     private spawn: Spawn = nodePty.spawn,
     private quietMs: () => number = () => DEFAULT_QUIET_MS,
-    private scrollback: ScrollbackStore | null = null
+    private scrollback: ScrollbackStore | null = null,
+    private agentSessions: AgentSessions | null = null
   ) {}
 
   /**
@@ -133,19 +135,23 @@ export class PtyManager {
     this.seed(session)
 
     const cwd = resolveCwd(spec.cwd)
-    const env = buildEnv(spec, cwd)
 
     if (cwd !== spec.cwd) {
       this.appendLocal(session, dim(`Working directory ${spec.cwd} is unavailable — using ${cwd}\r\n`))
     }
 
+    let prepared: PreparedAgent | undefined
     try {
       // Inside the try on purpose: composing the command line can refuse —
       // `quoteArg` throws rather than build a cmd.exe line that would diverge
       // from the pane's spec — and a refusal must land the same way a bad
       // path does: an exited pane with the reason on screen, never a throw
       // across IPC.
-      const { command, args } = resolveCommand(spec)
+      prepared = this.agentSessions?.prepare(spec)
+      const launchSpec = prepared?.spec ?? spec
+      const env = buildEnv(launchSpec, cwd)
+      const { command, args } = resolveCommand(launchSpec)
+      if (prepared?.resumed) this.appendLocal(session, dim(`Resuming session ${prepared.resumed}\r\n`))
       const proc = this.spawn(command, args, {
         name: 'xterm-256color',
         cols: session.cols,
@@ -183,6 +189,7 @@ export class PtyManager {
         previousSession: session.restored !== null
       }
     } catch (err) {
+      try { prepared?.rollback() } catch { /* keep the original launch error */ }
       const message = err instanceof Error ? err.message : String(err)
       session.status = 'exited'
       session.exitCode = -1

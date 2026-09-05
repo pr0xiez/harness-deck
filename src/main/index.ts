@@ -39,6 +39,7 @@ import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
 import { ScrollbackStore } from './scrollback'
 import { loadState, saveState, stateLocation } from './store'
+import { AgentSessions } from './agent-sessions'
 import { defaultShell, resolveShellEnv } from './shell-env'
 import { keyState, setKey, transcribe } from './voice'
 import { checkNow, currentState, disposeUpdater, initUpdater, install, setChannel } from './updater'
@@ -728,7 +729,7 @@ if (!app.requestSingleInstanceLock()) {
     // --user-data-dir switch and the smoke override above have been applied.
     const scrollback = new ScrollbackStore(app.getPath('userData'))
     pruneScrollback(scrollback)
-    ptys = new PtyManager(send, undefined, () => quietMs, scrollback)
+    ptys = new PtyManager(send, undefined, () => quietMs, scrollback, new AgentSessions(app.getPath('userData')))
     registerIpc()
     // Before the window, so the renderer hydrates a state file it did not write.
     if (smoke) seedSmokeState()

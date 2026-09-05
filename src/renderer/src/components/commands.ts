@@ -1,6 +1,7 @@
 import { paneLabel } from '../paneLabel'
 import { isActionable, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { isOpencodeProfile } from '@shared/opencode'
+import { agentLaunch } from '@shared/agent-session'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
 import { getTerminal } from '../terminals'
@@ -300,10 +301,17 @@ export function activePaneCommands(
     {
       id: 'pane:restart',
       group: 'Active pane',
-      label: 'Restart process',
+      label: agentLaunch(activePane) ? 'Restart and resume session' : 'Restart process',
       hint: 'Ctrl+Shift+R',
       run: () => state.restartPane(activePane.id)
     },
+    ...(agentLaunch(activePane) ? [{
+      id: 'pane:new-session',
+      group: 'Active pane',
+      label: 'Start new session',
+      hint: 'keep the previous conversation in harness history',
+      run: () => state.restartPane(activePane.id, true)
+    }] : []),
     {
       id: 'pane:read-only',
       group: 'Active pane',

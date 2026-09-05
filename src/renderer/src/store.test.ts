@@ -862,6 +862,17 @@ describe('restartPane', () => {
     })
   })
 
+  it('keeps the conversation on normal restart and persists an explicit fresh request', () => {
+    deck().restartPane('a', true)
+    const generation = deck().workspaces[0].panes[0].sessionGeneration
+    expect(generation).toBeTruthy()
+    expect(serialize(deck()).workspaces[0].panes[0].sessionGeneration).toBe(generation)
+    deck().restartPane('a')
+    expect(deck().workspaces[0].panes[0].sessionGeneration).toBe(generation)
+    deck().restartPane('a', true)
+    expect(deck().workspaces[0].panes[0].sessionGeneration).not.toBe(generation)
+  })
+
   it('leaves the workspace next door referentially untouched', () => {
     const [, two] = deck().workspaces
     deck().restartPane('a')

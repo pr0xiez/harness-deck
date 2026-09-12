@@ -1279,3 +1279,38 @@ describe('disposeAll', () => {
     expect(mgr.status('a')).toBeNull()
   })
 })
+
+
+it('adds the board CLI to generated WSL launchers without mutating stored arguments', () => {
+  const { mgr, calls } = harness()
+  const args = ['-e', 'bash', '-lic', 'cd "$HD_CWD" 2>/dev/null; exec codex']
+  mgr.ensure(spec('board-wsl', { command: 'wsl.exe', args, env: { HD_WORK_BIN: '/deck/work-bin' } }), 80, 24)
+  expect(calls[0].args[3]).toContain('export PATH="$HD_WORK_BIN:$PATH"; exec codex')
+  expect(args[3]).toBe('cd "$HD_CWD" 2>/dev/null; exec codex')
+})
+
+it('tracks Codex turns despite redraws and silence, preserves reattachment and stops after exit', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hd-activity-'))
+  const h = harness(undefined, QUIET_MS, null, new AgentSessions(dir))
+  try {
+    h.mgr.ensure({ id: 'agent', command: 'codex', args: [], cwd: dir }, 80, 24)
+    const env = h.calls[0].env
+    const session_id = '550e8400-e29b-41d4-a716-446655440000'
+    writeFileSync(env.HD_SESSION_FILE!, JSON.stringify({ session_id }))
+    const report = (hook_event_name: string) => {
+      writeFileSync(env.HD_ACTIVITY_FILE!, JSON.stringify({ session_id, hook_event_name }))
+      vi.advanceTimersByTime(250)
+    }
+    report('UserPromptSubmit')
+    vi.advanceTimersByTime(QUIET_MS * 2)
+    expect(h.quietFor('agent')).toEqual([])
+    report('Stop')
+    h.spawned[0].emit('\x1b[Hredraw')
+    vi.advanceTimersByTime(QUIET_MS * 2)
+    expect(h.mgr.ensure({ id: 'agent', command: 'codex', args: [], cwd: dir }, 80, 24).agentActivity).toBe('waiting')
+    expect(h.sent.filter(e => e.channel === 'pty:agentActivity').map(e => e.payload.activity)).toEqual(['working', 'waiting'])
+    h.spawned[0].exit()
+    report('UserPromptSubmit')
+    expect(h.sent.filter(e => e.channel === 'pty:agentActivity')).toHaveLength(2)
+  } finally { h.mgr.disposeAll(); rmSync(dir, { recursive: true, force: true }) }
+})

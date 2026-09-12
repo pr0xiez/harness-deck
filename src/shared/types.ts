@@ -1,6 +1,11 @@
 /** Types shared between the main process, the preload bridge and the renderer. */
 
-/** `waiting` is a running process that has stopped producing output — see HD-1. */
+/** Explicit agent activity, independent of PTY output and process liveness. */
+export type AgentActivity = 'unknown' | 'ready' | 'working' | 'waiting'
+
+export interface AgentActivityEvent { id: string; activity: AgentActivity }
+
+/** Waiting is live: a hook requested attention, or an untracked agent went quiet. */
 export type PaneStatus = 'idle' | 'running' | 'waiting' | 'exited'
 export type LayoutMode = 'grid' | 'tabs'
 export type ProfileKind = 'agent' | 'shell' | 'custom'
@@ -282,6 +287,7 @@ export interface AppInfo {
 export interface EnsureResult {
   /** False when the session already existed and was re-attached. */
   created: boolean
+  agentActivity?: AgentActivity
   status: PaneStatus
   pid?: number
   exitCode?: number | null

@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { agentLaunch, continuationArgs, validSessionId, type ResumableAgent } from '@shared/agent-session'
-import type { PaneSpec } from '@shared/types'
+import type { AgentActivity, PaneSpec } from '@shared/types'
 
 // Stable hook definitions: per-invocation paths travel in the environment, so
 // Codex's approval of this exact hook can be reused on subsequent launches.
@@ -12,6 +12,27 @@ export const WINDOWS_SESSION_HOOK = 'powershell.exe -NoLogo -NoProfile -NonInter
   "$p=$env:HD_SESSION_FILE; [IO.File]::WriteAllText($p+'.tmp', [Console]::In.ReadToEnd()); Move-Item -Force -LiteralPath ($p+'.tmp') -Destination $p",
   'utf16le'
 ).toString('base64')
+
+// Separate from session identity: turn events must never overwrite the resume record.
+export const POSIX_ACTIVITY_HOOK = 'cat > "$HD_ACTIVITY_FILE.$$.tmp" && mv -f "$HD_ACTIVITY_FILE.$$.tmp" "$HD_ACTIVITY_FILE.$$.json"; printf "{}"'
+export const WINDOWS_ACTIVITY_HOOK = 'powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(
+  "$p=$env:HD_ACTIVITY_FILE; $t=$p+'.'+$PID+'.tmp'; [IO.File]::WriteAllText($t, [Console]::In.ReadToEnd()); Move-Item -Force -LiteralPath $t -Destination ($p+'.'+$PID+'.json'); [Console]::Write('{}')",
+  'utf16le'
+).toString('base64')
+
+export function codexActivity(event: Record<string, unknown>): AgentActivity | undefined {
+  switch (event.hook_event_name) {
+    case 'SessionStart': return event.source === 'compact' ? 'working' : 'ready'
+    case 'UserPromptSubmit':
+    case 'PostToolUse': return 'working'
+    case 'PreToolUse': return event.tool_name === 'request_user_input' ? 'waiting' : 'working'
+    case 'PermissionRequest':
+    case 'Stop': return 'waiting'
+    case 'Interrupt':
+    case 'SessionEnd': return 'ready'
+    default: return undefined
+  }
+}
 
 /** Loaded only by the OpenCode process launched for this pane. No global installation. */
 export const OPENCODE_SESSION_PLUGIN = `import { writeFileSync, renameSync } from 'node:fs';
@@ -39,6 +60,7 @@ export const HarnessDeckSession = async ({ client }) => {
 
 interface LaunchRecord { run: string }
 export interface PreparedAgent {
+  readActivity?: () => AgentActivity | undefined
   spec: PaneSpec
   resumed?: string
   rollback: () => void
@@ -109,11 +131,19 @@ export class AgentSessions {
         'HD_SESSION_FILE/p'].join(':')
     }
 
+    const activityFile = join(dir, `${run}.activity.json`)
     if (launch.agent === 'codex') {
+      env.HD_ACTIVITY_FILE = activityFile
+      if (launch.wsl) env.WSLENV += ':HD_ACTIVITY_FILE/p'
+
       // Inline hook config augments the CLI's other active hook sources. Do not
       // bypass hook trust or alter the user's config files or permission mode.
       const hook = windows ? WINDOWS_SESSION_HOOK : POSIX_SESSION_HOOK
-      args.push('-c', `hooks.SessionStart=[{hooks=[{type="command",command=${JSON.stringify(hook)},timeout=5}]}]`)
+      const activityHook = windows ? WINDOWS_ACTIVITY_HOOK : POSIX_ACTIVITY_HOOK
+      for (const event of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'Interrupt', 'SessionEnd']) {
+        const hooks = event === 'SessionStart' ? [hook, activityHook] : [activityHook]
+        args.push('-c', `hooks.${event}=[{hooks=[${hooks.map(command => `{type="command",command=${JSON.stringify(command)},timeout=3}`).join(',')}]}]`)
+      }
     } else if (launch.agent === 'claude') {
       const hook = windows ? WINDOWS_SESSION_HOOK : POSIX_SESSION_HOOK
       // --settings is one override layer. Preserve its other settings/hooks.
@@ -162,6 +192,29 @@ export class AgentSessions {
     if (fresh) atomicJson(receipt!, { handled: true })
     return {
       spec: { ...spec, ...launch.apply(args), env }, resumed,
+      ...(launch.agent === 'codex' ? { readActivity: () => {
+        let activity: AgentActivity | undefined
+        // One receipt per invocation: a child hook must not overwrite a root
+        // Stop between polls. Completed receipts are consumed and removed.
+        const prefix = `${run}.activity.json`
+        const receipts = readdirSync(dir).filter(name => name === prefix ||
+          (name.startsWith(prefix + '.') && name.endsWith('.json')))
+          .map(name => ({ file: join(dir, name), time: statSync(join(dir, name)).mtimeMs }))
+          .sort((a, b) => a.time - b.time)
+        for (const receipt of receipts) {
+          try {
+            if (statSync(receipt.file).size > 1024 * 1024) continue
+            const event = JSON.parse(readFileSync(receipt.file, 'utf8').replace(/^\uFEFF/, ''))
+            const root = readJson(file)
+            if (!event.session_id || event.session_id !== root?.session_id) continue
+            // Codex child hooks share the parent's ID, but have their own transcript.
+            if (root?.transcript_path && event.transcript_path !== root.transcript_path) continue
+            activity = codexActivity(event) ?? activity
+          } catch { /* A malformed hook cannot break PTY delivery. */ }
+          finally { rmSync(receipt.file, { force: true }) }
+        }
+        return activity
+      } } : {}),
       rollback: () => {
         atomicJson(pointer, previous)
         if (fresh) rmSync(receipt!, { force: true })

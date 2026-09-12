@@ -5,7 +5,8 @@ import type { IPty } from '@lydell/node-pty'
 import { IPC, type IpcChannel } from '@shared/ipc'
 import { commandName } from '@shared/remote'
 import { cmdExpansionHazard, quoteFor } from '@shared/shell'
-import type { EnsureResult, PaneSpec, PaneStatus } from '@shared/types'
+import { agentLaunch } from '@shared/agent-session'
+import type { AgentActivity, EnsureResult, PaneSpec, PaneStatus } from '@shared/types'
 import { shellCommandLine, shellFlavour, type ShellFlavour } from './profiles'
 import type { ScrollbackStore } from './scrollback'
 import { defaultShell, shellEnv } from './shell-env'
@@ -31,6 +32,8 @@ const PERSIST_MS = 30_000
 
 interface Session {
   id: string
+  agentActivity?: AgentActivity
+  activityTimer?: NodeJS.Timeout
   proc: IPty | null
   status: PaneStatus
   exitCode: number | null
@@ -101,6 +104,7 @@ export class PtyManager {
       }
       return {
         created: false,
+        agentActivity: existing.agentActivity,
         status: existing.status,
         pid: existing.proc?.pid,
         exitCode: existing.exitCode,
@@ -111,6 +115,7 @@ export class PtyManager {
 
     const session: Session = {
       id: spec.id,
+      agentActivity: agentLaunch(spec)?.agent === 'codex' ? 'unknown' : undefined,
       proc: null,
       status: 'idle',
       exitCode: null,
@@ -162,6 +167,18 @@ export class PtyManager {
       })
       session.proc = proc
       session.status = 'running'
+      if (prepared?.readActivity) {
+        const read = prepared.readActivity
+        session.activityTimer = setInterval(() => {
+          if (!this.isCurrent(session) || session.status !== 'running') return
+          let activity: AgentActivity | undefined
+          try { activity = read() } catch { return }
+          if (!activity || activity === session.agentActivity) return
+          session.agentActivity = activity
+          this.send(IPC.ptyAgentActivity, { id: session.id, activity })
+        }, 250)
+        session.activityTimer.unref()
+      }
 
       proc.onData((data) => this.queue(session, data))
       proc.onExit(({ exitCode, signal }) => {
@@ -169,6 +186,7 @@ export class PtyManager {
         if (!this.isCurrent(session)) return
         // An exited pane is not waiting for you, it is dead, and pane.status
         // already says so — so the clock stops here rather than firing after.
+        if (session.activityTimer) clearInterval(session.activityTimer)
         this.clearQuiet(session)
         session.status = 'exited'
         session.exitCode = exitCode
@@ -182,6 +200,7 @@ export class PtyManager {
 
       return {
         created: true,
+        agentActivity: session.agentActivity,
         status: 'running',
         pid: proc.pid,
         exitCode: null,
@@ -196,6 +215,7 @@ export class PtyManager {
       this.appendLocal(session, red(`Failed to start: ${spec.command}\r\n${message}\r\n`))
       return {
         created: true,
+        agentActivity: session.agentActivity,
         status: 'exited',
         exitCode: -1,
         replay: session.chunks.join(''),
@@ -305,6 +325,7 @@ export class PtyManager {
   }
 
   private teardown(session: Session): void {
+    if (session.activityTimer) clearInterval(session.activityTimer)
     if (session.flushTimer) clearTimeout(session.flushTimer)
     session.flushTimer = null
     this.clearQuiet(session)
@@ -407,6 +428,7 @@ export class PtyManager {
    * that has never written a byte has not "stopped" producing output.
    */
   private armQuiet(session: Session): void {
+    if (session.agentActivity !== undefined) return
     if (session.quietTimer) clearTimeout(session.quietTimer)
     session.quietTimer = setTimeout(
       () => {
@@ -524,6 +546,17 @@ function resolveCommand(spec: PaneSpec): { command: string; args: string[] } {
     return shellCommandLine(withSetup(setup, cmdline, flavour, promoted), { exits: true, shell })
   }
   if (spec.viaShell) return shellCommandLine(plainLine(spec))
+  // Apply after session preparation so the stored, recognized launcher stays
+  // unchanged and older panes also receive the CLI path on their next spawn.
+  if (commandName(spec.command) === 'wsl' && spec.env?.HD_WORK_BIN) {
+    const args = [...spec.args]
+    const last = args.length - 1
+    const prefix = 'cd "$HD_CWD" 2>/dev/null; exec '
+    if (args[last]?.startsWith(prefix)) {
+      args[last] = 'cd "$HD_CWD" 2>/dev/null; export PATH="$HD_WORK_BIN:$PATH"; exec ' + args[last].slice(prefix.length)
+      return { command: spec.command, args }
+    }
+  }
   return { command: spec.command, args: spec.args }
 }
 

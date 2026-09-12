@@ -3,7 +3,7 @@ import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { AgentSessions, OPENCODE_SESSION_PLUGIN, POSIX_SESSION_HOOK } from './agent-sessions'
+import { AgentSessions, OPENCODE_SESSION_PLUGIN, POSIX_SESSION_HOOK, POSIX_ACTIVITY_HOOK } from './agent-sessions'
 import type { PaneSpec } from '@shared/types'
 import { agentLaunch } from '@shared/agent-session'
 
@@ -13,6 +13,16 @@ let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'hd-agent-session-')) })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 const pane = (command = 'codex', id = 'a'): PaneSpec => ({ id, command, args: [], cwd: dir })
+function runActivityHook(env: Record<string, string>, event: unknown): string {
+  const input = join(dir, 'hook-input.json')
+  writeFileSync(input, JSON.stringify(event))
+  const fd = openSync(input, 'r')
+  try {
+    return execFileSync('sh', ['-c', POSIX_ACTIVITY_HOOK], {
+      env: { ...process.env, ...env }, stdio: [fd, 'pipe', 'pipe'], timeout: 5000, encoding: 'utf8'
+    })
+  } finally { closeSync(fd) }
+}
 const report = (spec: PaneSpec, id: string) => writeFileSync(spec.env!.HD_SESSION_FILE, JSON.stringify({ session_id: id }))
 
 describe('durable per-pane session identity', () => {
@@ -146,4 +156,48 @@ describe('durable per-pane session identity', () => {
     await plugin['chat.message']({ sessionID: 'ses_selected' })
     expect(JSON.parse(readFileSync(file, 'utf8')).session_id).toBe('ses_selected')
   })
+})
+
+it('installs Codex activity hooks and reads only this conversation', () => {
+  const prepared = new AgentSessions(dir).prepare(pane())
+  report(prepared.spec, one)
+  for (const event of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'Interrupt']) {
+    expect(prepared.spec.args.some(a => a.startsWith(`hooks.${event}=`))).toBe(true)
+  }
+  const file = prepared.spec.env!.HD_ACTIVITY_FILE
+  for (const [hook_event_name, state] of [['SessionStart', 'ready'], ['UserPromptSubmit', 'working'], ['PermissionRequest', 'waiting'], ['PostToolUse', 'working'], ['Stop', 'waiting'], ['Interrupt', 'ready']]) {
+    writeFileSync(file, JSON.stringify({ session_id: one, hook_event_name }))
+    expect(prepared.readActivity!()).toBe(state)
+  }
+  writeFileSync(file, JSON.stringify({ session_id: two, hook_event_name: 'Stop' }))
+  expect(prepared.readActivity!()).toBeUndefined()
+  writeFileSync(file, '{partial')
+  expect(prepared.readActivity!()).toBeUndefined()
+})
+
+it('ignores child hooks sharing the root session ID', () => {
+  const prepared = new AgentSessions(dir).prepare(pane())
+  writeFileSync(prepared.spec.env!.HD_SESSION_FILE, JSON.stringify({ session_id: one, transcript_path: '/root.jsonl' }))
+  writeFileSync(prepared.spec.env!.HD_ACTIVITY_FILE, JSON.stringify({ session_id: one, transcript_path: '/child.jsonl', hook_event_name: 'PostToolUse' }))
+  expect(prepared.readActivity!()).toBeUndefined()
+})
+
+
+it('executes the activity hook without exposing its input or changing session identity', () => {
+  const prepared = new AgentSessions(dir).prepare(pane())
+  report(prepared.spec, one)
+  const output = runActivityHook(prepared.spec.env!, { session_id: one, hook_event_name: 'UserPromptSubmit', prompt: 'hello' })
+  expect(JSON.parse(output)).toEqual({})
+  expect(prepared.readActivity!()).toBe('working')
+  expect(JSON.parse(readFileSync(prepared.spec.env!.HD_SESSION_FILE, 'utf8')).session_id).toBe(one)
+})
+
+it('does not lose a root Stop when a child reports before the next poll', () => {
+  const prepared = new AgentSessions(dir).prepare(pane())
+  writeFileSync(prepared.spec.env!.HD_SESSION_FILE, JSON.stringify({ session_id: one, transcript_path: '/root.jsonl' }))
+  for (const [transcript_path, hook_event_name] of [['/root.jsonl', 'Stop'], ['/child.jsonl', 'PostToolUse']]) {
+    runActivityHook(prepared.spec.env!, { session_id: one, transcript_path, hook_event_name })
+  }
+  expect(prepared.readActivity!()).toBe('waiting')
+  expect(prepared.readActivity!()).toBeUndefined()
 })

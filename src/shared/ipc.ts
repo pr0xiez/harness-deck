@@ -16,6 +16,12 @@ export const IPC = {
   appSetBadge: 'app:setBadge',
   appCapture: 'app:capture',
 
+  workSnapshot: 'work:snapshot',
+  workMutate: 'work:mutate',
+  workChanged: 'work:changed',
+  workAccess: 'work:access',
+  workSetAccess: 'work:setAccess',
+
   // persisted state
   stateLoad: 'state:load',
   stateSave: 'state:save',
@@ -26,8 +32,14 @@ export const IPC = {
   profilesSaveCustom: 'profiles:saveCustom',
   profilesRemoveCustom: 'profiles:removeCustom',
 
+  // MCP configuration management
+  mcpList: 'mcp:list',
+  mcpMutate: 'mcp:mutate',
+
   // opencode — the lists the pane dialog picks from
   opencodeQuery: 'opencode:query',
+
+  githubQuery: 'github:query',
 
   // git
   gitInfo: 'git:info',
@@ -66,6 +78,7 @@ export const IPC = {
   /** main → renderer: the pane's process ended. */
   ptyExit: 'pty:exit',
   /** main → renderer: the pane went quiet, or spoke again. */
+  ptyAgentActivity: 'pty:agentActivity',
   ptyQuiet: 'pty:quiet',
 
   // Deck Remote — `remoteStatus` doubles as the main → renderer event channel.

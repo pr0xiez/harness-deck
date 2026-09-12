@@ -28,6 +28,8 @@ const SHORTCUTS: Array<[string, Array<[string, string]>]> = [
   [
     'Terminal',
     [
+      ['Shift+drag', 'Select text even when the harness captures the mouse'],
+      ['Ctrl+C', 'Copy selected text; interrupt when nothing is selected'],
       ['Ctrl+Shift+C', 'Copy selection'],
       ['Ctrl+Shift+V', 'Paste'],
       ['Ctrl+Shift+F', 'Find in pane'],
@@ -69,12 +71,12 @@ export function HelpDialog(): React.JSX.Element {
       <p className="help-lead">
         {isMac ? (
           <>
-            Terminals get every plain key combination, so the app keeps to <Kbd>⌘</Kbd>
+            Most app shortcuts use <Kbd>⌘</Kbd>
             <Kbd>⇧</Kbd> and <Kbd>⌥</Kbd>. <Kbd>⌘C</Kbd> and <Kbd>⌘V</Kbd> also work on a pane.
           </>
         ) : (
           <>
-            Terminals get every plain key combination, so the app keeps to <Kbd>Ctrl</Kbd>+
+            Most app shortcuts use <Kbd>Ctrl</Kbd>+
             <Kbd>Shift</Kbd> and <Kbd>Alt</Kbd>.
           </>
         )}
@@ -88,9 +90,9 @@ export function HelpDialog(): React.JSX.Element {
                 {rows.map(([keys, description]) => (
                   <tr key={keys}>
                     <td>
-                      <Kbd>{isMac ? forMac(keys) : keys}</Kbd>
+                      <Kbd>{isMac ? forMac(keys === 'Shift+drag' ? 'Alt+drag' : keys) : keys}</Kbd>
                     </td>
-                    <td>{description}</td>
+                    <td>{isMac && keys === 'Ctrl+C' ? 'Copy selected text' : description}</td>
                   </tr>
                 ))}
               </tbody>

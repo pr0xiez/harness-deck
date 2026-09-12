@@ -15,6 +15,9 @@ files:
   - out/**
   - package.json
 # node-pty ships a prebuilt .node per platform; it must stay outside the asar.
+extraResources:
+  - from: scripts/hd-work.cjs
+    to: hd-work.cjs
 asarUnpack:
   - "**/node_modules/@lydell/**"
 win:

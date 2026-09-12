@@ -1,4 +1,5 @@
 export type IconName =
+  | 'diff'
   | 'search'
   | 'maximize'
   | 'minimize'
@@ -33,6 +34,7 @@ export type IconName =
   | 'star'
 
 const PATHS: Record<IconName, React.JSX.Element> = {
+  diff: <><rect x="2.5" y="2" width="11" height="12" rx="1.5" /><path d="M5 5.5h6M5 10h6M8 7.5v5" /></>,
   search: (
     <>
       <circle cx="7" cy="7" r="4.5" />

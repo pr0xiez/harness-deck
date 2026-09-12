@@ -231,6 +231,22 @@ describeGit('diffStat', () => {
  * branch point, which is what makes it different from `diffStat` above.
  */
 describeGit('diffRange', () => {
+  it('marks shortened source lines as an incomplete preview', async () => {
+    writeFileSync(join(root, 'shared.txt'), 'x'.repeat(700) + '\n')
+    const diff = await diffRange({ dir: root })
+    expect(diff.error).toBeUndefined()
+    expect(diff.truncated).toBe(true)
+    expect(diff.patch).toContain('…')
+  })
+
+  it('ignores color configuration when producing a readable patch', async () => {
+    git(['config', 'color.ui', 'always'], root)
+    writeFileSync(join(root, 'shared.txt'), 'changed\n')
+    const diff = await diffRange({ dir: root })
+    expect(diff.patch).toContain('+changed')
+    expect(diff.patch).not.toContain('\x1b')
+  })
+
   /** A worktree of `root`, ready to be written to. */
   async function agent(name: string): Promise<string> {
     const branch = `hd/${name}`

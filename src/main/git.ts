@@ -70,6 +70,7 @@ async function run(args: string[], cwd: string, timeout = TIMEOUT): Promise<Ran>
 }
 
 interface Capped {
+  error?: string
   /** The first `keep` lines of output, joined. */
   text: string
   /** Lines the command produced in total, kept or not. */
@@ -91,21 +92,22 @@ function runCapped(args: string[], cwd: string, keep: number): Promise<Capped> {
     let lines = 0
     let carry = ''
     let settled = false
+    let shortened = false
+    let failure = ''
+    let stderr = ''
 
     const take = (line: string): void => {
       lines += 1
+      if (line.length > MAX_LINE) shortened = true
       if (kept.length < keep) kept.push(line.length > MAX_LINE ? `${line.slice(0, MAX_LINE)}…` : line)
     }
     const finish = (): void => {
       if (settled) return
       settled = true
       if (carry) take(carry)
-      done({ text: kept.join('\n'), lines, truncated: lines > kept.length })
+      done({ text: kept.join('\n'), lines, truncated: shortened || lines > kept.length, ...(failure ? { error: failure } : {}) })
     }
 
-    // `--no-index` reports a difference as exit status 1, and a diff that ran
-    // out of time has still told us something — so nothing here reads the exit
-    // status. Whatever arrived is the answer.
     const child = spawn('git', args, { cwd, env: shellEnv(), timeout: TIMEOUT, windowsHide: true })
     child.stdout?.setEncoding('utf8')
     child.stdout?.on('data', (chunk: string) => {
@@ -113,8 +115,14 @@ function runCapped(args: string[], cwd: string, keep: number): Promise<Capped> {
       carry = parts.pop() ?? ''
       parts.forEach(take)
     })
-    child.on('error', finish)
-    child.on('close', finish)
+    child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(0, 2000) })
+    child.on('error', (error) => { failure = error.message; finish() })
+    child.on('close', (code) => {
+      if (code !== 0 && !(code === 1 && args.includes('--no-index'))) {
+        failure = firstLine(stderr) || 'Git diff did not finish. Try refreshing.'
+      }
+      finish()
+    })
   })
 }
 
@@ -299,8 +307,8 @@ function align(rows: string[]): string[] {
  */
 async function newFile(path: string, root: string, keep: number): Promise<Capped & { stat: string }> {
   const [stat, patch] = await Promise.all([
-    run(['diff', '--no-index', '--stat', '--', NULL_PATH, path], root),
-    runCapped(['diff', '--no-index', '--', NULL_PATH, path], root, keep)
+    run(['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-index', '--stat', '--', NULL_PATH, path], root),
+    runCapped(['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-index', '--', NULL_PATH, path], root, keep)
   ])
   // ` /dev/null => src/new.ts | 42 +++` — the source side is what a block
   // captioned "new files" already says, so it comes off.
@@ -335,12 +343,15 @@ export async function diffRange(req: DiffRequest): Promise<DiffResult> {
   const keep = Math.max(1, Math.min(req.limit || DIFF_LINES, MAX_DIFF_LINES))
 
   const [tracked, patch, others] = await Promise.all([
-    run(['diff', '--stat', base], repo.root),
-    runCapped(['diff', base], repo.root, keep),
+    run(['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--stat', base], repo.root),
+    runCapped(['diff', '--no-ext-diff', '--no-textconv', '--no-color', base], repo.root, keep),
     // `-z`, because without it git quotes any path with an accent in it and the
     // quoted form is not a path anything can be asked to diff.
     run(['ls-files', '--others', '--exclude-standard', '-z'], repo.root)
   ])
+
+  if (!tracked.ok) return { ...blank, root: repo.root, branch: repo.branch, base, baseRef: ref, error: tracked.error || 'Unable to read Git changes.' }
+  if (!others.ok) return { ...blank, error: others.error || 'Unable to list new files.' }
 
   const untracked = others.stdout.split('\0').filter(Boolean)
   // Each new file is capped on its own and the composition is cut again below,
@@ -348,6 +359,9 @@ export async function diffRange(req: DiffRequest): Promise<DiffResult> {
   const news = await Promise.all(
     untracked.slice(0, MAX_UNTRACKED).map((path) => newFile(path, repo.root, keep))
   )
+
+  const failedPatch = [patch, ...news].find((part) => part.error)
+  if (failedPatch) return { ...blank, root: repo.root, branch: repo.branch, base, baseRef: ref, error: failedPatch.error }
 
   const shown = news.map((n) => n.stat).filter(Boolean)
   const rest = untracked.length - shown.length

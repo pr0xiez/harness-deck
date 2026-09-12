@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { isActionable, isLive, useDeck, type DeckWorkspace } from '../store'
+import { isActionable, isAgentPane, isLive, useDeck, type DeckWorkspace } from '../store'
+import { githubCount, useGitHub } from '../github'
 import { ACCENTS } from '../theme'
 import { Dropdown } from './ui'
 import { Icon } from './Icon'
@@ -31,6 +32,7 @@ interface RowProps {
 }
 
 function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): React.JSX.Element {
+  const githubWaiting = useGitHub(s => githubCount(s, workspace.cwd))
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const menuButton = useRef<HTMLButtonElement>(null)
@@ -44,8 +46,10 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
   // A pane you muted, snoozed or already looked at is not something this row
   // should still be asking you about.
   const waiting = workspace.panes.filter((p) => isActionable(p)).length
-  const running = workspace.panes.filter((p) => p.status === 'running').length
-  const exited = workspace.panes.filter((p) => p.status === 'exited').length
+  const agents = workspace.panes.filter(isAgentPane)
+  const working = agents.filter(p => isLive(p) && p.agentActivity === 'working').length
+  const unknown = agents.filter(p => isLive(p) && (p.agentActivity === undefined || p.agentActivity === 'unknown')).length
+  const summary = `${agents.length} agent${agents.length === 1 ? '' : 's'} · ${working} working · ${waiting} need attention${unknown ? ` · ${unknown} activity unavailable` : ''}`
 
   return (
     <div
@@ -53,7 +57,7 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
       style={{ ['--ws-accent' as string]: workspace.accent }}
       onClick={() => setActiveWorkspace(workspace.id)}
       onDoubleClick={() => setRenaming(true)}
-      title={collapsed ? `${workspace.name} — ${workspace.cwd}` : undefined}
+      title={collapsed ? `${workspace.name} — ${workspace.cwd}\n${summary}` : undefined}
     >
       <span className="ws-mark">{initials(workspace.name)}</span>
 
@@ -85,9 +89,13 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
       {/* A waiting count outranks the rest: the whole point is to see it on a
           workspace you are not looking at. */}
       <span className="ws-badges">
-        {running ? (
-          <span className="dot running" title={`${running} pane${running === 1 ? '' : 's'} running`} />
-        ) : null}
+        {githubWaiting > 0 ? <button className="count waiting" title={`${githubWaiting} GitHub PRs need attention`} onClick={event => {
+          event.stopPropagation()
+          setUi({ waitingQueue: true, attentionTab: 'github' })
+        }}>GH {githubWaiting}</button> : null}
+        {agents.length ? <span className="count agent-total" title={summary} aria-label={`${agents.length} agents`}>{agents.length}</span> : null}
+        {working ? <span className="count running" title={`${working} agents working`} aria-label={`${working} agents working`}><span className="dot running" />{working}</span> : null}
+        {unknown ? <span className="count activity-unknown" title={`${unknown} agents: activity unavailable — restart Codex panes and check /hooks`} aria-label={`${unknown} agents with unknown activity`}>?</span> : null}
         {waiting ? (
           <button
             className="count waiting"
@@ -95,17 +103,13 @@ function WorkspaceRow({ workspace, index, active, collapsed, home }: RowProps): 
             onClick={(event) => {
               // The row underneath switches workspace; this opens the queue.
               event.stopPropagation()
-              setUi({ waitingQueue: true })
+              setUi({ waitingQueue: true, attentionTab: 'agents' })
             }}
           >
             {waiting}
           </button>
         ) : null}
-        {!waiting && running ? <span className="count running">{running}</span> : null}
-        {!waiting && !running && exited ? <span className="count exited">{exited}</span> : null}
-        {!waiting && !running && !exited && workspace.panes.length ? (
-          <span className="count idle">{workspace.panes.length}</span>
-        ) : null}
+
       </span>
 
       {!collapsed ? (
@@ -232,7 +236,7 @@ export function Sidebar(): React.JSX.Element {
             key={workspace.id}
             workspace={workspace}
             index={index}
-            active={workspace.id === activeId}
+            active={ui.page === 'deck' && workspace.id === activeId}
             collapsed={collapsed}
             home={home}
           />
@@ -240,6 +244,14 @@ export function Sidebar(): React.JSX.Element {
       </div>
 
       <div className="sidebar-foot">
+        <button className={`btn subtle full ${ui.page === 'board' ? 'mcp-nav-active' : ''}`} title="Work board" aria-pressed={ui.page === 'board'} onClick={() => setUi({ page: 'board' })}>
+          <Icon name="grid" />
+          {!collapsed ? <span>Board</span> : null}
+        </button>
+        <button className={`btn subtle full ${ui.page === 'mcps' ? 'mcp-nav-active' : ''}`} title="Manage MCP servers" aria-pressed={ui.page === 'mcps'} onClick={() => setUi({ page: 'mcps' })}>
+          <Icon name="command" />
+          {!collapsed ? <span>MCPs</span> : null}
+        </button>
         <button
           className="btn subtle full"
           title="New workspace (Ctrl+Shift+N)"

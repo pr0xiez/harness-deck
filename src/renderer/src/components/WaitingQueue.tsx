@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { paneLabel } from '../paneLabel'
-import { isSnoozed, useDeck, type DeckWorkspace, type PaneView } from '../store'
+import { isAgentPane, isSnoozed, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { getTerminal } from '../terminals'
+import { AttentionTabs, GitHubQueue } from './GitHubQueue'
 import { Icon } from './Icon'
 
 const api = window.harness
@@ -28,7 +29,7 @@ interface Row {
  * until its snooze lapses or its bell wakes it.
  */
 const inQueue = (pane: PaneView, now: number): boolean =>
-  pane.status === 'waiting' && !pane.attentionMuted && !isSnoozed(pane, now)
+  isAgentPane(pane) && pane.status === 'waiting' && !pane.attentionMuted && !isSnoozed(pane, now)
 
 /** "just now", then seconds, then minutes, then hours — never a date. */
 function since(from: number | undefined, now: number): string {
@@ -59,6 +60,11 @@ function snoozeLabel(pane: PaneView): string {
  * unmodified keys — A, S, M, Enter — and the shared dialog would swallow them.
  */
 export function WaitingQueue(): React.JSX.Element {
+  const tab = useDeck(s => s.ui.attentionTab)
+  return tab === 'github' ? <GitHubQueue /> : <AgentQueue />
+}
+
+function AgentQueue(): React.JSX.Element {
   const workspaces = useDeck((s) => s.workspaces)
   const profiles = useDeck((s) => s.profiles)
   const setUi = useDeck((s) => s.setUi)
@@ -141,6 +147,10 @@ export function WaitingQueue(): React.JSX.Element {
   }
 
   const onKeyDown = (event: React.KeyboardEvent): void => {
+    if ((event.target as HTMLElement).closest('button, input, select')) {
+      if (event.key === 'Escape') close()
+      return
+    }
     const row = rows[at]
     const act = (run: () => void): void => {
       event.preventDefault()
@@ -193,6 +203,7 @@ export function WaitingQueue(): React.JSX.Element {
           </span>
         </div>
 
+        <AttentionTabs />
         <div className="queue-list">
           {rows.map((row, index) => {
             const { pane, workspace } = row

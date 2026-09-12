@@ -9,7 +9,7 @@ import type { Profile } from '@shared/types'
 import { agentLaunch } from '@shared/agent-session'
 import { paneLabel } from '../paneLabel'
 import { useDeck, type PaneView } from '../store'
-import { isReservedShortcut } from '../shortcuts'
+import { handleTerminalKey, terminalLinkHandler } from '../terminalInteraction'
 import { decideRestart, RESTART_CAP, type RestartDecision } from '../restart'
 import {
   createTerminalOutput,
@@ -20,6 +20,7 @@ import {
 import { terminalTheme } from '../theme'
 import { PaneSearch } from './PaneSearch'
 import { Icon } from './Icon'
+import { DiffViewer } from './DiffViewer'
 
 const api = window.harness
 
@@ -73,6 +74,7 @@ export function TerminalPane({
   // only now re-attaching to has been up longer than this says — which costs it
   // nothing but a slower return of its restart budget.
   const runStartedAt = useRef(Date.now())
+  const [diffOpen, setDiffOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [crashPlan, setCrashPlan] = useState<RestartDecision | null>(null)
@@ -102,7 +104,9 @@ export function TerminalPane({
     const host = hostRef.current
     if (!host) return
 
+    const linkHandler = terminalLinkHandler((uri) => api.openExternal(uri))
     const term = new Terminal({
+      linkHandler,
       allowProposedApi: true,
       fontSize: settings.fontSize,
       fontFamily: settings.fontFamily,
@@ -113,6 +117,7 @@ export function TerminalPane({
       disableStdin: lockedRef.current,
       theme: { ...terminalTheme, cursor: accent },
       macOptionIsMeta: true,
+      macOptionClickForcesSelection: true,
       minimumContrastRatio: 1.1,
       smoothScrollDuration: 0,
       overviewRuler: { width: 10 }
@@ -124,8 +129,7 @@ export function TerminalPane({
     term.loadAddon(search)
     term.loadAddon(
       new WebLinksAddon((event, uri) => {
-        event.preventDefault()
-        api.openExternal(uri)
+        linkHandler.activate(event, uri)
       })
     )
 
@@ -179,10 +183,11 @@ export function TerminalPane({
       })
     ]
 
-    // A locked pane hands every key straight past xterm: nothing is sent, and
-    // nothing is acted on locally either. The window's own handler still sees
-    // them, so Ctrl+Shift+C, the palette and the shortcuts keep working.
-    term.attachCustomKeyEventHandler((event) => !lockedRef.current && !isReservedShortcut(event))
+    // Copy selections even when locked; plain Ctrl+C still interrupts when
+    // nothing is selected. App shortcuts continue to bypass xterm.
+    term.attachCustomKeyEventHandler((event) =>
+      handleTerminalKey(event, term, lockedRef.current, (text) => api.clipboard.write(text))
+    )
 
     const observer = new ResizeObserver(() => handle.refit())
     observer.observe(host)
@@ -221,7 +226,8 @@ export function TerminalPane({
           sessionGeneration: pane.sessionGeneration
         },
         Math.max(term.cols, 20),
-        Math.max(term.rows, 5)
+        Math.max(term.rows, 5),
+        workspaceId
       )
       // A restart may have torn this terminal down while the spawn was in flight.
       if (cancelled) return
@@ -235,10 +241,14 @@ export function TerminalPane({
         .workspaces.flatMap((w) => w.panes)
         .find((p) => p.id === paneId)
       if (!(current?.status === 'exited' && result.status === 'running')) {
-        setPaneStatus(paneId, result.status, result.exitCode ?? null)
+        // A hook can arrive while ensure is in flight; do not overwrite it.
+        if (result.status === 'exited' || current?.agentActivity === undefined) {
+          updatePane(paneId, { agentActivity: result.agentActivity })
+          setPaneStatus(paneId, result.status !== 'exited' && result.agentActivity === 'waiting' ? 'waiting' : result.status, result.exitCode ?? null)
+        }
       }
       handle.refit()
-      if (active) term.focus()
+      if (active && useDeck.getState().ui.page !== 'mcps') term.focus()
     })()
 
     return () => {
@@ -341,6 +351,9 @@ export function TerminalPane({
   }, [copied])
 
   const statusLabel =
+    pane.status !== 'exited' && pane.agentActivity !== undefined
+      ? ({ unknown: 'Agent activity unavailable — restart the pane and check Codex /hooks', ready: 'Agent ready', working: 'Agent working', waiting: 'Agent waiting for you' }[pane.agentActivity])
+      :
     pane.status === 'running'
       ? 'running'
       : pane.status === 'waiting'
@@ -371,7 +384,7 @@ export function TerminalPane({
         <span className="pane-title" title={`${pane.command} ${pane.args.join(' ')}`.trim()}>
           {title}
         </span>
-        <span className={`pane-status ${pane.status}`} title={statusLabel} />
+        <span className={`pane-status ${pane.status !== 'exited' && (pane.agentActivity === 'ready' || pane.agentActivity === 'unknown') ? 'idle' : pane.status}`} title={statusLabel} />
         {showActivity ? <span className="pane-dot" title="new output" /> : null}
         {/* Says so without being hovered: the point of the lock is knowing
             which pane not to type into before you have typed into it. */}
@@ -383,6 +396,9 @@ export function TerminalPane({
         ) : null}
         <span className="pane-index">{index + 1}</span>
         <div className="pane-actions">
+          <button className="icon-btn" title="View changes" onClick={() => setDiffOpen(true)}>
+            <Icon name="diff" />
+          </button>
           <button
             className="icon-btn"
             title="Find in pane (Ctrl+Shift+F)"
@@ -523,6 +539,7 @@ export function TerminalPane({
         ) : null}
       </div>
 
+      {diffOpen ? <DiffViewer dir={pane.cwd} title={title} onClose={() => setDiffOpen(false)} /> : null}
       {paneCount > 1 ? <div className="pane-glow" aria-hidden /> : null}
     </section>
   )

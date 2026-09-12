@@ -1,5 +1,5 @@
-import type { BrowserWindow } from 'electron'
-import { execFileSync } from 'node:child_process'
+import { app, type BrowserWindow } from 'electron'
+import { execFile, execFileSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -10,6 +10,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { rm } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
@@ -453,6 +454,99 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
       p.workspaces < 1 && 'workspace list'
     ].filter(Boolean)
     return missing.length ? `missing ${missing.join(', ')}` : null
+  })
+
+  await record('MCP configuration crosses IPC and the page preserves terminals', async () => {
+    // The main-process manager uses a disposable home in smoke mode. No configured
+    // command is launched: this checks inventory and writes, not MCP connectivity.
+    const failure = await win.webContents.executeJavaScript(`(async () => {
+      const api = window.harness.mcp;
+      const target = { harness: 'codex', environment: 'native' };
+      const first = await api.list(target);
+      const source = first.sources.find(s => s.scope === 'user');
+      if (!source || !source.writable) return 'no writable disposable MCP source';
+      const saved = await api.mutate({ action: 'add', sourceId: source.id,
+        revision: source.revision, server: { name: 'deck-smoke', transport: 'stdio',
+          command: 'node', args: ['--version'], env: { TOKEN: 'smoke-secret' } } });
+      if (!saved.ok) return saved.error;
+      const second = await api.list(target);
+      if (!second.entries.some(e => e.name === 'deck-smoke')) return 'saved server absent';
+      if (JSON.stringify(second).includes('smoke-secret')) return 'credential leaked across IPC';
+      window.__mcpSmokeTerminals = [...document.querySelectorAll('.xterm')];
+      document.querySelector('button[title="Manage MCP servers"]').click();
+      return null;
+    })()`, true) as string | null
+    if (failure) return failure
+    const shown = await until(async () => Boolean(await win.webContents.executeJavaScript(
+      `!!(document.querySelector('.mcp-server') && document.querySelector('.mcp-page'))`, true
+    )), 10_000)
+    if (!shown) return 'MCP page never displayed its saved server'
+    await win.webContents.executeJavaScript(`document.querySelector('.mcp-server').click()`, true)
+    const detailsShown = await until(async () => Boolean(await win.webContents.executeJavaScript(`!!document.querySelector('.mcp-details')`, true)), 2_000)
+    if (!detailsShown) return 'MCP details did not open'
+    await Promise.race([
+      win.webContents.executeJavaScript(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`, true),
+      wait(250)
+    ])
+    const screenshot = await win.webContents.capturePage()
+    mkdirSync(join(process.cwd(), '.tmp'), { recursive: true })
+    writeFileSync(join(process.cwd(), '.tmp', 'mcp-page.png'), screenshot.toPNG())
+    const retained = await win.webContents.executeJavaScript(`(() => {
+      const before = window.__mcpSmokeTerminals;
+      const after = [...document.querySelectorAll('.xterm')];
+      const kept = before.length === after.length && before.every((el, i) => el === after[i]);
+      const hidden = getComputedStyle(document.querySelector('.deck')).display === 'none';
+      [...document.querySelectorAll('.mcp-page button')].find(b => b.textContent === 'Back to workspace').click();
+      delete window.__mcpSmokeTerminals;
+      return kept && hidden;
+    })()`, true) as boolean
+    const returned = await until(async () => await win.webContents.executeJavaScript(`!document.querySelector('.mcp-page')`, true) as boolean, 2_000)
+    return retained && returned ? null : 'MCP navigation lost terminal mounts or failed to return'
+  })
+
+  await record('work board shares persisted cards with the bundled CLI and retains terminals', async () => {
+    try {
+      const enabled = await win.webContents.executeJavaScript('window.harness.work.setAccess(true)', true)
+      if (!enabled.enabled) return enabled.error || 'board access did not enable'
+      const client = app.isPackaged ? join(process.resourcesPath, 'hd-work.cjs') : join(app.getAppPath(), 'scripts/hd-work.cjs')
+      const cli = async (...args: string[]): Promise<any> => JSON.parse((await promisify(execFile)(process.execPath,
+        [client, '--discovery', join(app.getPath('userData'), 'work-board-runtime.json'), ...args],
+        { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 10_000 })).stdout)
+      if (process.platform === 'win32' && process.env.HD_WORK_WSL_SMOKE === '1') {
+        const listed = JSON.parse((await promisify(execFile)('wsl.exe', ['-e', 'sh', '-c',
+          'exec "$(wslpath -u "$1")" list', 'hd-work', enabled.wslCommand], { timeout: 20_000 })).stdout)
+        if (!listed.ok || !Array.isArray(listed.items)) return 'WSL wrapper could not read the board'
+      }
+      const created = await cli('create', '--title', 'Smoke board card')
+      if (!created.ok) return created.error
+      const edited = await cli('edit', created.item.id, '--revision', '1', '--description', 'Edited by the harness CLI')
+      if (!edited.ok) return edited.error
+      const moved = await cli('move', created.item.id, '--revision', '2', '--status', 'in_progress')
+      if (!moved.ok) return moved.error
+      await win.webContents.executeJavaScript(`window.__boardTerminals = [...document.querySelectorAll('.xterm')]; document.querySelector('button[title="Work board"]').click()`, true)
+      const shown = await until(async () => Boolean(await win.webContents.executeJavaScript(`document.querySelector('.work-in_progress')?.textContent.includes('Smoke board card')`, true)), 5000)
+      if (!shown) return 'CLI card did not appear in board'
+      await cli('move', created.item.id, '--revision', '3', '--status', 'done')
+      const live = await until(async () => Boolean(await win.webContents.executeJavaScript(`document.querySelector('.work-done')?.textContent.includes('Smoke board card')`, true)), 5000)
+      if (!live) return 'open board did not receive CLI move'
+      const persisted = JSON.parse(readFileSync(join(app.getPath('userData'), 'work-board.json'), 'utf8'))
+      if (!persisted.items.some((i: { id: string; status: string }) => i.id === created.item.id && i.status === 'done')) return 'CLI move was not persisted'
+      await win.webContents.executeJavaScript(`new Promise(resolve => requestAnimationFrame(resolve))`, true)
+      mkdirSync(join(process.cwd(), '.tmp'), { recursive: true })
+      writeFileSync(join(process.cwd(), '.tmp', 'work-board.png'), (await win.webContents.capturePage()).toPNG())
+      const retained = await win.webContents.executeJavaScript(`(() => {
+        const before = window.__boardTerminals;
+        const after = [...document.querySelectorAll('.xterm')];
+        const kept = before.length === after.length && before.every((el, i) => el === after[i]);
+        const hidden = getComputedStyle(document.querySelector('.deck')).display === 'none';
+        document.querySelector('.ws-row').click();
+        delete window.__boardTerminals;
+        return kept && hidden;
+      })()`, true)
+      return retained ? null : 'board navigation lost terminals'
+    } finally {
+      await win.webContents.executeJavaScript('window.harness.work.setAccess(false)', true)
+    }
   })
 
   // The lock is only worth having if it is one click away on the pane you are

@@ -10,6 +10,8 @@ import { BroadcastBar, fencedBlock } from './components/BroadcastBar'
 import { DeckSearch } from './components/DeckSearch'
 import { CommandPalette } from './components/CommandPalette'
 import { WaitingQueue } from './components/WaitingQueue'
+import { WorkBoardPage } from './components/WorkBoardPage'
+import { McpPage } from './components/McpPage'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
 import { OpencodePaneDialog } from './components/OpencodePaneDialog'
@@ -18,6 +20,7 @@ import { SaveErrorToast } from './components/SaveErrorToast'
 import { NoticeToast } from './components/NoticeToast'
 import { VoiceHud } from './components/VoiceHud'
 import { Icon } from './components/Icon'
+import { githubCount, useGitHub, useGitHubPolling } from './github'
 import { useVoice } from './voice'
 
 const api = window.harness
@@ -39,13 +42,15 @@ export function App(): React.JSX.Element {
     s.workspaces.reduce((total, ws) => total + ws.panes.filter((p) => isActionable(p)).length, 0)
   )
 
+  useGitHubPolling(workspaces.map(w => w.cwd), hydrated)
+  const githubWaiting = useGitHub(githubCount)
+
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
 
-  // Panes waiting for you are the app's only unread count, so the platform gets
-  // to show it: a dock badge, or a taskbar flash on Windows.
+  // Count each GitHub PR once, even when multiple workspaces share its repository.
   useEffect(() => {
-    api.attention.setBadge(badgeEnabled ? waitingCount : 0)
-  }, [badgeEnabled, waitingCount])
+    api.attention.setBadge(badgeEnabled ? waitingCount + githubWaiting : 0)
+  }, [badgeEnabled, waitingCount, githubWaiting])
 
   // Route pty output into the matching terminal and track background activity.
   useEffect(() => {
@@ -56,7 +61,7 @@ export function App(): React.JSX.Element {
       if (!workspace) return
       const pane = workspace.panes.find((p) => p.id === id)
       if (!pane || pane.activity) return
-      const focused = workspace.id === state.activeWorkspaceId && workspace.activePaneId === id
+      const focused = state.ui.page === 'deck' && workspace.id === state.activeWorkspaceId && workspace.activePaneId === id
       if (!focused) state.updatePane(id, { activity: true })
     })
 
@@ -294,6 +299,7 @@ export function App(): React.JSX.Element {
 
       const shortcut = matchShortcut(event, state.info?.platform === 'darwin')
       if (!shortcut) return
+      if (state.ui.page !== 'deck' && !['copy-selection-mac', 'open-settings', 'open-help', 'toggle-palette', 'new-workspace', 'workspace-by-digit', 'next-workspace', 'prev-workspace'].includes(shortcut.id)) return
       if (typing && !shortcut.whileTyping) return
       actions[shortcut.id]({
         event,
@@ -326,7 +332,7 @@ export function App(): React.JSX.Element {
       <TitleBar />
       <div className="app-body">
         <Sidebar />
-        <main className="deck">
+        <main className="deck" style={ui.page !== 'deck' ? { display: 'none' } : undefined} inert={ui.page !== 'deck'}>
           {active ? <Toolbar workspace={active} /> : null}
           <div className="deck-panes">
             {workspaces
@@ -335,7 +341,7 @@ export function App(): React.JSX.Element {
                 <PaneArea
                   key={workspace.id}
                   workspace={workspace}
-                  visible={workspace.id === activeWorkspaceId}
+                  visible={ui.page === 'deck' && workspace.id === activeWorkspaceId}
                 />
               ))}
             {!workspaces.length ? (
@@ -354,6 +360,8 @@ export function App(): React.JSX.Element {
           </div>
           {active && ui.broadcast ? <BroadcastBar workspace={active} /> : null}
         </main>
+        {ui.page === 'mcps' ? <McpPage /> : null}
+        {ui.page === 'board' ? <WorkBoardPage /> : null}
       </div>
 
       <UpdateToast />

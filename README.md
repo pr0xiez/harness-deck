@@ -17,12 +17,72 @@ Built with Electron, React and xterm.js; real PTYs via `node-pty`.
 colour, layout and set of panes. `Ctrl+1…9` jumps between them; processes in
 the ones you're not looking at keep running.
 
+**Work board** — Open **Board** in the sidebar or command palette to track
+cards across **Ideas**, **In progress**, **Won’t do** and **Done**. Add a title
+and description, optionally link a workspace, then drag cards between columns
+or use each card’s **Move to** selector. All moves are reversible. Cards survive
+workspace deletion and app restarts; a workspace link does not launch an agent.
+
+Expand **Harness access** on the board and enable it to let agents manage the
+same cards through the bundled `hd-work` CLI. New local panes receive its folder
+on PATH; generated WSL agent launchers add it after loading the login shell.
+For existing panes or shells that reset PATH, use the full CLI path shown on
+Board (quote paths containing spaces; PowerShell needs `&` before a quoted
+command). Copy the agent instructions there into a harness prompt.
+
+```sh
+hd-work list --status ideas
+hd-work create --title "Fix login bug" --description "Reproduce the failure"
+hd-work get <id>
+hd-work edit <id> --revision 1 --description-file notes.txt
+hd-work move <id> --revision 2 --status in_progress
+hd-work move <id> --revision 3 --status done
+```
+
+Use the revision returned by the latest read or successful change. Concurrent
+edits return a conflict instead of overwriting one another; reread and reconcile
+before retrying. Commands return JSON and exit nonzero on errors. Creation uses
+the launching pane’s workspace when available; `--workspace <id>` overrides it,
+and `--workspace unassigned` clears the link. `hd-work --help` lists commands.
+Status values are `ideas`, `in_progress`, `wont_do`, and `done`; completion is
+always explicit, never inferred from a terminal going quiet.
+
+Deck must be running and harness access enabled. The CLI ships with Deck and
+uses its Electron runtime, so it requires no separate Node installation. On
+Windows, `hd-work.cmd` serves native shells and `hd-work` serves WSL through
+Windows interop; use the Linux translation of the displayed WSL path. A
+`--description-file` passed through that WSL wrapper must be a Windows-readable
+path (for example, convert it with `wslpath -w`). SSH and container panes do
+not receive access automatically.
+
+Cards live in `work-board.json` in Deck’s user-data folder, separately from
+workspace snapshots. Backups use `.bak`. Unreadable or newer-version board data
+blocks editing instead of being replaced with an empty board. Restore a valid
+file and restart Deck to recover. Harness access is off initially, is remembered
+when enabled, and uses an authenticated loopback listener. Its connection file
+is refreshed when access starts; agents should use the CLI rather than editing
+board files directly. There is no cloud sync or permanent card deletion in this
+version; use Won’t do for discarded work.
+
 **Harness detection** — On startup the app scans your *login shell's* `PATH`
 (not the stripped-down environment a GUI app normally inherits) for `claude`,
-`codex`, `copilot`, `gemini`, `opencode`, `aider` and `cursor-agent`. On
+`codex`, `copilot` and `opencode`. On
 Windows it also looks inside WSL and offers those as separate profiles, so
 agents installed in your Linux home are one click away. Anything it can't find
 is still listed with the command to install it.
+
+**MCPs** — Open the sidebar's **MCPs** page (also in Settings and the command
+palette) to inspect and manage native Codex and Claude Code server definitions.
+Choose a harness, environment and project; add, edit or remove servers in the
+selected scope. Codex definitions can also be enabled or disabled. Edits preserve
+unrelated configuration and credentials, reject stale saves, and back up existing
+files before replacement. Running terminals remain mounted while you browse.
+
+The page shows **configured** servers; use your harness's `/mcp` panel for live
+connections and authentication. Default-distribution WSL discovery is read-only
+and requires bash and Python 3. OpenCode, plugin/account/managed definitions,
+custom Claude configuration homes and launcher-specific overrides are not yet
+managed here. See [MCP implementation notes](docs/mcp-management-investigation.md).
 
 **OpenCode options** — OpenCode's row in the harness menu (and the palette's
 "New pane" entries) carries a small sliders control that opens a dialog before
@@ -51,19 +111,48 @@ OpenAI, Groq or a local Whisper server. See [Dictation](#dictation).
 background pane produces output, and the process title the agent reports (so a
 pane says what Claude is doing, not just "claude").
 
-**Attention routing** — A running pane that stops producing output has hit a
-prompt, an approval gate, or finished, so it turns amber and the workspace it
-lives in shows a waiting count. `Ctrl+Shift+J` jumps to the next one, an amber
-**Waiting** button appears in the title bar, and the dock badge counts them. How
-long the silence has to last, and whether it badges at all, are in Settings.
+**Workspace status** — The neutral number is the total number of agent panes.
+The green indicator counts agents confirmed to be working; the amber button
+counts agents needing attention. Both can appear at once. Idle shells do not
+contribute to agent counts or attention. Hover for the count labels; `?` means
+activity tracking is unavailable, not that an agent is working.
 
-**The waiting queue** — `Ctrl+Shift+U`, the title bar's **Waiting** button, or
+Codex activity comes from its prompt, tool, approval, stop and interrupt hooks,
+independently of terminal redraws and silence. Restart existing Codex panes to
+load the hooks, and review/trust them in Codex `/hooks` if prompted. The hooks
+only report status; they do not grant approvals or modify global configuration.
+Other agents retain silence-based attention, but output alone is not labeled
+as confirmed work. `Ctrl+Shift+J` jumps to an agent needing attention, and the
+title bar and dock show the attention count. Timed snoozes expire automatically.
+
+**The waiting queue** — `Ctrl+Shift+U`, the title bar's **Attention** button, or
 the amber count on a sidebar workspace lists every waiting pane across every
 workspace, oldest first, each with the last three lines it printed: for an agent
 at an approval gate, that tail is the question. Three reversible verbs on each
 row — `A` acknowledge (seen it, until it stops again), `S` snooze (until it next
 goes quiet, then for an hour), `M` mute (this pane never counts). A snoozed pane
 that rings the terminal bell comes back at once.
+
+**GitHub attention** — Open **Attention → GitHub** (also available in the command
+palette) for review requests, feedback on your open PRs, and failed checks on
+your PRs in workspace repositories. Each PR has one row with links to GitHub
+and the relevant feedback or failing check. Workspace badges show GitHub counts;
+the app badge counts each PR once even when several workspaces share a repo.
+
+Install `gh` on the system running Deck and run `gh auth login` there. All GitHub
+access uses that CLI and its saved login, including GitHub Enterprise hosts;
+Deck does not store a GitHub token. A Windows app uses Windows `gh`, even when
+its agent panes run in WSL. Watching starts once workspaces load and can be
+turned off in the GitHub panel. Repositories refresh every 90 seconds, with a
+one-minute cache and at most three workspace queries at a time.
+
+**Acknowledge** hides a PR from counts until its actionable details change;
+**Snooze 1 hour** suppresses it until the hour ends or a new signal arrives.
+These choices survive restarts and apply only in Deck. Use **Show acknowledged
+and snoozed** to restore an item. Errors retain the last successful results and
+show the connection problem. Each repository checks up to 100 authored PRs and
+100 direct review requests, with a notice when that limit is reached. This first
+version does not include team-only review requests, mentions, or merge-ready alerts.
 
 **Survives restarts** — Workspaces, panes, folders and layout are saved to
 `workspaces.json` in the app's user-data folder. Reloading the window
@@ -241,8 +330,12 @@ use.
 
 ## Keyboard
 
-Terminals get every plain key combination, so the app keeps to `Ctrl+Shift`
-and `Alt`. On macOS use `Cmd` in place of `Ctrl` — plus `Cmd+C` / `Cmd+V` on a
+Drag to select terminal text; if the harness captures the mouse, hold `Shift`
+while dragging (`Option` on macOS). `Ctrl+C` copies selected text and interrupts
+the command when nothing is selected. `Ctrl+Shift+C` also copies selections.
+Terminal web links open in your default browser.
+
+Most app shortcuts use `Ctrl+Shift` and `Alt`. On macOS use `Cmd` in place of `Ctrl` — plus `Cmd+C` / `Cmd+V` on a
 pane, and `Cmd+Alt+I` for developer tools.
 
 | Keys | Action |

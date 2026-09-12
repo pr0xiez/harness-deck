@@ -30,9 +30,16 @@ import type {
 } from '@shared/types'
 import { IPC, type IpcChannel } from '@shared/ipc'
 import { addWorktree, diffRange, diffStat, info as repoInfo, removeWorktree } from './git'
+import { queryGitHub } from './github'
 import { PasteGate } from './paste-gate'
 import { resolveWithin } from './paths'
 import { decidePermission, originOf, type TrustedPage } from './permissions'
+import { WorkBoardService } from './work-board'
+import { WorkBoardAccess } from './work-board-access'
+import { commandName } from '@shared/remote'
+import { shellEnv } from './shell-env'
+import { McpManager } from './mcp'
+import type { McpMutation, McpTarget } from '@shared/mcp'
 import { queryOpencode } from './opencode'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
@@ -57,6 +64,7 @@ const isMac = process.platform === 'darwin'
 
 let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
+let workAccess: WorkBoardAccess | undefined
 /** Records the paste chord off real keyboard input; gates `clipboard:read`. */
 const pasteGate = new PasteGate()
 /** Set when we are quitting to hand over to an installer — skip the pane prompt. */
@@ -483,7 +491,17 @@ const REMOTE_OFF: RemoteStatus = {
   clients: 0
 }
 
-function registerIpc(): void {
+async function registerIpc(): Promise<void> {
+  const work = new WorkBoardService(app.getPath('userData'), board => send(IPC.workChanged, board))
+  workAccess = new WorkBoardAccess(app.getPath('userData'), work, process.execPath, app.isPackaged ? join(process.resourcesPath, 'hd-work.cjs') : join(app.getAppPath(), 'scripts/hd-work.cjs'))
+  if (!smoke) await workAccess.restore()
+  ipcMain.handle(IPC.workSnapshot, () => work.snapshot())
+  ipcMain.handle(IPC.workMutate, (_e, change: unknown) => work.mutate(change))
+  ipcMain.handle(IPC.workAccess, () => workAccess!.status())
+  ipcMain.handle(IPC.workSetAccess, (_e, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') throw Error('Expected an access toggle')
+    return workAccess!.setEnabled(enabled)
+  })
   ipcMain.handle(IPC.appInfo, () => ({
     platform: process.platform,
     versions: {
@@ -523,9 +541,17 @@ function registerIpc(): void {
     return detectProfiles()
   })
 
+  const mcps = new McpManager(smoke ? { home: join(app.getPath('userData'), 'mcp-home'), env: () => ({}) } : {})
+  ipcMain.handle(IPC.mcpList, (_e, target: McpTarget) =>
+    mcps.list(smoke ? { ...target, cwd: undefined } : target)
+  )
+  ipcMain.handle(IPC.mcpMutate, (_e, change: McpMutation) => mcps.mutate(change))
+
   ipcMain.handle(IPC.opencodeQuery, (_e, profileId: string, cwd?: string) =>
     queryOpencode(profileId, cwd)
   )
+
+  ipcMain.handle(IPC.githubQuery, (_e, cwd: unknown) => queryGitHub(cwd))
 
   ipcMain.handle(IPC.gitInfo, (_e, dir: string) => repoInfo(dir))
   ipcMain.handle(IPC.gitAddWorktree, (_e, req: WorktreeRequest) => addWorktree(req))
@@ -546,9 +572,24 @@ function registerIpc(): void {
   ipcMain.handle(IPC.updateSetChannel, (_e, channel: UpdateChannel) => setChannel(channel))
   ipcMain.handle(IPC.updateInstall, () => install())
 
-  ipcMain.handle(IPC.ptyEnsure, (_e, spec: PaneSpec, cols: number, rows: number) =>
-    ptys!.ensure(spec, cols, rows)
-  )
+  ipcMain.handle(IPC.ptyEnsure, (_e, spec: PaneSpec, cols: number, rows: number, workspaceId?: string) => {
+    const name = commandName(spec.command)
+    const env = { ...spec.env }
+    // Runtime connection details are never written into persisted Pane.env.
+    for (const key of ['HD_WORK_BIN', 'HD_WORK_DISCOVERY', 'HD_WORK_WORKSPACE']) env[key] = ''
+    if (workAccess && !['ssh', 'docker'].includes(name)) {
+      env.HD_WORK_BIN = workAccess.bin
+      env.HD_WORK_DISCOVERY = workAccess.discovery
+      if (typeof workspaceId === 'string') env.HD_WORK_WORKSPACE = workspaceId
+      if (name === 'wsl') {
+        env.WSLENV = `${env.WSLENV || shellEnv().WSLENV || ''}:HD_WORK_BIN/p:HD_WORK_DISCOVERY/p:HD_WORK_WORKSPACE`
+      } else {
+        env.PATH = `${workAccess.bin}${process.platform === 'win32' ? ';' : ':'}${env.PATH || env.Path || shellEnv().PATH || ''}`
+        if (process.platform === 'win32') env.Path = env.PATH
+      }
+    }
+    return ptys!.ensure({ ...spec, env }, cols, rows)
+  })
   ipcMain.on(IPC.ptyWrite, (_e, id: string, data: string) => ptys!.write(id, data))
   ipcMain.on(IPC.ptyAcknowledge, (event, id: string, flowId: number, offset: number) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) return
@@ -730,7 +771,7 @@ if (!app.requestSingleInstanceLock()) {
     const scrollback = new ScrollbackStore(app.getPath('userData'))
     pruneScrollback(scrollback)
     ptys = new PtyManager(send, undefined, () => quietMs, scrollback, new AgentSessions(app.getPath('userData')))
-    registerIpc()
+    await registerIpc()
     // Before the window, so the renderer hydrates a state file it did not write.
     if (smoke) seedSmokeState()
     mainWindow = createWindow()
@@ -769,6 +810,7 @@ if (!app.requestSingleInstanceLock()) {
       return
     }
     quitConfirmed = true
+    void workAccess?.stop()
     disposeUpdater()
     ptys?.disposeAll()
   })

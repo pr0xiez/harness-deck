@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { isActionable, isLive, useDeck } from '../store'
+import { githubCount, useGitHub } from '../github'
 import { Icon } from './Icon'
 
 const api = window.harness
 
 export function TitleBar(): React.JSX.Element {
+  const githubWaiting = useGitHub(githubCount)
   const [maximized, setMaximized] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const isMac = useDeck((s) => s.info?.platform === 'darwin')
@@ -54,19 +56,16 @@ export function TitleBar(): React.JSX.Element {
       <div className="titlebar-drag" />
 
       <div className="titlebar-right">
-        {/* Only while something is waiting: at zero it would be chrome with
-            nothing behind it, and the amber appearing is itself the signal. */}
-        {waitingCount ? (
-          <button
-            className="ghost-btn waiting"
-            title={`${waitingCount} pane${waitingCount === 1 ? '' : 's'} waiting for you — open the queue (Ctrl+Shift+U)`}
-            onClick={() => setUi({ waitingQueue: true })}
-          >
-            <Icon name="bell" />
-            <span>Waiting</span>
-            <span className="count waiting">{waitingCount}</span>
-          </button>
-        ) : null}
+        {/* Always accessible for GitHub setup and acknowledged items. */}
+        <button
+          className={`ghost-btn ${waitingCount + githubWaiting ? 'waiting' : ''}`}
+          title="Agent and GitHub attention (Ctrl+Shift+U)"
+          onClick={() => setUi({ waitingQueue: true, attentionTab: githubWaiting && !waitingCount ? 'github' : 'agents' })}
+        >
+          <Icon name="bell" />
+          <span>Attention</span>
+          {waitingCount + githubWaiting > 0 ? <span className="count waiting">{waitingCount + githubWaiting}</span> : null}
+        </button>
         {updateReady ? (
           <button
             className="ghost-btn on"

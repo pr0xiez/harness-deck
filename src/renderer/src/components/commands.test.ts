@@ -181,6 +181,7 @@ describe('buildCommands', () => {
       'Templates',
       'Workspace',
       'Panes',
+      'GitHub',
       'Active pane',
       'Application'
     ])

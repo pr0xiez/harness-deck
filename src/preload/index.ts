@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AgentActivityEvent,
   AppInfo,
   CheckpointInfo,
   DiffRequest,
@@ -30,6 +31,9 @@ import type {
   WorktreeRequest,
   WorktreeResult
 } from '@shared/types'
+import type { GitHubSnapshot } from '@shared/github'
+import type { McpInventory, McpMutation, McpMutationResult, McpTarget } from '@shared/mcp'
+import type { WorkAccess, WorkBoard, WorkMutation, WorkResult } from '@shared/work-board'
 import { IPC, type IpcChannel } from '@shared/ipc'
 
 function subscribe<T>(channel: IpcChannel, handler: (payload: T) => void): () => void {
@@ -40,6 +44,14 @@ function subscribe<T>(channel: IpcChannel, handler: (payload: T) => void): () =>
 
 const api = {
   info: (): Promise<AppInfo> => ipcRenderer.invoke(IPC.appInfo),
+
+  work: {
+    snapshot: (): Promise<WorkResult> => ipcRenderer.invoke(IPC.workSnapshot),
+    mutate: (change: WorkMutation): Promise<WorkResult> => ipcRenderer.invoke(IPC.workMutate, change),
+    onChanged: (handler: (board: WorkBoard) => void) => subscribe(IPC.workChanged, handler),
+    access: (): Promise<WorkAccess> => ipcRenderer.invoke(IPC.workAccess),
+    setAccess: (enabled: boolean): Promise<WorkAccess> => ipcRenderer.invoke(IPC.workSetAccess, enabled)
+  },
 
   loadState: (): Promise<PersistedState | null> => ipcRenderer.invoke(IPC.stateLoad),
   /** Resolves with what became of the write, so the renderer can say when it failed. */
@@ -60,9 +72,18 @@ const api = {
   },
 
   /** The lists the opencode pane dialog picks from — models, agents, sessions. */
+  mcp: {
+    list: (target: McpTarget): Promise<McpInventory> => ipcRenderer.invoke(IPC.mcpList, target),
+    mutate: (change: McpMutation): Promise<McpMutationResult> => ipcRenderer.invoke(IPC.mcpMutate, change)
+  },
+
   opencode: {
     query: (profileId: string, cwd?: string): Promise<OpencodeInfo> =>
       ipcRenderer.invoke(IPC.opencodeQuery, profileId, cwd)
+  },
+
+  github: {
+    query: (cwd: string): Promise<GitHubSnapshot> => ipcRenderer.invoke(IPC.githubQuery, cwd)
   },
 
   git: {
@@ -113,8 +134,8 @@ const api = {
   },
 
   pty: {
-    ensure: (spec: PaneSpec, cols: number, rows: number): Promise<EnsureResult> =>
-      ipcRenderer.invoke(IPC.ptyEnsure, spec, cols, rows),
+    ensure: (spec: PaneSpec, cols: number, rows: number, workspaceId?: string): Promise<EnsureResult> =>
+      ipcRenderer.invoke(IPC.ptyEnsure, spec, cols, rows, workspaceId),
     write: (id: string, data: string): void => ipcRenderer.send(IPC.ptyWrite, id, data),
     acknowledge: (id: string, flowId: number, offset: number): void =>
       ipcRenderer.send(IPC.ptyAcknowledge, id, flowId, offset),
@@ -128,6 +149,8 @@ const api = {
     onData: (handler: (event: PtyDataEvent) => void): (() => void) =>
       subscribe(IPC.ptyData, handler),
     onExit: (handler: (event: PtyExitEvent) => void): (() => void) => subscribe(IPC.ptyExit, handler),
+    onAgentActivity: (handler: (event: AgentActivityEvent) => void): (() => void) =>
+      subscribe(IPC.ptyAgentActivity, handler),
     onQuiet: (handler: (event: PtyQuietEvent) => void): (() => void) =>
       subscribe(IPC.ptyQuiet, handler),
     /**

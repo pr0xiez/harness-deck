@@ -1,5 +1,7 @@
 import { create } from 'zustand'
+import { agentLaunch } from '@shared/agent-session'
 import type {
+  AgentActivity,
   AppInfo,
   AttentionSettings,
   LayoutMode,
@@ -83,6 +85,7 @@ interface StoredPane extends Omit<Pane, 'status' | 'exitCode' | 'activity' | 'be
 }
 
 export interface PaneView extends Pane {
+  agentActivity?: AgentActivity
   autostart?: boolean
   /**
    * Never written to disk — the pane exists for one run of one command (the
@@ -117,6 +120,7 @@ export interface DeckWorkspace extends Workspace {
 }
 
 interface UiState {
+  page: 'deck' | 'mcps' | 'board'
   palette: boolean
   settings: boolean
   help: boolean
@@ -140,6 +144,7 @@ interface UiState {
    */
   pendingInsert: string | null
   /** Every pane waiting for you, across all workspaces, with its last lines. See HD-15. */
+  attentionTab: 'agents' | 'github'
   waitingQueue: boolean
   /** Workspace whose setup command and actions are being edited. See HD-16. */
   workspaceDialogFor: string | null
@@ -322,6 +327,7 @@ export const useDeck = create<DeckState>((set, get) => ({
   repos: {},
   settings: DEFAULT_SETTINGS,
   ui: {
+    page: 'deck',
     palette: false,
     settings: false,
     help: false,
@@ -334,6 +340,7 @@ export const useDeck = create<DeckState>((set, get) => ({
     findAll: false,
     compare: false,
     pendingInsert: null,
+    attentionTab: 'agents',
     waitingQueue: false,
     workspaceDialogFor: null,
     shipFor: null,
@@ -495,6 +502,7 @@ export const useDeck = create<DeckState>((set, get) => ({
     set({
       workspaces: [...workspaces, ws],
       activeWorkspaceId: ws.id,
+      ui: { ...get().ui, page: 'deck' },
       mounted: [...get().mounted, ws.id]
     })
     return ws.id
@@ -604,6 +612,7 @@ export const useDeck = create<DeckState>((set, get) => ({
     const { mounted } = get()
     set({
       activeWorkspaceId: id,
+      ui: { ...get().ui, page: 'deck' },
       mounted: mounted.includes(id) ? mounted : [...mounted, id]
     })
   },
@@ -750,6 +759,7 @@ export const useDeck = create<DeckState>((set, get) => ({
                       ...(freshSession ? { sessionGeneration: uid('session'), processTitle: undefined } : {}),
                       epoch: p.epoch + 1,
                       status: 'idle' as PaneStatus,
+                      agentActivity: undefined,
                       exitCode: null,
                       autostart: true,
                       activity: false,
@@ -918,7 +928,11 @@ export const useDeck = create<DeckState>((set, get) => ({
     set({ settings: { ...settings, broadcastHistory: broadcastHistory.slice(0, BROADCAST_HISTORY) } })
   },
 
-  setUi: (patch) => set({ ui: { ...get().ui, ...patch } }),
+  setUi: (patch) => set({ ui: { ...get().ui, ...(patch.page && patch.page !== 'deck' ? {
+    settings: false, profileMenu: false, paneMenuFor: null, paneDialogFor: null,
+    compare: false, shipFor: null, opencodeFor: null, findAll: false, broadcast: false,
+    waitingQueue: false
+  } : {}), ...patch } }),
 
   setNotice: (notice) => set({ notice })
 }))
@@ -933,9 +947,8 @@ export const isLive = (pane: { status: PaneStatus }): boolean =>
 
 /**
  * Is this pane's snooze still in force? "Until next quiet" runs until the quiet
- * handler lifts it; an hour-long one expires on its own, and is re-read rather
- * than cleared on a timer — nothing else in the app is waiting on the moment it
- * lapses, and the next thing that touches the store notices.
+ * handler lifts it; an hour-long one expires on its own. startAttention clears expired
+ * timestamps so the aggregate badges refresh even when every terminal is silent.
  */
 export function isSnoozed(pane: PaneView, now: number = Date.now()): boolean {
   if (pane.snooze === undefined) return false
@@ -954,8 +967,13 @@ export function isSnoozed(pane: PaneView, now: number = Date.now()): boolean {
  * is the local truth, and muting is about the aggregates, not about lying to the
  * pane you are looking at.
  */
+export function isAgentPane(pane: PaneView): boolean {
+  return Boolean(agentLaunch(pane)) || useDeck.getState().profiles.some(p => p.id === pane.profileId && p.kind === 'agent')
+}
+
 export function isActionable(pane: PaneView, now: number = Date.now()): boolean {
   return (
+    isAgentPane(pane) &&
     pane.status === 'waiting' &&
     !pane.attentionMuted &&
     !pane.acknowledged &&
@@ -1061,12 +1079,37 @@ export function onQuietPane(handler: (event: QuietPaneEvent) => void): () => voi
  * here is turning it into a status the UI can route on.
  */
 export function startAttention(): () => void {
-  return api.pty.onQuiet(({ id, quiet }) => {
+  const offActivity = api.pty.onAgentActivity(({ id, activity }) => {
+    const state = useDeck.getState()
+    const pane = state.workspaces.flatMap(w => w.panes).find(p => p.id === id)
+    if (!pane || pane.status === 'exited') return
+    const waiting = activity === 'waiting'
+    state.updatePane(id, {
+      agentActivity: activity,
+      status: waiting ? 'waiting' : 'running',
+      ...(waiting && pane.agentActivity !== 'waiting' ? {
+        waitingSince: Date.now(), acknowledged: false, woke: false,
+        snooze: pane.snooze === 'quiet' ? undefined : pane.snooze
+      } : {})
+    })
+    if (waiting !== (pane.agentActivity === 'waiting')) {
+      for (const handler of [...quietSubscribers]) handler({ id, quiet: waiting, pane })
+    }
+  })
+  // Expiry is a state transition even when every terminal is silent.
+  const expiry = window.setInterval(() => {
+    const state = useDeck.getState(), now = Date.now()
+    for (const pane of state.workspaces.flatMap(w => w.panes)) {
+      if (typeof pane.snooze === 'number' && pane.snooze <= now) state.updatePane(pane.id, { snooze: undefined })
+    }
+  }, 1000)
+  const offQuiet = api.pty.onQuiet(({ id, quiet }) => {
     const state = useDeck.getState()
     const pane = state.workspaces.flatMap((w) => w.panes).find((p) => p.id === id)
     // An exit is the newer truth — a dead pane is not waiting for you — and
     // repeated events must not re-date an existing stop.
-    if (!pane || pane.status !== (quiet ? 'running' : 'waiting')) return
+    if (!pane || pane.agentActivity !== undefined || agentLaunch(pane)?.agent === 'codex' ||
+        !isAgentPane(pane) || pane.status !== (quiet ? 'running' : 'waiting')) return
 
     // Read before the transition lifts it: "until next quiet" ends *at* this
     // quiet, which is exactly the moment the pane becomes news again. An
@@ -1088,6 +1131,7 @@ export function startAttention(): () => void {
 
     for (const handler of [...quietSubscribers]) handler({ id, quiet, pane })
   })
+  return () => { offActivity(); offQuiet(); window.clearInterval(expiry) }
 }
 
 let saveTimer: number | undefined

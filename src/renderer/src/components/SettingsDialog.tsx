@@ -45,6 +45,11 @@ export function SettingsDialog(): React.JSX.Element {
     >
       <div className="settings-grid">
         <section>
+          <h3>MCP servers</h3>
+          <p>Manage MCP configuration for your coding harnesses.</p>
+          <button className="btn" onClick={() => setUi({ settings: false, page: 'mcps' })}>Manage MCPs</button>
+        </section>
+        <section>
           <h3>Terminal</h3>
           <Field label="Font size">
             <input

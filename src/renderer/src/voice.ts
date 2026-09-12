@@ -259,6 +259,7 @@ function resolveTarget(): VoiceTarget | null {
     if (sink.isFocused()) return { kind: 'sink', sinkId: sink.id, label: sink.label }
   }
   const state = useDeck.getState()
+  if (state.ui.page !== 'deck') return null
   const workspace = state.workspaces.find((w) => w.id === state.activeWorkspaceId)
   const pane = workspace?.panes.find((p) => p.id === workspace.activePaneId)
   if (!pane) return null
@@ -525,6 +526,7 @@ function deliver(target: VoiceTarget, raw: string): void {
       .getState()
       .workspaces.flatMap((w) => w.panes)
       .find((p) => p.id === target.paneId)
+    if (useDeck.getState().ui.page !== 'deck') return copyInstead(text, 'The workspace is hidden')
     if (!pane) return copyInstead(text, 'That pane is gone')
     if (!isLive(pane)) return copyInstead(text, 'That pane is not running')
     // Dictating into a build you locked is the same accident as typing into it,

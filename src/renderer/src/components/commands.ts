@@ -252,7 +252,13 @@ export function paneCommands(state: Deck, workspace: DeckWorkspace): Command[] {
       group: 'Panes',
       label: 'Waiting queue',
       hint: 'Ctrl+Shift+U',
-      run: () => state.setUi({ waitingQueue: true })
+      run: () => state.setUi({ waitingQueue: true, attentionTab: 'agents' })
+    },
+    {
+      id: 'github:attention',
+      group: 'GitHub',
+      label: 'GitHub attention',
+      run: () => state.setUi({ waitingQueue: true, attentionTab: 'github' })
     }
   ]
 
@@ -421,6 +427,18 @@ export function activePaneCommands(
 export function appCommands(state: Deck): Command[] {
   return [
     {
+      id: 'app:board',
+      group: 'Application',
+      label: 'Open work board',
+      run: () => state.setUi({ page: 'board' })
+    },
+    {
+      id: 'app:mcps',
+      group: 'Application',
+      label: 'Manage MCP servers',
+      run: () => state.setUi({ page: 'mcps' })
+    },
+    {
       id: 'app:settings',
       group: 'Application',
       label: 'Settings',
@@ -490,7 +508,7 @@ export function buildCommands(state: Deck): Command[] {
   return [
     ...workspaceCommands(state),
     ...templateCommands(state),
-    ...(workspace
+    ...(workspace && state.ui.page === 'deck'
       ? [
           ...activeWorkspaceCommands(state, workspace),
           ...newPaneCommands(state, workspace),

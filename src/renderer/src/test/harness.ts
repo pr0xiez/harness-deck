@@ -41,6 +41,8 @@ const subscribe = (): Subscribe => vi.fn((_handler: unknown) => vi.fn())
 export const harness: DeepMock<HarnessApi> = {
   info: vi.fn(),
 
+  work: { snapshot: vi.fn(), mutate: vi.fn(), onChanged: subscribe(), access: vi.fn(), setAccess: vi.fn() },
+
   loadState: vi.fn(),
   // Succeeds unless a test says otherwise: the store awaits the result of
   // every save, so a bare vi.fn()'s `undefined` would reject far from the
@@ -56,9 +58,13 @@ export const harness: DeepMock<HarnessApi> = {
     removeCustom: vi.fn()
   },
 
+  mcp: { list: vi.fn(), mutate: vi.fn() },
+
   opencode: {
     query: vi.fn()
   },
+
+  github: { query: vi.fn(async () => ({ items: [], checkedAt: Date.now() })) },
 
   git: {
     info: vi.fn(),
@@ -101,6 +107,7 @@ export const harness: DeepMock<HarnessApi> = {
     running: vi.fn(),
     onData: subscribe(),
     onExit: subscribe(),
+    onAgentActivity: subscribe(),
     onQuiet: subscribe(),
     transcript: vi.fn(),
     tail: vi.fn()

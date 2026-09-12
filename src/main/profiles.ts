@@ -43,36 +43,12 @@ const AGENTS: AgentDef[] = [
     install: 'npm i -g @github/copilot'
   },
   {
-    id: 'gemini',
-    name: 'Gemini CLI',
-    bin: 'gemini',
-    badge: 'GM',
-    accent: '#4f8ef7',
-    install: 'npm i -g @google/gemini-cli'
-  },
-  {
     id: 'opencode',
     name: 'OpenCode',
     bin: 'opencode',
     badge: 'OC',
     accent: '#f59e0b',
     install: 'npm i -g opencode-ai'
-  },
-  {
-    id: 'aider',
-    name: 'Aider',
-    bin: 'aider',
-    badge: 'AD',
-    accent: '#c084fc',
-    install: 'python -m pip install aider-install'
-  },
-  {
-    id: 'cursor',
-    name: 'Cursor Agent',
-    bin: 'cursor-agent',
-    badge: 'CU',
-    accent: '#38bdf8',
-    install: 'curl https://cursor.com/install -fsS | bash'
   }
 ]
 

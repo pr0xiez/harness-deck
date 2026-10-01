@@ -3103,3 +3103,99 @@ button.count.waiting:hover {
 .work-editor label { display: flex; flex-direction: column; gap: 6px; }
 .work-editor textarea { resize: vertical; }
 .work-editor small { opacity: .65; user-select: text; }
+
+/* Personal agent: a daily plan beside a durable conversation. */
+.personal-page { flex: 1; min-width: 0; overflow: auto; padding: 28px; color: var(--fg); }
+.personal-head { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; flex-wrap: wrap; }
+.personal-head h1 { font-size: 27px; letter-spacing: -.6px; margin: 6px 0 8px; }
+.personal-head p { color: var(--fg-1); margin: 0; }
+.personal-eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 1.7px; color: #a69ce9; }
+.personal-head-actions, .personal-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.personal-status { font-size: 12px; color: var(--fg-1); display: flex; align-items: center; gap: 7px; }
+.personal-layout { display: grid; grid-template-columns: minmax(290px, .8fr) minmax(390px, 1.3fr); gap: 20px; max-width: 1500px; margin: 0 auto; }
+.personal-day, .personal-conversation { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.personal-card { background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; padding: 20px; min-width: 0; }
+.personal-card > header { display: flex; gap: 12px; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.personal-card h2 { font-size: 16px; margin: 0; letter-spacing: -.2px; }
+.personal-card h3 { font-size: 13px; margin: 16px 0 10px; }
+.personal-count { font-size: 11px; color: var(--fg-1); white-space: nowrap; }
+.personal-plan { border-color: #8f81d746; background: linear-gradient(145deg, #9181df13, transparent 70%), var(--bg-2); }
+.personal-plan h2 { margin-top: 6px; font-size: 20px; }
+.personal-intention { line-height: 1.6; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.personal-muted { color: var(--fg-1); font-size: 12px; line-height: 1.6; }
+.personal-priorities { list-style: none; padding: 0; margin: 16px 0; display: flex; flex-direction: column; gap: 12px; }
+.personal-priorities li { display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: #8b80c90b; border: 1px solid #8b80c927; border-radius: 9px; }
+.personal-priorities li > div { flex: 1; min-width: 0; }
+.personal-priorities strong { font-size: 13px; overflow-wrap: anywhere; }
+.personal-priorities small { display: block; color: var(--fg-1); font-size: 10px; margin: 5px 0; }
+.personal-priorities .is-done strong { text-decoration: line-through; opacity: .55; }
+.personal-rank { display: grid; place-items: center; flex: 0 0 24px; height: 24px; border-radius: 7px; color: #b1a5ef; background: #9282e41a; font-size: 12px; }
+.personal-priorities .btn { padding: 4px 7px; font-size: 11px; }
+.personal-page input:not([type=checkbox]), .personal-page select, .personal-page textarea, .personal-form input:not([type=checkbox]), .personal-form textarea { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; min-width: 0; font: inherit; font-size: 12px; }
+.personal-page input:focus, .personal-page textarea:focus, .personal-form input:focus, .personal-form textarea:focus { outline: 2px solid #9e8de377; outline-offset: 1px; }
+.personal-page input[type=checkbox], .personal-form input[type=checkbox] { accent-color: #a08cdf; }
+.personal-inline > input { flex: 1; width: 100%; }
+.personal-focus { border-color: #81b59d60; background: linear-gradient(140deg, #74be9513, transparent), var(--bg-2); }
+.personal-focus h2 { margin-top: 12px; }
+.personal-focus p { color: var(--fg-1); line-height: 1.6; font-size: 12px; }
+.personal-timer { font-variant-numeric: tabular-nums; font-size: 46px; letter-spacing: -1px; margin-top: 12px; color: #91c9b2; }
+.personal-task-list { display: flex; flex-direction: column; gap: 6px; }
+.personal-task { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.personal-task > span, .personal-task-title { flex: 1; min-width: 0; text-align: left; font-size: 12px; }
+.personal-task-title { background: none; border: 0; padding: 0; color: inherit; cursor: pointer; }
+.personal-task strong { font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.personal-task small { display: block; color: var(--fg-1); margin-top: 4px; font-size: 10px; }
+.personal-task small.overdue { color: var(--warn); }
+.personal-details { font-size: 12px; margin-top: 14px; }
+.personal-details summary { color: var(--fg-1); cursor: pointer; padding: 4px 0; }
+.personal-memories { padding: 0; list-style: none; }
+.personal-memories li { display: flex; gap: 8px; padding: 8px 0; font-size: 12px; line-height: 1.6; }
+.personal-memories li > span { flex: 1; overflow-wrap: anywhere; }
+.personal-chat > header { padding-bottom: 8px; }
+.personal-chat > header p { margin: 6px 0 0; }
+.personal-chat > header > svg { color: #a695e2; }
+.personal-chat-log { min-height: 280px; max-height: 580px; overflow: auto; display: flex; flex-direction: column; gap: 18px; padding: 4px 4px 20px; user-select: text; }
+.personal-welcome { margin: auto; text-align: center; max-width: 360px; padding: 30px 18px; }
+.personal-welcome h3 { font-size: 20px; letter-spacing: -.5px; line-height: 1.4; }
+.personal-welcome p { color: var(--fg-1); line-height: 1.8; font-size: 13px; }
+.personal-orb { display: inline-grid; place-items: center; width: 58px; height: 58px; border-radius: 20px; background: radial-gradient(circle at 30% 20%, #b3a1ed40, #b3a1ed08); border: 1px solid #b3a1ed33; color: #c1b4ef; font-size: 32px; }
+.personal-message { padding: 14px 16px; border-radius: 10px; background: #9181df09; border: 1px solid #9181df1f; }
+.personal-message.user { margin-left: 32px; background: var(--bg); border-color: var(--line); }
+.personal-message > header { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: #ac9fd6; }
+.personal-message.user > header { color: var(--fg-1); }
+.personal-message time { color: var(--fg-1); font-size: 10px; }
+.personal-message p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: 13px; margin: 10px 0 0; }
+.personal-thinking { color: #b6a5e9; font-size: 12px; }
+.personal-prompts { display: flex; flex-wrap: wrap; gap: 5px; border-top: 1px solid var(--line); padding-top: 12px; }
+.personal-prompts .btn { font-size: 10px; padding: 5px 8px; }
+.personal-composer { margin-top: 12px; }
+.personal-composer textarea { width: 100%; resize: vertical; line-height: 1.6; }
+.personal-composer > div { display: flex; justify-content: space-between; align-items: center; margin-top: 9px; }
+.personal-composer small { color: var(--fg-1); font-size: 10px; }
+.personal-setup { display: flex; align-items: center; gap: 20px; padding: 18px 22px; margin: 0 0 22px; border-radius: 10px; border: 1px solid #a090e44a; background: #a090e411; }
+.personal-setup > div { flex: 1; }
+.personal-setup p { margin: 5px 0 0; color: var(--fg-1); font-size: 12px; }
+.personal-action { margin-top: 12px; padding: 16px; border: 1px solid #c7a56b50; border-radius: 8px; background: #c7a56b06; }
+.personal-action > strong { font-size: 13px; overflow-wrap: anywhere; }
+.personal-action > small { display: block; color: var(--fg-1); margin-top: 7px; }
+.personal-action dl { max-height: 340px; overflow: auto; user-select: text; font-size: 12px; }
+.personal-action dl > div { margin: 12px 0; }
+.personal-action dt { font-size: 10px; color: var(--fg-1); margin-bottom: 4px; }
+.personal-action dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.personal-action p { font-size: 12px; line-height: 1.6; }
+.personal-google-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.personal-google-grid > div { min-width: 0; }
+.personal-google-item { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--fg); padding: 10px 0; cursor: pointer; border-bottom: 1px solid var(--line); }
+.personal-google-item strong { display: block; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.personal-google-item small { display: block; font-size: 10px; color: var(--fg-1); margin-top: 5px; overflow-wrap: anywhere; }
+.personal-form { display: flex; flex-direction: column; gap: 14px; }
+.personal-form label { display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
+.personal-form textarea { resize: vertical; width: 100%; }
+.personal-form .personal-check { flex-direction: row; align-items: center; }
+.personal-settings { display: flex; flex-direction: column; gap: 22px; }
+.personal-settings > div, .personal-settings > form { padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.personal-settings h3 { margin: 0; font-size: 15px; }
+.personal-schedule { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.personal-settings details label { margin: 12px 0; }
+@media (max-width: 1100px) { .personal-layout { grid-template-columns: minmax(250px, .8fr) minmax(300px, 1fr); } .personal-page { padding: 20px; } .personal-card { padding: 16px; } }
+@media (max-width: 860px) { .personal-layout { grid-template-columns: 1fr; } .personal-day { order: 1; } .personal-conversation { order: 2; } .personal-google-grid { grid-template-columns: 1fr; } }

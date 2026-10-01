@@ -22,6 +22,19 @@ export const IPC = {
   workAccess: 'work:access',
   workSetAccess: 'work:setAccess',
 
+  personalSnapshot: 'personal:snapshot',
+  personalMutate: 'personal:mutate',
+  personalChat: 'personal:chat',
+  personalStop: 'personal:stop',
+  personalApprove: 'personal:approve',
+  personalChanged: 'personal:changed',
+  personalOpen: 'personal:open',
+  personalGoogleConfigure: 'personal:googleConfigure',
+  personalGoogleConnect: 'personal:googleConnect',
+  personalGoogleCancelConnect: 'personal:googleCancelConnect',
+  personalGoogleDisconnect: 'personal:googleDisconnect',
+  personalGoogleSync: 'personal:googleSync',
+
   // persisted state
   stateLoad: 'state:load',
   stateSave: 'state:save',
@@ -38,6 +51,9 @@ export const IPC = {
 
   // opencode — the lists the pane dialog picks from
   opencodeQuery: 'opencode:query',
+  openRouterKeyState: 'openrouter:keyState',
+  openRouterSetKey: 'openrouter:setKey',
+  openRouterModels: 'openrouter:models',
 
   githubQuery: 'github:query',
 

@@ -8,6 +8,7 @@ import type { PaneSpec } from '@shared/types'
 import { OUTPUT_HIGH_WATER, OUTPUT_LOW_WATER, PtyManager, stripAnsi, type Spawn } from './pty'
 import { ScrollbackStore, SCROLLBACK_LIMIT } from './scrollback'
 import { AgentSessions } from './agent-sessions'
+import { routeOpenRouter } from '@shared/openrouter'
 
 /** Matches FLUSH_MS in pty.ts — output is coalesced into one message per tick. */
 const FLUSH_MS = 8
@@ -83,7 +84,8 @@ function harness(
   spawnImpl?: () => never,
   quietMs = QUIET_MS,
   scrollback: ScrollbackStore | null = null,
-  agentSessions: AgentSessions | null = null
+  agentSessions: AgentSessions | null = null,
+  prepareProvider: (spec: PaneSpec) => PaneSpec = spec => spec
 ): Harness {
   const sent: Harness['sent'] = []
   const spawned: FakePty[] = []
@@ -105,7 +107,8 @@ function harness(
     spawn,
     () => quietMs,
     scrollback,
-    agentSessions
+    agentSessions,
+    prepareProvider
   )
   return {
     mgr,
@@ -142,6 +145,30 @@ afterEach(() => {
 })
 
 describe('ensure', () => {
+  it('keeps session identity across OpenRouter key changes and rolls back failed routing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hd-pty-router-'))
+    let key: string | null = null
+    const h = harness(undefined, QUIET_MS, null, new AgentSessions(dir), spec => routeOpenRouter(spec, key))
+    const launch = spec('router-agent', { command: 'codex', openRouter: { model: 'openai/test' } })
+    const sessionId = '550e8400-e29b-41d4-a716-446655440000'
+    try {
+      expect(h.mgr.ensure(launch, 80, 24).error).toContain('OpenRouter key')
+      expect(h.calls).toHaveLength(0)
+      h.mgr.dispose(launch.id)
+      key = 'dummy-key-one'
+      expect(h.mgr.ensure(launch, 80, 24).status).toBe('running')
+      const record = h.calls[0].env.HD_SESSION_FILE!
+      writeFileSync(record, JSON.stringify({ session_id: sessionId }))
+      h.mgr.dispose(launch.id)
+      key = 'dummy-key-two'
+      expect(h.mgr.ensure(launch, 80, 24).status).toBe('running')
+      expect(h.calls[1].args.slice(0, 2)).toEqual(['resume', sessionId])
+      expect(h.calls[1].env.OPENROUTER_API_KEY).toBe(key)
+      expect(h.calls[1].args.join(' ')).not.toContain(key)
+      expect(launch.env).toBeUndefined()
+      expect(h.calls[1].args.some(arg => arg.startsWith('hooks.SessionStart='))).toBe(true)
+    } finally { h.mgr.disposeAll(); rmSync(dir, { recursive: true, force: true }) }
+  })
   it('reattaches without replacing the agent session record, then resumes after restart', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hd-pty-agent-'))
     const id = '550e8400-e29b-41d4-a716-446655440000'

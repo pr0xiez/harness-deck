@@ -80,7 +80,8 @@ export class PtyManager {
     private spawn: Spawn = nodePty.spawn,
     private quietMs: () => number = () => DEFAULT_QUIET_MS,
     private scrollback: ScrollbackStore | null = null,
-    private agentSessions: AgentSessions | null = null
+    private agentSessions: AgentSessions | null = null,
+    private prepareProvider: (spec: PaneSpec) => PaneSpec = spec => spec
   ) {}
 
   /**
@@ -153,7 +154,7 @@ export class PtyManager {
       // path does: an exited pane with the reason on screen, never a throw
       // across IPC.
       prepared = this.agentSessions?.prepare(spec)
-      const launchSpec = prepared?.spec ?? spec
+      const launchSpec = this.prepareProvider(prepared?.spec ?? spec)
       const env = buildEnv(launchSpec, cwd)
       const { command, args } = resolveCommand(launchSpec)
       if (prepared?.resumed) this.appendLocal(session, dim(`Resuming session ${prepared.resumed}\r\n`))

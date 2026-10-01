@@ -97,7 +97,8 @@ export class AgentSessions {
     const launch = agentLaunch(spec)
     if (!launch) return { spec, rollback: () => {} }
     const fingerprint = createHash('sha256').update(JSON.stringify([
-      spec.id, spec.command, spec.args, spec.cwd, spec.env, spec.viaShell
+      spec.id, spec.command, spec.args, spec.cwd, spec.env, spec.viaShell,
+      ...(spec.openRouter ? [spec.openRouter] : [])
     ])).digest('hex')
     const dir = join(this.root, fingerprint)
     mkdirSync(dir, { recursive: true, mode: 0o700 })

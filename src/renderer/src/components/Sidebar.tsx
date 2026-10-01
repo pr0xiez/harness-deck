@@ -244,6 +244,10 @@ export function Sidebar(): React.JSX.Element {
       </div>
 
       <div className="sidebar-foot">
+        <button className={`btn subtle full ${ui.page === 'personal' ? 'mcp-nav-active' : ''}`} title="Personal agent" aria-pressed={ui.page === 'personal'} onClick={() => setUi({ page: 'personal' })}>
+          <Icon name="star" />
+          {!collapsed ? <span>Personal agent</span> : null}
+        </button>
         <button className={`btn subtle full ${ui.page === 'board' ? 'mcp-nav-active' : ''}`} title="Work board" aria-pressed={ui.page === 'board'} onClick={() => setUi({ page: 'board' })}>
           <Icon name="grid" />
           {!collapsed ? <span>Board</span> : null}

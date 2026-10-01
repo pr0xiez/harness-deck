@@ -11,10 +11,12 @@ import { DeckSearch } from './components/DeckSearch'
 import { CommandPalette } from './components/CommandPalette'
 import { WaitingQueue } from './components/WaitingQueue'
 import { WorkBoardPage } from './components/WorkBoardPage'
+import { PersonalAgentPage } from './components/PersonalAgentPage'
 import { McpPage } from './components/McpPage'
 import { SettingsDialog } from './components/SettingsDialog'
 import { HelpDialog } from './components/HelpDialog'
 import { OpencodePaneDialog } from './components/OpencodePaneDialog'
+import { OpenRouterPaneDialog } from './components/OpenRouterPaneDialog'
 import { UpdateToast } from './components/UpdateToast'
 import { SaveErrorToast } from './components/SaveErrorToast'
 import { NoticeToast } from './components/NoticeToast'
@@ -46,6 +48,8 @@ export function App(): React.JSX.Element {
   const githubWaiting = useGitHub(githubCount)
 
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
+
+  useEffect(() => api.personal.onOpen(() => useDeck.getState().setUi({ page: 'personal' })), [])
 
   // Count each GitHub PR once, even when multiple workspaces share its repository.
   useEffect(() => {
@@ -362,6 +366,7 @@ export function App(): React.JSX.Element {
         </main>
         {ui.page === 'mcps' ? <McpPage /> : null}
         {ui.page === 'board' ? <WorkBoardPage /> : null}
+        {ui.page === 'personal' ? <PersonalAgentPage /> : null}
       </div>
 
       <UpdateToast />
@@ -375,6 +380,13 @@ export function App(): React.JSX.Element {
       {ui.palette ? <CommandPalette /> : null}
       {ui.settings ? <SettingsDialog /> : null}
       {ui.help ? <HelpDialog /> : null}
+      {ui.routerFor ? (
+        <OpenRouterPaneDialog
+          workspaceId={ui.routerFor.workspaceId}
+          profileId={ui.routerFor.profileId}
+          onClose={() => setUi({ routerFor: null })}
+        />
+      ) : null}
       {ui.opencodeFor ? (
         <OpencodePaneDialog
           workspaceId={ui.opencodeFor.workspaceId}

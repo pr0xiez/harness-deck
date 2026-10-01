@@ -1193,13 +1193,13 @@ describe('startAttention', () => {
       focus.mockReturnValue(false)
     })
 
-    it('tells you once, for a pane that is only waiting', () => {
+    it('keeps attention in Deck when the window is in the background', () => {
       deckWith(pane('a', 'running', { name: 'Reviewer' }))
       fire({ id: 'a', quiet: true })
       fire({ id: 'a', quiet: true })
 
-      expect(notify).toHaveBeenCalledTimes(1)
-      expect(notify.mock.calls[0][1]).toEqual({ body: 'Reviewer is waiting for you' })
+      expect(notify).not.toHaveBeenCalled()
+      expect(isActionable(paneAt('a'))).toBe(true)
     })
 
     it('says nothing about a muted pane', () => {
@@ -1225,15 +1225,6 @@ describe('startAttention', () => {
       expect(notify).not.toHaveBeenCalled()
     })
 
-    it('says nothing when you turned notifications off', () => {
-      useDeck.setState({
-        settings: { ...DEFAULT_SETTINGS, attention: { ...DEFAULT_SETTINGS.attention, notify: false } }
-      })
-      deckWith(pane('a', 'running'))
-      fire({ id: 'a', quiet: true })
-
-      expect(notify).not.toHaveBeenCalled()
-    })
   })
 
   /** What the toolbar's git refresh — and, later, HD-20's checkpoints — ride on. */

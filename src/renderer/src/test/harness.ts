@@ -41,6 +41,12 @@ const subscribe = (): Subscribe => vi.fn((_handler: unknown) => vi.fn())
 export const harness: DeepMock<HarnessApi> = {
   info: vi.fn(),
 
+  personal: {
+    snapshot: vi.fn(), mutate: vi.fn(), chat: vi.fn(), stop: vi.fn(), approve: vi.fn(),
+    onChanged: subscribe(), onOpen: subscribe(),
+    google: { configure: vi.fn(), connect: vi.fn(), cancelConnect: vi.fn(), disconnect: vi.fn(), sync: vi.fn() }
+  },
+
   work: { snapshot: vi.fn(), mutate: vi.fn(), onChanged: subscribe(), access: vi.fn(), setAccess: vi.fn() },
 
   loadState: vi.fn(),
@@ -62,6 +68,11 @@ export const harness: DeepMock<HarnessApi> = {
 
   opencode: {
     query: vi.fn()
+  },
+  openRouter: {
+    keyState: vi.fn(async () => ({ hasKey: false, source: 'none' as const })),
+    setKey: vi.fn(),
+    models: vi.fn(async () => ({ models: [] }))
   },
 
   github: { query: vi.fn(async () => ({ items: [], checkedAt: Date.now() })) },

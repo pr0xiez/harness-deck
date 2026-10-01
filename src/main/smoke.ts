@@ -549,6 +549,44 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     }
   })
 
+  await record('personal agent persists tasks and focus through IPC and preserves terminals', async () => {
+    const failure = await win.webContents.executeJavaScript(`(async () => {
+      const api = window.harness.personal;
+      let state = await api.snapshot();
+      if (state.data.settings.proactive || state.google.connected) return 'smoke profile unexpectedly connected or proactive';
+      state = await api.mutate({ operation: 'task_add', title: 'Smoke personal task', notes: 'A concrete next step' }, state.data.revision);
+      const task = state.data.tasks.find(t => t.title === 'Smoke personal task');
+      if (!task) return 'task did not cross IPC';
+      state = await api.mutate({ operation: 'plan', intention: 'Move one thing forward', priorities: [{ source: 'personal', id: task.id }] }, state.data.revision);
+      state = await api.mutate({ operation: 'focus_start', priority: { source: 'personal', id: task.id }, minutes: 25 }, state.data.revision);
+      if (state.data.focus?.title !== task.title) return 'focus session was not saved';
+      await api.mutate({ operation: 'focus_stop' }, state.data.revision);
+      window.__personalTerminals = [...document.querySelectorAll('.xterm')];
+      document.querySelector('button[title="Personal agent"]').click();
+      return null;
+    })()`, true) as string | null
+    if (failure) return failure
+    const shown = await until(async () => Boolean(await win.webContents.executeJavaScript(
+      `document.querySelector('.personal-page')?.textContent.includes('Smoke personal task')`, true
+    )), 5000)
+    if (!shown) return 'personal-agent page did not display persisted task'
+    const persisted = JSON.parse(readFileSync(join(app.getPath('userData'), 'personal-agent.json'), 'utf8'))
+    if (!persisted.tasks.some((t: { title: string }) => t.title === 'Smoke personal task')) return 'personal task was not persisted'
+    await Promise.race([win.webContents.executeJavaScript(`new Promise(resolve => requestAnimationFrame(resolve))`, true), wait(250)])
+    mkdirSync(join(process.cwd(), '.tmp'), { recursive: true })
+    writeFileSync(join(process.cwd(), '.tmp', 'personal-agent.png'), (await win.webContents.capturePage()).toPNG())
+    const retained = await win.webContents.executeJavaScript(`(() => {
+      const before = window.__personalTerminals;
+      const after = [...document.querySelectorAll('.xterm')];
+      const kept = before.length === after.length && before.every((el, i) => el === after[i]);
+      const hidden = getComputedStyle(document.querySelector('.deck')).display === 'none';
+      document.querySelector('.ws-row').click();
+      delete window.__personalTerminals;
+      return kept && hidden;
+    })()`, true)
+    return retained ? null : 'personal-agent navigation lost terminals'
+  })
+
   // The lock is only worth having if it is one click away on the pane you are
   // looking at, and the class it hangs on is the one the locked styling keys
   // off — so a header that renders without it is the whole feature missing.
@@ -665,6 +703,32 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     await win.webContents.executeJavaScript(CLOSE_MODAL, true)
     const closed = await until(async () => !(await dialog()).open, 10_000)
     return closed ? null : 'it would not close again'
+  })
+
+  await record('OpenRouter provider options open and key status crosses IPC', async () => {
+    const keyState = await win.webContents.executeJavaScript('window.harness.openRouter.keyState()', true)
+    if (typeof keyState?.hasKey !== 'boolean' || typeof keyState?.source !== 'string') return 'invalid key status from main'
+    if ('key' in keyState || 'value' in keyState) return 'key status exposed credential data'
+    await win.webContents.executeJavaScript(OPEN_REMOTE_DIALOG, true)
+    const picked = await until(async () => Boolean(await win.webContents.executeJavaScript(`(() => {
+      const options = document.querySelector('[aria-label="Open Claude Code with provider options"]');
+      if (!options) return false;
+      options.click(); return true;
+    })()`, true)), 10_000)
+    if (!picked) return 'Claude provider options were not offered'
+    const shown = await until(async () => Boolean(await win.webContents.executeJavaScript(`(() => {
+      const provider = document.querySelector('.modal select');
+      if (!provider) return false;
+      provider.value = 'openrouter';
+      provider.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`, true)), 10_000)
+    if (!shown) return 'provider selector did not open'
+    const ready = await until(async () => Boolean(await win.webContents.executeJavaScript(
+      `!!document.querySelector('.modal input[type="password"]') && !!document.querySelector('.modal input[list="router-models"]')`, true)), 10_000)
+    await win.webContents.executeJavaScript(CLOSE_MODAL, true)
+    await until(async () => Boolean(await win.webContents.executeJavaScript('!document.querySelector(".modal")', true)), 10_000)
+    return ready ? null : 'OpenRouter key and model fields did not render'
   })
 
   await record('harnesses are detected', async () => {

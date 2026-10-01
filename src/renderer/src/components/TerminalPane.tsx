@@ -223,7 +223,8 @@ export function TerminalPane({
           viaShell: pane.viaShell,
           env: pane.env,
           setup: pane.setup,
-          sessionGeneration: pane.sessionGeneration
+          sessionGeneration: pane.sessionGeneration,
+          openRouter: pane.openRouter
         },
         Math.max(term.cols, 20),
         Math.max(term.rows, 5),

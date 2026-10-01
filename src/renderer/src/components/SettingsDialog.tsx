@@ -5,6 +5,7 @@ import { DEFAULT_ATTENTION, DEFAULT_SETTINGS } from '../store'
 import { Field, Modal, Toggle } from './ui'
 import { Icon } from './Icon'
 import { VoiceSettings } from './VoiceSettings'
+import { OpenRouterKey } from './OpenRouterKey'
 
 const api = window.harness
 
@@ -44,6 +45,11 @@ export function SettingsDialog(): React.JSX.Element {
       }
     >
       <div className="settings-grid">
+        <section>
+          <h3>OpenRouter agents</h3>
+          <p>Use the options button beside Claude Code or Codex when opening a pane to choose OpenRouter and a model.</p>
+          <OpenRouterKey />
+        </section>
         <section>
           <h3>MCP servers</h3>
           <p>Manage MCP configuration for your coding harnesses.</p>

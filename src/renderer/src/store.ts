@@ -120,7 +120,7 @@ export interface DeckWorkspace extends Workspace {
 }
 
 interface UiState {
-  page: 'deck' | 'mcps' | 'board'
+  page: 'deck' | 'mcps' | 'board' | 'personal'
   palette: boolean
   settings: boolean
   help: boolean
@@ -152,6 +152,7 @@ interface UiState {
   shipFor: string | null
   /** The opencode pane dialog: the workspace it opens into, and the profile. */
   opencodeFor: { workspaceId: string; profileId: string } | null
+  routerFor: { workspaceId: string; profileId: string } | null
 }
 
 /** A background failure the user was never going to see in a console. */
@@ -344,7 +345,8 @@ export const useDeck = create<DeckState>((set, get) => ({
     waitingQueue: false,
     workspaceDialogFor: null,
     shipFor: null,
-    opencodeFor: null
+    opencodeFor: null,
+    routerFor: null
   },
   update: null,
   updateDismissed: null,
@@ -930,7 +932,7 @@ export const useDeck = create<DeckState>((set, get) => ({
 
   setUi: (patch) => set({ ui: { ...get().ui, ...(patch.page && patch.page !== 'deck' ? {
     settings: false, profileMenu: false, paneMenuFor: null, paneDialogFor: null,
-    compare: false, shipFor: null, opencodeFor: null, findAll: false, broadcast: false,
+    compare: false, shipFor: null, opencodeFor: null, routerFor: null, findAll: false, broadcast: false,
     waitingQueue: false
   } : {}), ...patch } }),
 
@@ -1015,6 +1017,7 @@ export function serialize(state: DeckState): PersistedState {
             env,
             setup,
             sessionGeneration,
+            openRouter,
             worktree,
             autoRestart,
             readOnly,
@@ -1033,6 +1036,7 @@ export function serialize(state: DeckState): PersistedState {
             // installed into since the app was last quit.
             setup,
             sessionGeneration,
+            openRouter,
             // Kept, or a restart would forget that this folder is ours to remove.
             worktree,
             autoRestart,

@@ -32,8 +32,10 @@ import type {
   WorktreeResult
 } from '@shared/types'
 import type { GitHubSnapshot } from '@shared/github'
+import type { OpenRouterModels } from '@shared/openrouter'
 import type { McpInventory, McpMutation, McpMutationResult, McpTarget } from '@shared/mcp'
 import type { WorkAccess, WorkBoard, WorkMutation, WorkResult } from '@shared/work-board'
+import type { PersonalCommand, PersonalSnapshot, GoogleSnapshot } from '@shared/personal-agent'
 import { IPC, type IpcChannel } from '@shared/ipc'
 
 function subscribe<T>(channel: IpcChannel, handler: (payload: T) => void): () => void {
@@ -44,6 +46,23 @@ function subscribe<T>(channel: IpcChannel, handler: (payload: T) => void): () =>
 
 const api = {
   info: (): Promise<AppInfo> => ipcRenderer.invoke(IPC.appInfo),
+
+  personal: {
+    snapshot: (): Promise<PersonalSnapshot> => ipcRenderer.invoke(IPC.personalSnapshot),
+    mutate: (change: PersonalCommand, revision: number): Promise<PersonalSnapshot> => ipcRenderer.invoke(IPC.personalMutate, change, revision),
+    chat: (text: string): Promise<PersonalSnapshot> => ipcRenderer.invoke(IPC.personalChat, text),
+    stop: (): Promise<PersonalSnapshot> => ipcRenderer.invoke(IPC.personalStop),
+    approve: (id: string): Promise<PersonalSnapshot> => ipcRenderer.invoke(IPC.personalApprove, id),
+    onChanged: (handler: (snapshot: PersonalSnapshot) => void) => subscribe(IPC.personalChanged, handler),
+    onOpen: (handler: () => void) => subscribe(IPC.personalOpen, handler),
+    google: {
+      configure: (client: { clientId: string; clientSecret: string }): Promise<GoogleSnapshot> => ipcRenderer.invoke(IPC.personalGoogleConfigure, client),
+      connect: (): Promise<GoogleSnapshot> => ipcRenderer.invoke(IPC.personalGoogleConnect),
+      cancelConnect: (): Promise<GoogleSnapshot> => ipcRenderer.invoke(IPC.personalGoogleCancelConnect),
+      disconnect: (): Promise<GoogleSnapshot> => ipcRenderer.invoke(IPC.personalGoogleDisconnect),
+      sync: (): Promise<GoogleSnapshot> => ipcRenderer.invoke(IPC.personalGoogleSync)
+    }
+  },
 
   work: {
     snapshot: (): Promise<WorkResult> => ipcRenderer.invoke(IPC.workSnapshot),
@@ -80,6 +99,11 @@ const api = {
   opencode: {
     query: (profileId: string, cwd?: string): Promise<OpencodeInfo> =>
       ipcRenderer.invoke(IPC.opencodeQuery, profileId, cwd)
+  },
+  openRouter: {
+    keyState: (): Promise<VoiceKeyState> => ipcRenderer.invoke(IPC.openRouterKeyState),
+    setKey: (key: string | null): Promise<VoiceKeyState> => ipcRenderer.invoke(IPC.openRouterSetKey, key),
+    models: (): Promise<OpenRouterModels> => ipcRenderer.invoke(IPC.openRouterModels)
   },
 
   github: {

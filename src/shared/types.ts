@@ -44,6 +44,8 @@ export interface PaneSpec {
   setup?: string
   /** Changes only for an explicit fresh conversation; stable across process/app restarts. */
   sessionGeneration?: string
+  /** Provider/model only. Credentials are injected by main when the pane starts. */
+  openRouter?: import('./openrouter').OpenRouterRoute
 }
 
 export interface Pane extends PaneSpec {
@@ -124,6 +126,7 @@ export interface TemplatePane {
   viaShell?: boolean
   env?: Record<string, string>
   name?: string
+  openRouter?: import('./openrouter').OpenRouterRoute
   /**
    * The pane ran in a worktree of its workspace. The path cannot travel — two
    * workspaces sharing one worktree directory is the thing worktree panes exist

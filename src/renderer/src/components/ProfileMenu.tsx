@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { RemoteKind } from '@shared/remote'
 import type { Profile } from '@shared/types'
 import { isOpencodeProfile } from '@shared/opencode'
+import { isRouterProfile } from '@shared/openrouter'
 import { worktreeBranch, worktreePath } from '@shared/worktree'
 import { useDeck } from '../store'
 import { Dropdown } from './ui'
@@ -188,6 +189,18 @@ export function ProfileMenu({ workspaceId, onClose, align = 'right' }: Props): R
                       setUi({ opencodeFor: { workspaceId, profileId: profile.id } })
                     }}
                   >
+                    <Icon name="settings" size={11} />
+                  </span>
+                ) : null}
+                {isRouterProfile(profile.id) ? (
+                  <span className="icon-btn tiny menu-worktree" role="button"
+                    aria-label={`Open ${profile.name} with provider options`}
+                    title={`Open ${profile.name} with provider options — OpenRouter, model`}
+                    onClick={event => {
+                      event.stopPropagation()
+                      setUi({ routerFor: { workspaceId, profileId: profile.id } })
+                      onClose()
+                    }}>
                     <Icon name="settings" size={11} />
                   </span>
                 ) : null}

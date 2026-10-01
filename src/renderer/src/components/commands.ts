@@ -1,6 +1,7 @@
 import { paneLabel } from '../paneLabel'
 import { isActionable, useDeck, type DeckWorkspace, type PaneView } from '../store'
 import { isOpencodeProfile } from '@shared/opencode'
+import { isRouterProfile } from '@shared/openrouter'
 import { agentLaunch } from '@shared/agent-session'
 import { RESTART_CAP } from '../restart'
 import { useVoice } from '../voice'
@@ -215,7 +216,7 @@ export function activeWorkspaceCommands(state: Deck, workspace: DeckWorkspace): 
 
 /** One entry per harness profile, opening a fresh pane in the workspace. */
 export function newPaneCommands(state: Deck, workspace: DeckWorkspace): Command[] {
-  return state.profiles.map((profile) => ({
+  return [...state.profiles.map((profile) => ({
     id: `pane:new:${profile.id}`,
     group: 'New pane',
     label: `${profile.name}${profile.available ? '' : ' (not installed)'}`,
@@ -228,7 +229,11 @@ export function newPaneCommands(state: Deck, workspace: DeckWorkspace): Command[
         state.setUi({ opencodeFor: { workspaceId: workspace.id, profileId: profile.id } })
       else state.addPane(workspace.id, profile)
     }
-  }))
+  })), ...state.profiles.filter(profile => isRouterProfile(profile.id)).map(profile => ({
+    id: `pane:provider:${profile.id}`, group: 'New pane',
+    label: `${profile.name} with provider options…`, hint: 'OpenRouter / model',
+    run: () => state.setUi({ routerFor: { workspaceId: workspace.id, profileId: profile.id } })
+  }))]
 }
 
 /** Moving between panes: the waiting queue, and focus by name. */
@@ -426,6 +431,10 @@ export function activePaneCommands(
 /** The app itself: settings, help, dictation, updates, chrome. */
 export function appCommands(state: Deck): Command[] {
   return [
+    {
+      id: 'app:personal', group: 'Application', label: 'Personal agent · daily focus and accountability',
+      run: () => state.setUi({ page: 'personal' })
+    },
     {
       id: 'app:board',
       group: 'Application',

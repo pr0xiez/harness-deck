@@ -5,7 +5,9 @@ import {
   dialog,
   ipcMain,
   Menu,
+  Notification,
   nativeImage,
+  safeStorage,
   session,
   shell,
   systemPreferences
@@ -41,6 +43,11 @@ import { shellEnv } from './shell-env'
 import { McpManager } from './mcp'
 import type { McpMutation, McpTarget } from '@shared/mcp'
 import { queryOpencode } from './opencode'
+import { openRouterKeyState, setOpenRouterKey, openRouterModels, prepareOpenRouter, personalOpenRouterKey } from './openrouter'
+import { PersonalAgent } from './personal-agent'
+import { PersonalStore } from './personal-store'
+import { PersonalSecrets } from './personal-secrets'
+import { PersonalGoogle } from './personal-google'
 import { detectForge, detectProfiles } from './profiles'
 import { removeCustomProfile, saveCustomProfile } from './profiles-store'
 import { DEFAULT_QUIET_MS, PtyManager, stripAnsi } from './pty'
@@ -65,6 +72,7 @@ const isMac = process.platform === 'darwin'
 let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
 let workAccess: WorkBoardAccess | undefined
+let personalAgent: PersonalAgent | undefined
 /** Records the paste chord off real keyboard input; gates `clipboard:read`. */
 const pasteGate = new PasteGate()
 /** Set when we are quitting to hand over to an installer — skip the pane prompt. */
@@ -502,6 +510,40 @@ async function registerIpc(): Promise<void> {
     if (typeof enabled !== 'boolean') throw Error('Expected an access toggle')
     return workAccess!.setEnabled(enabled)
   })
+  const personalStore = new PersonalStore(app.getPath('userData'), () => personalAgent?.publish())
+  const google = new PersonalGoogle(new PersonalSecrets(app.getPath('userData'), {
+    available: () => safeStorage.isEncryptionAvailable() && !(process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text'),
+    encrypt: text => safeStorage.encryptString(text), decrypt: data => safeStorage.decryptString(data)
+  }), url => shell.openExternal(url), () => personalAgent?.publish())
+  personalAgent = new PersonalAgent({ store: personalStore, google, work, key: personalOpenRouterKey,
+    changed: snapshot => send(IPC.personalChanged, snapshot),
+    notify: (title, body) => {
+      if (!Notification.isSupported()) return
+      const notification = new Notification({ title, body })
+      notification.on('click', () => {
+        if (!mainWindow) { mainWindow = createWindow(); mainWindow.webContents.once('did-finish-load', () => send(IPC.personalOpen, null)) }
+        else { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); send(IPC.personalOpen, null) }
+      })
+      notification.show()
+    }
+  })
+  const personalHandle = (channel: IpcChannel, handler: (...args: unknown[]) => unknown): void => {
+    ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw Error('Personal agent is available only to the Deck window.')
+      return handler(...args)
+    })
+  }
+  personalHandle(IPC.personalSnapshot, () => personalAgent!.snapshot())
+  personalHandle(IPC.personalMutate, (change, revision) => personalAgent!.mutate(change, revision))
+  personalHandle(IPC.personalChat, text => personalAgent!.chat(text))
+  personalHandle(IPC.personalStop, () => personalAgent!.stop())
+  personalHandle(IPC.personalApprove, id => personalAgent!.approve(id))
+  personalHandle(IPC.personalGoogleConfigure, client => google.configure(client))
+  personalHandle(IPC.personalGoogleConnect, () => google.connect())
+  personalHandle(IPC.personalGoogleCancelConnect, () => google.cancelConnect())
+  personalHandle(IPC.personalGoogleDisconnect, () => google.disconnect())
+  personalHandle(IPC.personalGoogleSync, () => google.sync())
+  if (!smoke && !captureTarget && !voiceCheck) personalAgent.start()
   ipcMain.handle(IPC.appInfo, () => ({
     platform: process.platform,
     versions: {
@@ -550,6 +592,9 @@ async function registerIpc(): Promise<void> {
   ipcMain.handle(IPC.opencodeQuery, (_e, profileId: string, cwd?: string) =>
     queryOpencode(profileId, cwd)
   )
+  ipcMain.handle(IPC.openRouterKeyState, () => openRouterKeyState())
+  ipcMain.handle(IPC.openRouterSetKey, (_e, key: string | null) => setOpenRouterKey(key))
+  ipcMain.handle(IPC.openRouterModels, () => openRouterModels())
 
   ipcMain.handle(IPC.githubQuery, (_e, cwd: unknown) => queryGitHub(cwd))
 
@@ -770,7 +815,7 @@ if (!app.requestSingleInstanceLock()) {
     // --user-data-dir switch and the smoke override above have been applied.
     const scrollback = new ScrollbackStore(app.getPath('userData'))
     pruneScrollback(scrollback)
-    ptys = new PtyManager(send, undefined, () => quietMs, scrollback, new AgentSessions(app.getPath('userData')))
+    ptys = new PtyManager(send, undefined, () => quietMs, scrollback, new AgentSessions(app.getPath('userData')), prepareOpenRouter)
     await registerIpc()
     // Before the window, so the renderer hydrates a state file it did not write.
     if (smoke) seedSmokeState()
@@ -811,6 +856,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     quitConfirmed = true
     void workAccess?.stop()
+    personalAgent?.dispose()
     disposeUpdater()
     ptys?.disposeAll()
   })

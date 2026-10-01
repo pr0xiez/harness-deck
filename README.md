@@ -64,6 +64,36 @@ is refreshed when access starts; agents should use the CLI rather than editing
 board files directly. There is no cloud sync or permanent card deletion in this
 version; use Won’t do for discarded work.
 
+**Personal agent** — Open **Personal agent** in the sidebar or command palette
+for a persistent conversation, personal tasks, remembered goals and preferences,
+and a daily plan with up to three priorities. Choose work-board cards alongside
+personal commitments, start a focus timer, and explicitly mark work complete.
+The agent helps choose realistic next steps, work through blockers, and reflect
+on progress. It shares the encrypted OpenRouter agent key from Settings; choose
+a tool-capable model in **Agent settings**. Inference uses OpenRouter credits.
+
+Connect **Gmail & Google Calendar** with your own Google Cloud **Desktop app**
+OAuth client. Enable both APIs and add your account as a test user while your
+consent screen is in testing. Sign-in opens your browser and returns through a
+temporary loopback listener with PKCE. Tokens are encrypted with the OS keychain
+and refreshed automatically. The agent can search/read mail, prepare drafts and
+replies, archive or mark messages read, and create/update/delete individual
+events on your primary calendar. Every Google write appears as an exact proposal
+for your approval. Interrupted writes require checking Google before retrying.
+
+Turn on **Proactive daily check-ins** for a morning plan, midday refocus and
+evening review, with your time zone, weekdays and times. Desktop notifications
+open the personal-agent page. Snooze for an hour or turn check-ins off; active
+focus blocks defer them. Deck must remain running (minimized is fine); quitting
+stops the scheduler. Missed check-ins only catch up within 90 minutes, without
+an overnight burst. Proactivity is off until you enable it.
+
+Agent data lives separately in `personal-agent.json`, with `.bak` recovery;
+Google credentials live in OS-encrypted `personal-google-key.json`. Conversation,
+task and relevant Google context go to the selected model when you chat or enable
+scheduled check-ins. No terminal scrollback or shell access is given to this
+agent. See [setup, storage and behavior](docs/personal-agent.md).
+
 **Harness detection** — On startup the app scans your *login shell's* `PATH`
 (not the stripped-down environment a GUI app normally inherits) for `claude`,
 `codex`, `copilot` and `opencode`. On
@@ -92,6 +122,39 @@ The model, agent and session lists are asked of the `opencode` CLI itself, and
 are suggestions only — an unreachable CLI leaves every field as free text, and
 a plain click on the row launches OpenCode exactly as it always has. Whatever
 you launched is remembered and offered back next time.
+
+**OpenRouter agents** — The options button beside Claude Code and Codex CLI
+opens a provider/model dialog. Choose **OpenRouter**, then **Load available
+models** to get tool-capable Anthropic or OpenAI model IDs, or enter a complete
+ID yourself. The command palette also has **with provider options…** entries.
+Each pane keeps its model and provider across app restarts, session resumption,
+workspace duplication and templates. A plain click on a harness still uses its
+existing CLI configuration.
+
+Save an agent key in **Settings → OpenRouter agents** or in the pane dialog.
+Deck encrypts it with the OS keychain in `agent-openrouter-key.json`, separately
+from workspaces and voice credentials; without a keychain, export
+`OPENROUTER_API_KEY` instead. Windows Deck forwards its key to generated WSL
+launchers after the login shell loads; WSL panes can also use a key exported in
+their own login shell. Credentials enter the child environment only at spawn,
+so key rotation does not change which conversation a pane resumes.
+
+Claude Code uses OpenRouter's Anthropic Messages endpoint; its Opus, Sonnet and
+Haiku aliases map to OpenRouter's latest Claude aliases, and subagents use the
+pane's selected model. Codex uses the Responses endpoint with command-backed
+auth for model discovery and a separate CLI process (`--no-daemon`) so panes
+can use different providers. This requires a recent Codex CLI supporting those
+options. Codex's native web-search tool is disabled for routed panes because
+OpenRouter's search tool has a different API; local tools and MCPs remain usable.
+
+Usage spends **OpenRouter credits**, independently of Claude or ChatGPT
+subscriptions. Only models exposed by OpenRouter can be used this way. Check
+Claude's `/status` and OpenRouter Activity after your first prompt to verify
+the destination and model. Existing managed settings or a custom gateway setup
+may override routing; inspect CLI status if it reports a different endpoint.
+Setup follows [OpenRouter's Claude Code guide](https://openrouter.ai/docs/guides/guides/claude-code-integration),
+[its Codex guide](https://openrouter.ai/blog/tutorials/codex-cli-openrouter/), and
+[Codex custom provider configuration](https://learn.chatgpt.com/docs/config-file/config-advanced).
 
 **Layouts** — An even grid (1–4 columns) or tabs, per workspace. Any pane can
 be zoomed to full size with `Ctrl+Shift+Z` and restored again; the process is
@@ -374,6 +437,7 @@ src/
     pty.ts         PTY sessions: spawn, batched output, replay buffer, resize
     profiles.ts    harness detection (PATH scan + WSL probe)
     opencode.ts    models/agents/sessions for the opencode pane dialog
+    openrouter.ts  agent keychain storage, public model catalog, spawn-time routing
     shell-env.ts   login-shell environment resolution
     store.ts       atomic JSON persistence
     updater.ts     watches the release channel, runs the installer
@@ -388,6 +452,7 @@ src/
     components/    title bar, sidebar, toolbar, panes, palette, dialogs
   shared/        types shared across the process boundary
     opencode.ts    launch options → opencode's own argv / WSL script
+    openrouter.ts  Claude/Codex routing → CLI argv and process environment
 scripts/
   release.mjs    cuts a release and publishes its manifest
   make-icons.mjs rasterises build/icon.svg into .icns/.ico/.png

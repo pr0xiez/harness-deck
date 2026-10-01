@@ -97,6 +97,7 @@ export function templateFromWorkspace(
       if (pane.viaShell) stored.viaShell = true
       if (pane.env) stored.env = { ...pane.env }
       if (pane.name) stored.name = pane.name
+      if (pane.openRouter) stored.openRouter = { ...pane.openRouter }
       if (pane.worktree) stored.worktree = true
       return stored
     })
@@ -138,6 +139,7 @@ export function workspaceFromTemplate(
     if (pane.viaShell) built.viaShell = true
     if (pane.env) built.env = { ...pane.env }
     if (pane.name) built.name = pane.name
+    if (pane.openRouter) built.openRouter = { ...pane.openRouter }
     return freshPane(built, uid('pane'))
   })
 

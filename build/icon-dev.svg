@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Harness Deck DEV</title>
+  <defs>
+    <linearGradient id="blue" x1="0" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="0.45" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <linearGradient id="pane" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#172554"/>
+      <stop offset="1" stop-color="#0c1838"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="196" fill="url(#blue)"/>
+  <rect x="72" y="72" width="880" height="880" rx="188" fill="none" stroke="#bfdbfe" stroke-opacity="0.45" stroke-width="8"/>
+
+  <!-- Deck's three terminal panes, simplified for taskbar sizes. -->
+  <rect x="160" y="160" width="408" height="420" rx="36" fill="url(#pane)"/>
+  <rect x="612" y="160" width="252" height="192" rx="32" fill="url(#pane)"/>
+  <rect x="612" y="388" width="252" height="192" rx="32" fill="url(#pane)"/>
+  <path d="M 238 288 L 318 368 L 238 448 M 374 448 H 476" fill="none" stroke="#93c5fd" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 660 230 H 810 M 660 282 H 750 M 660 458 H 810 M 660 510 H 750" fill="none" stroke="#60a5fa" stroke-width="22" stroke-linecap="round"/>
+
+  <!-- Large outlined letters avoid font dependencies and keep DEV legible. -->
+  <g fill="#ffffff">
+    <path fill-rule="evenodd" d="M 168 650 H 274 C 352 650 390 695 390 760 C 390 825 352 870 274 870 H 168 Z M 228 704 V 816 H 270 C 309 816 328 794 328 760 C 328 726 309 704 270 704 Z"/>
+    <path d="M 426 650 H 602 V 704 H 486 V 734 H 588 V 784 H 486 V 816 H 602 V 870 H 426 Z"/>
+    <path d="M 624 650 H 690 L 744 799 L 798 650 H 864 L 778 870 H 710 Z"/>
+  </g>
+</svg>

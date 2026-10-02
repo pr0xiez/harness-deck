@@ -572,6 +572,24 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     if (!shown) return 'personal-agent page did not display persisted task'
     const persisted = JSON.parse(readFileSync(join(app.getPath('userData'), 'personal-agent.json'), 'utf8'))
     if (!persisted.tasks.some((t: { title: string }) => t.title === 'Smoke personal task')) return 'personal task was not persisted'
+    const subscriptionSettings = await win.webContents.executeJavaScript(`(async () => {
+      const api = window.harness.personal;
+      let state = await api.snapshot();
+      state = await api.mutate({ operation: 'settings', patch: { provider: 'claude', cliEnvironment: 'wsl', subscriptionModel: 'sonnet' } }, state.data.revision);
+      if (state.data.settings.provider !== 'claude' || state.data.tasks.length === 0) return 'subscription switch lost persisted agent data';
+      state = await api.mutate({ operation: 'settings', patch: { provider: 'chatgpt', cliEnvironment: 'auto', subscriptionModel: '' } }, state.data.revision);
+      try { await api.subscriptionStatus('invalid', 'native'); return 'subscription IPC accepted an invalid provider'; } catch {}
+      [...document.querySelectorAll('.personal-page button')].find(b => b.textContent.includes('Agent settings')).click();
+      return null;
+    })()`, true) as string | null
+    if (subscriptionSettings) return subscriptionSettings
+    const settingsShown = await until(async () => Boolean(await win.webContents.executeJavaScript(
+      `(() => { const select = document.querySelector('.personal-settings select'); return select?.value === 'chatgpt' && [...select.options].some(o => o.value === 'claude') && !document.querySelector('.personal-settings .openrouter-key'); })()`, true
+    )), 5000)
+    if (!settingsShown) return 'subscription provider settings did not render'
+    mkdirSync(join(process.cwd(), '.tmp'), { recursive: true })
+    writeFileSync(join(process.cwd(), '.tmp', 'personal-subscriptions.png'), (await win.webContents.capturePage()).toPNG())
+    await win.webContents.executeJavaScript(`document.querySelector('.modal-head button').click()`, true)
     await Promise.race([win.webContents.executeJavaScript(`new Promise(resolve => requestAnimationFrame(resolve))`, true), wait(250)])
     mkdirSync(join(process.cwd(), '.tmp'), { recursive: true })
     writeFileSync(join(process.cwd(), '.tmp', 'personal-agent.png'), (await win.webContents.capturePage()).toPNG())

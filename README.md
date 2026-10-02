@@ -69,8 +69,16 @@ for a persistent conversation, personal tasks, remembered goals and preferences,
 and a daily plan with up to three priorities. Choose work-board cards alongside
 personal commitments, start a focus timer, and explicitly mark work complete.
 The agent helps choose realistic next steps, work through blockers, and reflect
-on progress. It shares the encrypted OpenRouter agent key from Settings; choose
-a tool-capable model in **Agent settings**. Inference uses OpenRouter credits.
+on progress. In **Agent settings → Use for replies**, choose **ChatGPT
+subscription (Codex)** or **Claude subscription (Claude Code)**. Deck uses the
+corresponding CLI's saved subscription login, on this system or in WSL. Sign in
+with `codex login` or `claude auth login` in that environment, then use **Check
+sign-in**. Leave the subscription model empty for the CLI default. Replies and
+scheduled check-ins count against your plan's usage limits; no API key is needed
+and Deck never falls back to paid API credits. Switch subscriptions without
+losing your conversation or tasks. **OpenRouter credits** is also available
+with the existing encrypted agent key and a tool-capable model. Existing agents
+keep their OpenRouter configuration after upgrading.
 
 Connect **Gmail & Google Calendar** with your own Google Cloud **Desktop app**
 OAuth client. Enable both APIs and add your account as a test user while your
@@ -90,7 +98,7 @@ an overnight burst. Proactivity is off until you enable it.
 
 Agent data lives separately in `personal-agent.json`, with `.bak` recovery;
 Google credentials live in OS-encrypted `personal-google-key.json`. Conversation,
-task and relevant Google context go to the selected model when you chat or enable
+task and relevant Google context go to the selected provider when you chat or enable
 scheduled check-ins. No terminal scrollback or shell access is given to this
 agent. See [setup, storage and behavior](docs/personal-agent.md).
 
@@ -271,6 +279,9 @@ app offers it in a toast; one click restarts into the new version. See
 npm install
 npm run dev      # live-reloading development build
 ```
+
+Local runs show a blue **DEV** icon in the taskbar/dock. On Windows they have
+a separate taskbar identity from the installed app.
 
 Other scripts:
 
@@ -455,9 +466,10 @@ src/
     openrouter.ts  Claude/Codex routing → CLI argv and process environment
 scripts/
   release.mjs    cuts a release and publishes its manifest
-  make-icons.mjs rasterises build/icon.svg into .icns/.ico/.png
+  make-icons.mjs rasterises the release and DEV icon SVGs
 build/
-  icon.svg       the app icon, and the only file to edit
+  icon.svg       the release icon master
+  icon-dev.svg   the blue DEV icon master
 ```
 
 Processes live in the main process and are addressed by pane id, so a window
@@ -469,17 +481,21 @@ the voice path, and the full tech stack — is in
 
 ### The app icon
 
-`build/icon.svg` is the master. After editing it, run:
+`build/icon.svg` is the release master; `build/icon-dev.svg` is the blue DEV
+master. After editing either, run:
 
 ```bash
 npm run icons
 ```
 
-That regenerates `icon.png` (1024px, also what Linux ships), `icon.icns` and
-`icon.ico`, which electron-builder picks up by name — no configuration needed.
+That regenerates both icons' PNG and ICO files. On macOS it also regenerates
+`icon.icns` using `iconutil`. electron-builder picks up the release assets by
+name. To regenerate only the DEV assets, use `npm run icons -- --dev-only`.
 Electron itself does the rasterising, so there's no ImageMagick or librsvg to
-install. A packaged app gets its icon from the bundle; a `npm run dev` run
-loads `build/icon.png` directly so the dock looks right while developing.
+install. Packaged apps get the release icon from the bundle. Unpackaged local
+runs (`npm run dev` and `npm start`) load `build/icon-dev.ico` on Windows and
+`build/icon-dev.png` on macOS/Linux. Windows also uses a separate development
+AppUserModelID so the DEV window has its own taskbar group.
 
 ## Testing
 

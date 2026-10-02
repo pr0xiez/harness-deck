@@ -9,6 +9,10 @@ const CALENDAR = 'https://www.googleapis.com/calendar/v3/calendars/primary/event
 type Json = Record<string, any>
 const dateTime = (s: string): boolean => /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/.test(s) && Number.isFinite(Date.parse(s))
 const resourceId = (s: unknown): s is string => boundedText(s, 300, true) && /^[\w-]+$/.test(s)
+const TOKEN = 'https://oauth2.googleapis.com/token'
+const EXPIRED = 'Google sign-in expired. Reconnect Gmail & Calendar.'
+/** Carries the HTTP status and, for the token endpoint only, Google's OAuth error code. Messages never include response bodies. */
+class GoogleError extends Error { constructor(message: string, readonly status: number, readonly code?: string) { super(message) } }
 
 /** This allowlist is shared by proposals and execution; a model cannot supply URLs or HTTP methods. */
 export function googleActionArgs(operation: GoogleOperation, input: unknown): Record<string, string> {
@@ -77,7 +81,8 @@ export class PersonalGoogle {
   private syncFlight?: Promise<GoogleSnapshot>
   private generation = 0
   private requests = new AbortController()
-  constructor(private secrets: PersonalSecrets, private openBrowser: (url: string) => Promise<unknown>, private changed: () => void = () => {}, private request: typeof fetch = fetch) {
+  constructor(private secrets: PersonalSecrets, private openBrowser: (url: string) => Promise<unknown>, private changed: () => void = () => {}, private request: typeof fetch = fetch,
+    private expired: (account: string) => void = () => {}) {
     try { const saved = secrets.read(); this.cache.configured = !!saved?.clientId; this.cache.connected = !!saved?.token; this.cache.account = saved?.token?.account }
     catch (e) { this.cache.error = (e as Error).message }
   }
@@ -155,26 +160,36 @@ export class PersonalGoogle {
     let response: Response
     try { response = await this.request(url, { ...options, redirect: 'error', signal: AbortSignal.any([this.requests.signal, AbortSignal.timeout(20000)]) }) }
     catch { throw Error('Google request interrupted or timed out. Check your connection and try again.') }
-    if (!response.ok) throw Error(response.status === 401 ? 'Google authorization expired. Reconnect your account.' :
-      response.status === 403 ? 'Google denied access. Enable Gmail and Calendar APIs and grant the requested permissions.' :
-        response.status === 412 ? 'This Calendar event changed since the proposal. Ask the agent to prepare a fresh change.' : `Google returned HTTP ${response.status}.`)
+    if (!response.ok) {
+      // Only the token endpoint's OAuth error code is inspected; bodies never reach messages.
+      const code = url === TOKEN ? await response.json().then((b: any) => typeof b?.error === 'string' ? b.error : undefined, () => undefined) : undefined
+      throw new GoogleError(response.status === 401 ? 'Google authorization expired. Reconnect your account.' :
+        response.status === 403 ? 'Google denied access. Enable Gmail and Calendar APIs and grant the requested permissions.' :
+          response.status === 412 ? 'This Calendar event changed since the proposal. Ask the agent to prepare a fresh change.' : `Google returned HTTP ${response.status}.`, response.status, code)
+    }
     if (response.status === 204) return {}
     try { return await response.json() as Json } catch { throw Error('Google returned an invalid response. Try again.') }
   }
   private async tokenRequest(fields: Record<string, string>): Promise<Json> {
-    const token = await this.http('https://oauth2.googleapis.com/token', { method: 'POST', body: new URLSearchParams(fields) })
+    const token = await this.http(TOKEN, { method: 'POST', body: new URLSearchParams(fields) })
     if (typeof token.access_token !== 'string' || !Number.isFinite(token.expires_in)) throw Error('Google returned an invalid access token.')
     return token
   }
-  private async accessToken(): Promise<string> {
+  /** `rejected` is an access token an API just refused with 401; it forces one refresh unless a newer token is already stored. */
+  private async accessToken(rejected?: string): Promise<string> {
     const saved = this.secrets.read()
-    if (!saved?.token) throw Error('Connect Google first.')
+    if (!saved?.token) throw Error(this.cache.error === EXPIRED ? EXPIRED : 'Connect Google first.')
     if (saved.token.account !== this.cache.account) throw Error('Stored Google account changed. Reconnect before using this proposal.')
-    if (saved.token.expiresAt > Date.now() + 60000) return saved.token.access
+    if (rejected ? saved.token.access !== rejected : saved.token.expiresAt > Date.now() + 60000) return saved.token.access
     if (!this.refreshFlight) {
       const generation = this.generation
       this.refreshFlight = (async () => {
-        const token = await this.tokenRequest({ client_id: saved.clientId, client_secret: saved.clientSecret, refresh_token: saved.token!.refresh, grant_type: 'refresh_token' })
+        let token: Json
+        try { token = await this.tokenRequest({ client_id: saved.clientId, client_secret: saved.clientSecret, refresh_token: saved.token!.refresh, grant_type: 'refresh_token' }) }
+        catch (e) {
+          if (!(e instanceof GoogleError && e.code === 'invalid_grant')) throw e
+          throw Error(this.expire(generation, saved.token!.refresh) ? EXPIRED : 'Google sign-in changed. Try again.')
+        }
         if (generation !== this.generation) throw Error('Google was disconnected.')
         this.secrets.write({ ...saved, token: { ...saved.token!, access: token.access_token, expiresAt: Date.now() + token.expires_in * 1000 } })
         return token.access_token as string
@@ -182,9 +197,29 @@ export class PersonalGoogle {
     }
     return this.refreshFlight
   }
+  /** Refresh-token expiry/revocation: forget the token locally (no revocation needed), keep the OAuth client and account for same-account reconnects. */
+  private expire(generation: number, refresh: string): boolean {
+    const saved = this.secrets.read()
+    // A disconnect or a fresh sign-in since the refresh began owns the state; the token check also makes this fire once.
+    if (generation !== this.generation || !saved?.token || saved.token.refresh !== refresh) return false
+    const account = saved.token.account
+    this.secrets.write({ clientId: saved.clientId, clientSecret: saved.clientSecret })
+    this.cache = { configured: true, connected: false, connecting: this.cache.connecting, account, mail: [], events: [], error: EXPIRED }
+    this.publish()
+    try { this.expired(account) } catch { /* Notification failures must not mask expiry. */ }
+    return true
+  }
   private async api(url: string, method = 'GET', body?: unknown, etag?: string): Promise<Json> {
+    const send = (token: string): Promise<Json> => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(etag ? { 'If-Match': etag } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })
     const token = await this.accessToken()
-    return this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(etag ? { 'If-Match': etag } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })
+    try { return await send(token) } catch (e) {
+      if (!(e instanceof GoogleError && e.status === 401)) throw e
+      // A refused access token gets one forced refresh; invalid_grant there marks the sign-in expired.
+      // Only reads are retried (once); a refused write had no effect but is never automatically resent.
+      const fresh = await this.accessToken(token)
+      if (method !== 'GET') throw e
+      return send(fresh)
+    }
   }
   async searchMail(query: string): Promise<{ items: GoogleMail[]; limited: boolean }> {
     if (!boundedText(query, 500, true)) throw Error('Enter a Gmail search query.')

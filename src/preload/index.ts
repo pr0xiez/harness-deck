@@ -35,7 +35,7 @@ import type { GitHubSnapshot } from '@shared/github'
 import type { OpenRouterModels } from '@shared/openrouter'
 import type { McpInventory, McpMutation, McpMutationResult, McpTarget } from '@shared/mcp'
 import type { WorkAccess, WorkBoard, WorkMutation, WorkResult } from '@shared/work-board'
-import type { PersonalCommand, PersonalSnapshot, GoogleSnapshot } from '@shared/personal-agent'
+import type { PersonalCliEnvironment, PersonalCommand, PersonalSnapshot, PersonalSubscriptionStatus, GoogleSnapshot } from '@shared/personal-agent'
 import { IPC, type IpcChannel } from '@shared/ipc'
 
 function subscribe<T>(channel: IpcChannel, handler: (payload: T) => void): () => void {
@@ -53,6 +53,7 @@ const api = {
     chat: (text: string): Promise<PersonalSnapshot> => ipcRenderer.invoke(IPC.personalChat, text),
     stop: (): Promise<PersonalSnapshot> => ipcRenderer.invoke(IPC.personalStop),
     approve: (id: string): Promise<PersonalSnapshot> => ipcRenderer.invoke(IPC.personalApprove, id),
+    subscriptionStatus: (provider: 'chatgpt' | 'claude', environment: PersonalCliEnvironment): Promise<PersonalSubscriptionStatus> => ipcRenderer.invoke(IPC.personalSubscriptionStatus, provider, environment),
     onChanged: (handler: (snapshot: PersonalSnapshot) => void) => subscribe(IPC.personalChanged, handler),
     onOpen: (handler: () => void) => subscribe(IPC.personalOpen, handler),
     google: {

@@ -27,6 +27,7 @@ export const IPC = {
   personalChat: 'personal:chat',
   personalStop: 'personal:stop',
   personalApprove: 'personal:approve',
+  personalSubscriptionStatus: 'personal:subscriptionStatus',
   personalChanged: 'personal:changed',
   personalOpen: 'personal:open',
   personalGoogleConfigure: 'personal:googleConfigure',

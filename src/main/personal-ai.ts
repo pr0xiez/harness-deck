@@ -1,7 +1,8 @@
-import type { PersonalMessage } from '@shared/personal-agent'
+import type { PersonalCliEnvironment, PersonalMessage, PersonalProvider } from '@shared/personal-agent'
 
 export interface AgentTool { name: string; description: string; parameters: Record<string, unknown> }
 export interface AgentRun {
+  provider?: PersonalProvider; cliEnvironment?: PersonalCliEnvironment
   model: string; key: string; system: string; context: string
   history: Pick<PersonalMessage, 'role' | 'text'>[]; prompt: string
   tools: AgentTool[]; execute: (name: string, args: unknown) => Promise<unknown>

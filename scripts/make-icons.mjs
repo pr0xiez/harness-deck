@@ -1,14 +1,15 @@
 /**
- * Rasterises build/icon.svg into every format electron-builder wants:
+ * Rasterises build/icon.svg and build/icon-dev.svg:
  *
- *   build/icon.png    1024x1024, also what Linux ships and what the dev-mode
- *                     dock icon is loaded from
- *   build/icon.icns   macOS, built from a full iconset via `iconutil`
+ *   build/icon.png    1024x1024, also what Linux ships
+ *   build/icon.icns   macOS, built on a Mac from an iconset via `iconutil`
  *   build/icon.ico    Windows, PNG-compressed entries from 16px to 256px
+ *   build/icon-dev.png / .ico   blue DEV icon for local runs
  *
  * Run with `npm run icons` after editing the SVG. Electron does the drawing —
  * no ImageMagick or librsvg needed — by painting the SVG onto a canvas at each
  * size, which also means the output is exactly what Chromium renders in-app.
+ * Use `npm run icons -- --dev-only` to regenerate just the DEV assets.
  */
 import { app, BrowserWindow } from 'electron'
 import { execFileSync } from 'node:child_process'
@@ -17,11 +18,11 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const BUILD = join(dirname(fileURLToPath(import.meta.url)), '..', 'build')
-const SVG = join(BUILD, 'icon.svg')
+const names = process.argv.includes('--dev-only') ? ['icon-dev'] : ['icon', 'icon-dev']
 
 /** macOS wants both @1x and @2x of each; Windows tops out at 256. */
 const ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
-const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+const ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
 
 /** Packs PNG buffers into an .ico container (PNG-compressed entries). */
 function buildIco(images) {
@@ -52,12 +53,11 @@ app.disableHardwareAcceleration()
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 64, height: 64 })
-  const svg = readFileSync(SVG, 'utf8')
 
   await win.loadURL('data:text/html,<body style="margin:0">')
 
   /** Draws the SVG at size x size and returns the PNG bytes. */
-  const render = async (size) => {
+  const render = async (svg, size) => {
     const b64 = await win.webContents.executeJavaScript(`
       new Promise((resolve, reject) => {
         const img = new Image()
@@ -78,30 +78,38 @@ app.whenReady().then(async () => {
     return Buffer.from(b64, 'base64')
   }
 
-  // --- 1024 master / Linux ---------------------------------------------------
-  const master = await render(1024)
-  writeFileSync(join(BUILD, 'icon.png'), master)
-  console.log('build/icon.png        1024x1024')
+  for (const name of names) {
+    const svg = readFileSync(join(BUILD, `${name}.svg`), 'utf8')
+    writeFileSync(join(BUILD, `${name}.png`), await render(svg, 1024))
+    console.log(`build/${name}.png    1024x1024`)
 
-  // --- macOS .icns -----------------------------------------------------------
-  const iconset = join(BUILD, 'icon.iconset')
-  rmSync(iconset, { recursive: true, force: true })
-  mkdirSync(iconset, { recursive: true })
-  const pngs = new Map()
-  for (const size of ICNS_SIZES) pngs.set(size, await render(size))
-  for (const base of [16, 32, 128, 256, 512]) {
-    writeFileSync(join(iconset, `icon_${base}x${base}.png`), pngs.get(base))
-    writeFileSync(join(iconset, `icon_${base}x${base}@2x.png`), pngs.get(base * 2))
+    const ico = []
+    for (const size of ICO_SIZES) ico.push({ size, data: await render(svg, size) })
+    writeFileSync(join(BUILD, `${name}.ico`), buildIco(ico))
+    console.log(`build/${name}.ico    ${ICO_SIZES.join(', ')}`)
+
+    // Local macOS runs load the DEV PNG directly; only the bundle needs ICNS.
+    if (name === 'icon' && process.platform === 'darwin') {
+      const iconset = join(BUILD, 'icon.iconset')
+      rmSync(iconset, { recursive: true, force: true })
+      mkdirSync(iconset, { recursive: true })
+      try {
+        const pngs = new Map()
+        for (const size of ICNS_SIZES) pngs.set(size, await render(svg, size))
+        for (const base of [16, 32, 128, 256, 512]) {
+          writeFileSync(join(iconset, `icon_${base}x${base}.png`), pngs.get(base))
+          writeFileSync(join(iconset, `icon_${base}x${base}@2x.png`), pngs.get(base * 2))
+        }
+        execFileSync('iconutil', ['-c', 'icns', iconset, '-o', join(BUILD, 'icon.icns')])
+        console.log('build/icon.icns       16-1024 @1x/@2x')
+      } finally {
+        rmSync(iconset, { recursive: true, force: true })
+      }
+    }
   }
-  execFileSync('iconutil', ['-c', 'icns', iconset, '-o', join(BUILD, 'icon.icns')])
-  rmSync(iconset, { recursive: true, force: true })
-  console.log('build/icon.icns       16-1024 @1x/@2x')
-
-  // --- Windows .ico ----------------------------------------------------------
-  const ico = []
-  for (const size of ICO_SIZES) ico.push({ size, data: await render(size) })
-  writeFileSync(join(BUILD, 'icon.ico'), buildIco(ico))
-  console.log('build/icon.ico        ' + ICO_SIZES.join(', '))
 
   app.quit()
+}).catch((error) => {
+  console.error(error)
+  app.exit(1)
 })

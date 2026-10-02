@@ -6,14 +6,12 @@ import {
   ipcMain,
   Menu,
   Notification,
-  nativeImage,
   safeStorage,
   session,
   shell,
   systemPreferences
 } from 'electron'
-import type { NativeImage } from 'electron'
-import { mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -45,6 +43,7 @@ import type { McpMutation, McpTarget } from '@shared/mcp'
 import { queryOpencode } from './opencode'
 import { openRouterKeyState, setOpenRouterKey, openRouterModels, prepareOpenRouter, personalOpenRouterKey } from './openrouter'
 import { PersonalAgent } from './personal-agent'
+import { personalSubscriptionStatus } from './personal-subscription'
 import { PersonalStore } from './personal-store'
 import { PersonalSecrets } from './personal-secrets'
 import { PersonalGoogle } from './personal-google'
@@ -68,6 +67,9 @@ import {
 app.setName('Harness Deck')
 
 const isMac = process.platform === 'darwin'
+const DEV_APP_ID = 'dev.harnessdeck.app.development'
+// Keep local runs out of the installed app's taskbar group (and Electron's).
+if (process.platform === 'win32' && !app.isPackaged) app.setAppUserModelId(DEV_APP_ID)
 
 let mainWindow: BrowserWindow | null = null
 let ptys: PtyManager | null = null
@@ -260,14 +262,14 @@ function askStopRunning(win: BrowserWindow | null): boolean {
 
 /**
  * A packaged app takes its icon from the bundle — electron-builder picks up
- * build/icon.icns, .ico and .png — but a dev run shows Electron's own default.
- * Point that at the same artwork so the dock is right while working on the app.
+ * build/icon.icns, .ico and .png. Local runs use the blue DEV artwork instead.
+ * Pass the ICO path on Windows so it can select the right size for the taskbar.
  * build/ is deliberately outside `files`, hence the isPackaged guard.
  */
-function devIcon(): NativeImage | undefined {
+function devIcon(): string | undefined {
   if (app.isPackaged) return undefined
-  const image = nativeImage.createFromPath(join(app.getAppPath(), 'build', 'icon.png'))
-  return image.isEmpty() ? undefined : image
+  const file = join(app.getAppPath(), 'build', process.platform === 'win32' ? 'icon-dev.ico' : 'icon-dev.png')
+  return existsSync(file) ? file : undefined
 }
 
 function createWindow(): BrowserWindow {
@@ -295,6 +297,10 @@ function createWindow(): BrowserWindow {
       spellcheck: false
     }
   })
+
+  if (process.platform === 'win32' && icon) {
+    win.setAppDetails({ appId: DEV_APP_ID, appIconPath: icon })
+  }
 
   win.on('ready-to-show', () => win.show())
   win.webContents.on('render-process-gone', () => ptys?.detachAll())
@@ -511,21 +517,22 @@ async function registerIpc(): Promise<void> {
     return workAccess!.setEnabled(enabled)
   })
   const personalStore = new PersonalStore(app.getPath('userData'), () => personalAgent?.publish())
+  const personalNotify = (title: string, body: string): void => {
+    if (!Notification.isSupported()) return
+    const notification = new Notification({ title, body })
+    notification.on('click', () => {
+      if (!mainWindow) { mainWindow = createWindow(); mainWindow.webContents.once('did-finish-load', () => send(IPC.personalOpen, null)) }
+      else { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); send(IPC.personalOpen, null) }
+    })
+    notification.show()
+  }
   const google = new PersonalGoogle(new PersonalSecrets(app.getPath('userData'), {
     available: () => safeStorage.isEncryptionAvailable() && !(process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text'),
     encrypt: text => safeStorage.encryptString(text), decrypt: data => safeStorage.decryptString(data)
-  }), url => shell.openExternal(url), () => personalAgent?.publish())
+  }), url => shell.openExternal(url), () => personalAgent?.publish(), fetch,
+  account => personalNotify('Google sign-in expired', `Reconnect Gmail & Calendar for ${account} in the personal agent's settings.`))
   personalAgent = new PersonalAgent({ store: personalStore, google, work, key: personalOpenRouterKey,
-    changed: snapshot => send(IPC.personalChanged, snapshot),
-    notify: (title, body) => {
-      if (!Notification.isSupported()) return
-      const notification = new Notification({ title, body })
-      notification.on('click', () => {
-        if (!mainWindow) { mainWindow = createWindow(); mainWindow.webContents.once('did-finish-load', () => send(IPC.personalOpen, null)) }
-        else { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); send(IPC.personalOpen, null) }
-      })
-      notification.show()
-    }
+    changed: snapshot => send(IPC.personalChanged, snapshot), notify: personalNotify
   })
   const personalHandle = (channel: IpcChannel, handler: (...args: unknown[]) => unknown): void => {
     ipcMain.handle(channel, (event, ...args: unknown[]) => {
@@ -538,6 +545,7 @@ async function registerIpc(): Promise<void> {
   personalHandle(IPC.personalChat, text => personalAgent!.chat(text))
   personalHandle(IPC.personalStop, () => personalAgent!.stop())
   personalHandle(IPC.personalApprove, id => personalAgent!.approve(id))
+  personalHandle(IPC.personalSubscriptionStatus, (provider, environment) => personalSubscriptionStatus(provider, environment))
   personalHandle(IPC.personalGoogleConfigure, client => google.configure(client))
   personalHandle(IPC.personalGoogleConnect, () => google.connect())
   personalHandle(IPC.personalGoogleCancelConnect, () => google.cancelConnect())

@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { boundedText, dueCheckIn, isObject, localClock, timeMinutes, validDue, validPriority, validSettings,
+import { boundedText, dueCheckIn, isObject, localClock, personalModelConfigured, timeMinutes, validDue, validPriority, validSettings,
   type PersonalCommand, type PersonalMessage, type PersonalSnapshot, type Priority, type GoogleOperation } from '@shared/personal-agent'
 import { WorkBoardService } from './work-board'
 import { PersonalStore } from './personal-store'
 import { PersonalGoogle } from './personal-google'
 import { PERSONAL_SYSTEM, PERSONAL_TOOLS, runPersonalAI, type AgentRun } from './personal-ai'
+import { runPersonalSubscription } from './personal-subscription'
 
+/** Unresolved proposals block storage pruning; cap them so chat commits never hit the action limit. */
+const MAX_OPEN_PROPOSALS = 20
 interface Dependencies {
   store: PersonalStore; google: PersonalGoogle; work: WorkBoardService
   key: () => string | null
@@ -47,7 +50,7 @@ export class PersonalAgent {
     if (!isObject(input)) throw Error('Invalid personal-agent operation.')
     const command = input as unknown as PersonalCommand
     const allowed: Record<string, string[]> = {
-      settings: ['patch'], task_add: ['title', 'notes', 'due'], task_edit: ['id', 'title', 'notes', 'due', 'done'],
+      settings: ['patch'], task_add: ['title', 'notes', 'due'], task_edit: ['id', 'title', 'notes', 'due', 'done'], task_delete: ['id'],
       memory_add: ['text'], memory_remove: ['id'], plan: ['intention', 'priorities'], focus_start: ['priority', 'minutes'],
       focus_stop: [], action_reject: ['id'], action_resolve: ['id', 'applied']
     }
@@ -70,8 +73,20 @@ export class PersonalAgent {
           if (command.title !== undefined) { if (!boundedText(command.title, 200, true)) throw Error('Invalid task title.'); task.title = command.title.trim() }
           if (command.notes !== undefined) { if (!boundedText(command.notes, 8000)) throw Error('Invalid task notes.'); task.notes = command.notes }
           if (command.due !== undefined) { if (!validDue(command.due)) throw Error('Invalid due date.'); task.due = command.due }
-          if (command.done !== undefined) { if (typeof command.done !== 'boolean') throw Error('Invalid task status.'); task.done = command.done }
+          if (command.done !== undefined) {
+            if (typeof command.done !== 'boolean') throw Error('Invalid task status.')
+            if (command.done && !task.done) task.completedAt = this.now().toISOString()
+            if (!command.done) delete task.completedAt
+            task.done = command.done
+          }
           if (task.done && data.focus?.source === 'personal' && data.focus.id === task.id) data.focus = null
+          break
+        }
+        case 'task_delete': {
+          if (!data.tasks.some(t => t.id === command.id)) throw Error('Task no longer exists.')
+          data.tasks = data.tasks.filter(t => t.id !== command.id)
+          for (const plan of data.plans) plan.priorities = plan.priorities.filter(p => p.source !== 'personal' || p.id !== command.id)
+          if (data.focus?.source === 'personal' && data.focus.id === command.id) data.focus = null
           break
         }
         case 'memory_add':
@@ -113,8 +128,9 @@ export class PersonalAgent {
     if (this.busy) throw Error('The agent is working. Wait or stop its current reply.')
     if (this.deps.store.error) throw Error(this.deps.store.error)
     const data = this.deps.store.snapshot()
-    const key = this.deps.key()
-    if (!key || !data.settings.model) throw Error('Choose a model and save an OpenRouter key in agent settings first.')
+    const settings = data.settings
+    const key = settings.provider === 'openrouter' ? this.deps.key() : ''
+    if (settings.provider === 'openrouter' && (!key || !settings.model)) throw Error('Choose a model and save an OpenRouter key in agent settings first.')
     this.busy = true; this.error = undefined; this.controller = new AbortController(); this.publish()
     try {
       if (!kind) this.deps.store.commit(d => { d.messages.push({ id: randomUUID(), role: 'user', text: input.trim(), at: this.now().toISOString() }) })
@@ -131,18 +147,39 @@ export class PersonalAgent {
         google: { ...google, note: 'Cached inbox covers up to 20 recent inbox messages; primary calendar covers the next 7 days, up to 100 events. Search/list tools can query other ranges.' },
         recentActions: current.actions.slice(-20) })
       const history = current.messages.slice(kind ? -24 : -25, kind ? undefined : -1)
-      const text = await (this.deps.run || runPersonalAI)({ model: current.settings.model, key, system: PERSONAL_SYSTEM,
-        context, history, prompt: input, tools: kind ? PERSONAL_TOOLS.filter(t => ['set_priorities', 'gmail_search', 'gmail_read', 'calendar_list'].includes(t.name)) : PERSONAL_TOOLS,
-        signal: this.controller.signal, execute: (name, args) => this.executeTool(name, args) })
+      const tools = kind ? PERSONAL_TOOLS.filter(t => ['set_priorities', 'gmail_search', 'gmail_read', 'calendar_list'].includes(t.name)) : PERSONAL_TOOLS
+      const text = await (this.deps.run || (settings.provider === 'openrouter' ? runPersonalAI : runPersonalSubscription))({
+        provider: settings.provider, cliEnvironment: settings.cliEnvironment,
+        model: settings.provider === 'openrouter' ? settings.model : settings.subscriptionModel,
+        key: key || '', system: PERSONAL_SYSTEM, context, history, prompt: input, tools,
+        signal: this.controller.signal, execute: (name, args) => {
+          this.controller!.signal.throwIfAborted()
+          if (!tools.some(t => t.name === name)) throw Error('Unknown agent tool.')
+          return this.executeTool(name, args, !!kind)
+        } })
       this.controller.signal.throwIfAborted()
       this.deps.store.commit(d => { d.messages.push({ id: randomUUID(), role: 'assistant', text, at: this.now().toISOString(), ...(kind ? { kind } : {}) }) })
       const latest = this.deps.store.snapshot().settings
       if (kind && latest.proactive && latest.notifications && latest.snoozedUntil <= this.now().getTime()) this.deps.notify(kind === 'morning' ? 'Your daily focus' : kind === 'evening' ? 'Wrap up your day' : 'Time for a check-in', text.slice(0, 180))
-    } catch (e) { this.error = this.controller.signal.aborted ? 'Agent reply stopped. Saved tasks and proposals are kept.' : e instanceof Error ? e.message : 'The agent could not finish its reply.' }
+    } catch (e) {
+      const aborted = this.controller.signal.aborted
+      this.error = aborted ? 'Agent reply stopped. Saved tasks and proposals are kept.' : e instanceof Error ? e.message : 'The agent could not finish its reply.'
+      // A failed check-in keeps its slot (no retry burst); tell the user instead of failing silently.
+      if (kind && !aborted) {
+        const label = kind === 'morning' ? 'morning plan' : kind === 'evening' ? 'evening wrap-up' : 'check-in'
+        const text = `Your scheduled ${label} couldn’t run: ${this.error.slice(0, 500)} Ask me here when you’d like to try again.`
+        try {
+          this.deps.store.commit(d => { d.messages.push({ id: randomUUID(), role: 'assistant', text, kind, at: this.now().toISOString() }) })
+          const latest = this.deps.store.snapshot().settings
+          if (latest.proactive && latest.notifications && latest.snoozedUntil <= this.now().getTime()) this.deps.notify('Check-in couldn’t run', text.slice(0, 180))
+        } catch { /* this.error already reports the failure. */ }
+      }
+    }
     finally { this.busy = false; this.controller = undefined; this.publish() }
     return this.snapshot()
   }
-  private async executeTool(name: string, input: unknown): Promise<unknown> {
+  /** scheduled: a background check-in; it may not replace a plan the user already has for today. */
+  private async executeTool(name: string, input: unknown, scheduled: boolean): Promise<unknown> {
     if (!isObject(input)) throw Error('Invalid tool fields.')
     const google = this.deps.google
     if (name === 'gmail_search') return google.searchMail(input.query as string)
@@ -154,6 +191,9 @@ export class PersonalAgent {
       let proposalId = ''
       const data = this.deps.store.commit(d => {
         const duplicate = d.actions.find(a => a.status === 'pending' && a.account === prepared.account && a.operation === input.operation && JSON.stringify(a.args) === JSON.stringify(prepared.args))
+        if (!duplicate && d.actions.filter(a => a.status === 'pending' || a.status === 'running' || a.status === 'uncertain').length >= MAX_OPEN_PROPOSALS) {
+          throw Error(`There are already ${MAX_OPEN_PROPOSALS} Google proposals awaiting review. Do not prepare more; ask the user to approve, dismiss, or verify the pending proposals first.`)
+        }
         proposalId = duplicate?.id || randomUUID()
         if (!duplicate) d.actions.push({ id: proposalId, operation: input.operation as GoogleOperation, ...prepared, status: 'pending', createdAt: this.now().toISOString() })
       })
@@ -161,6 +201,11 @@ export class PersonalAgent {
     }
     const commands: Record<string, string> = { add_task: 'task_add', edit_task: 'task_edit', remember: 'memory_add', set_priorities: 'plan' }
     if (!commands[name]) throw Error('Unknown agent tool.')
+    if (scheduled && name === 'set_priorities') {
+      const data = this.deps.store.snapshot()
+      const day = localClock(this.now(), data.settings.timeZone).day
+      if (data.plans.some(p => p.day === day)) throw Error('The user already set today’s plan. Do not change it from a scheduled check-in; suggest any changes in your reply instead.')
+    }
     const snapshot = this.mutate({ ...input, operation: commands[name] }, this.deps.store.snapshot().revision)
     return { saved: true, tasks: snapshot.data.tasks.filter(t => !t.done).slice(-20), memories: snapshot.data.memories.slice(-5), plan: snapshot.data.plans.at(-1) }
   }
@@ -196,7 +241,7 @@ export class PersonalAgent {
       this.publish(); if (data.settings.notifications) this.deps.notify('Focus block finished', text)
       return
     }
-    if (this.busy || data.focus && now.getTime() < data.focus.endsAt || !data.settings.model || !this.deps.key()) return
+    if (this.busy || data.focus && now.getTime() < data.focus.endsAt || !personalModelConfigured(data.settings) || data.settings.provider === 'openrouter' && !this.deps.key()) return
     const kind = dueCheckIn(data, now)
     if (!kind) return
     this.deps.store.commit(d => { d.runs.push(`${clock.day}:${kind}`) })

@@ -1,5 +1,13 @@
 /** Personal-agent data is independent of terminal/workspace snapshots. No credentials cross IPC. */
+export type PersonalProvider = 'chatgpt' | 'claude' | 'openrouter'
+export type PersonalCliEnvironment = 'auto' | 'native' | 'wsl'
+export interface PersonalSubscriptionStatus {
+  available: boolean; signedIn: boolean; environment?: 'native' | 'wsl'; message: string
+}
 export interface PersonalSettings {
+  provider: PersonalProvider
+  cliEnvironment: PersonalCliEnvironment
+  subscriptionModel: string
   model: string
   timeZone: string
   context: string
@@ -13,6 +21,8 @@ export interface PersonalSettings {
 }
 export interface PersonalTask {
   id: string; title: string; notes: string; due: string; done: boolean; createdAt: string
+  /** Set when marked done; legacy done tasks fall back to createdAt for retention. */
+  completedAt?: string
 }
 export interface PersonalMemory { id: string; text: string; createdAt: string }
 export interface Priority { source: 'personal' | 'board'; id: string }
@@ -49,6 +59,7 @@ export type PersonalCommand =
   | { operation: 'settings'; patch: Partial<PersonalSettings> }
   | { operation: 'task_add'; title: string; notes?: string; due?: string }
   | { operation: 'task_edit'; id: string; title?: string; notes?: string; due?: string; done?: boolean }
+  | { operation: 'task_delete'; id: string }
   | { operation: 'memory_add'; text: string }
   | { operation: 'memory_remove'; id: string }
   | { operation: 'plan'; intention: string; priorities: Priority[] }
@@ -59,6 +70,7 @@ export type PersonalCommand =
 
 export function emptyPersonalData(timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone): PersonalData {
   return { version: 1, revision: 0, settings: {
+    provider: 'chatgpt', cliEnvironment: 'auto', subscriptionModel: '',
     model: '', timeZone, context: '', proactive: false, notifications: true, weekdaysOnly: true,
     morning: '08:30', checkIn: '13:00', evening: '17:30', snoozedUntil: 0
   }, tasks: [], memories: [], plans: [], messages: [], actions: [], focus: null, runs: [] }
@@ -70,7 +82,10 @@ export const validDue = (v: unknown): v is string => typeof v === 'string' && (v
   (/^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v + 'T00:00:00Z')) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v))
 const validTime = (v: unknown): v is string => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v)
 export function validSettings(v: unknown): v is PersonalSettings {
-  if (!isObject(v) || !boundedText(v.model, 200) || (v.model !== '' && !/^[\w.-]+\/[\w./:@+-]+$/.test(v.model)) ||
+  if (!isObject(v) || !['chatgpt', 'claude', 'openrouter'].includes(String(v.provider)) ||
+    !['auto', 'native', 'wsl'].includes(String(v.cliEnvironment)) ||
+    !boundedText(v.subscriptionModel, 200) || (v.subscriptionModel !== '' && !/^[a-zA-Z0-9][\w.:-]*$/.test(v.subscriptionModel)) ||
+    !boundedText(v.model, 200) || (v.model !== '' && !/^[\w.-]+\/[\w./:@+-]+$/.test(v.model)) ||
     !boundedText(v.context, 12000) || !boundedText(v.timeZone, 100, true) ||
     !['proactive', 'notifications', 'weekdaysOnly'].every(k => typeof v[k] === 'boolean') ||
     !validTime(v.morning) || !validTime(v.checkIn) || !validTime(v.evening) ||
@@ -78,6 +93,8 @@ export function validSettings(v: unknown): v is PersonalSettings {
     typeof v.snoozedUntil !== 'number' || !Number.isFinite(v.snoozedUntil) || v.snoozedUntil < 0) return false
   try { new Intl.DateTimeFormat('en', { timeZone: v.timeZone }); return true } catch { return false }
 }
+export const personalModelConfigured = (settings: PersonalSettings): boolean =>
+  settings.provider !== 'openrouter' || !!settings.model
 export const validPriority = (v: unknown): v is Priority => isObject(v) &&
   (v.source === 'personal' || v.source === 'board') && boundedText(v.id, 200, true)
 export function localClock(now: Date, timeZone: string): { day: string; minutes: number; weekend: boolean } {

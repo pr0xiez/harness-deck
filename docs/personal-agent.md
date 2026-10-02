@@ -1,16 +1,42 @@
 # Personal agent
 
-Open **Personal agent → Agent settings**. Save an OpenRouter key (shared with
-the existing agent-provider settings), load the tool-capable model catalog or
-enter a model ID, and save your goals and preferences. Saved credentials never
-return to the renderer or enter workspace snapshots. Agent replies and scheduled briefings
-spend OpenRouter credits.
+Open **Personal agent → Agent settings → Use for replies** and choose
+**ChatGPT subscription (Codex)** or **Claude subscription (Claude Code)**.
+Install the corresponding CLI and sign in in a Deck terminal pane:
+`codex login` for ChatGPT or `claude auth login` for Claude. Choose subscription
+sign-in rather than an API key. **Check sign-in** verifies the saved CLI login
+without sending a model request; it does not check the subscription's remaining
+quota. **Auto detect sign-in** checks the native CLI first, then WSL on Windows,
+and prefers an environment with a subscription login. Select **WSL** or
+**This system** to use a particular environment. Each has its own CLI login.
+
+Leave **Subscription model** empty to use the CLI's default model, or enter a
+model supported by your plan. Replies and scheduled briefings use that plan's
+usage allowance. Deck refuses API-key logins in subscription mode, removes
+inherited API keys and custom provider routing, and never falls back to API
+billing. CLI authentication and token refresh remain with the CLI; Deck does
+not read, copy or store its subscription tokens. Use a recent CLI: Codex needs
+`--ignore-user-config`, `--ephemeral` and structured outputs; Claude Code needs
+`--safe-mode`, `--restricted` and structured outputs.
+
+Switch providers whenever your subscription changes. Conversation, tasks,
+memories, plans and Google proposals remain in Deck; relevant context is sent
+to the newly selected provider on its next run. New agents default to ChatGPT.
+Existing OpenRouter agents keep their provider and model after upgrading.
+**OpenRouter credits** remains available: save the key, load the tool-capable
+catalog or enter a model ID. This mode spends OpenRouter credits separately
+from any subscription. Saved credentials never return to the renderer or enter
+workspace snapshots. Save your goals and preferences in either mode.
 
 Use **Plan my day** to consider commitments, work-board cards and connected
 Google data. Plans have at most three priorities. A personal task checkbox adds
 it to the plan; the check button reports completion. Work-board completion
 updates the real card with its current revision. A focus timer survives a
 restart and asks what happened afterward; it never assumes completion.
+Delete a task with its remove button; the agent itself has no delete tool.
+Completed tasks are pruned 30 days after completion (legacy tasks without a
+completion time use their creation time), never while referenced by a saved
+plan or the current focus block.
 
 ## Google setup
 
@@ -57,10 +83,19 @@ which is never automatically retried. Open Google and check it, then select
 **I verified it was applied** or **I verified it wasn’t applied**. Ask for a new
 proposal if needed. Disconnect clears cached data, forgets local tokens and
 attempts bounded token revocation; saved conversations/proposals remain local.
+At most 20 proposals may be open (pending, running or uncertain); approve,
+dismiss or verify one before the agent can prepare another.
+
+If Google rejects the refresh token (`invalid_grant`, common weekly for consent
+screens in testing), Deck forgets the local token, marks Google disconnected,
+keeps the account for existing proposals, shows a reconnect message and sends
+one desktop notification. A 401 forces one token refresh: reads retry once,
+writes are never resent.
 
 ## Proactivity
 
-Enable check-ins only after choosing a model and key. Configure three ordered
+Enable check-ins after signing into your subscription CLI, or choosing an
+OpenRouter model and key. Configure three ordered
 times and a time zone, optionally weekdays only. Morning briefings help choose
 a plan, midday check-ins ask about real progress, and evening reviews help
 close the day. Each scheduled slot is recorded before inference, so a failed
@@ -73,8 +108,11 @@ burst after a restart. A focus block defers scheduled check-ins. Snooze pauses
 check-ins and focus notifications for one hour. Focus reminders wait until the
 configured active day (morning until 90 minutes after the evening slot) and
 fire once per block. Disable desktop notifications without disabling the
-in-app conversation. Background briefings can read Google data and change the
-daily plan; they cannot complete tasks, save memories or prepare remote writes.
+in-app conversation. Background briefings can read Google data and set the
+daily plan only when none exists for today; they never overwrite a plan, and
+cannot complete tasks, save memories or prepare remote writes. A failed
+scheduled check-in still consumes its slot, adds a short conversation message
+and sends one notification (when enabled and not snoozed).
 
 The scheduler runs in Electron's main process, survives renderer reloads, and
 works with a minimized window. It stops when Deck quits. On macOS, the app
@@ -87,7 +125,9 @@ service, startup registration or hosted scheduler.
 `personal-agent.json` in the user-data directory holds tasks, explicit memories,
 daily plans, focus state, conversation and proposal history independently of
 `workspaces.json` and `work-board.json`. Atomic replacement and `.bak` recovery
-preserve the last valid data. Invalid or newer-version data blocks editing.
+preserve the last valid data. The store tracks in memory whether the primary
+file is known valid (loaded or last written by Deck) and only then copies it to
+`.bak`; do not hand-edit `personal-agent.json` while Deck runs. Invalid or newer-version data blocks editing.
 The in-memory revision advances only after a successful write; stale IPC edits
 are rejected. The UI preserves task drafts when an agent edits the same task.
 
@@ -104,6 +144,23 @@ not encrypted. Do not put credentials into goals or conversation text.
 `personal-store.ts` owns persistence; `personal-secrets.ts` owns encrypted Google
 credentials; `personal-google.ts` owns OAuth and the allowlisted Google APIs;
 `personal-ai.ts` implements [OpenRouter tool calling](https://openrouter.ai/docs/guides/features/tool-calling);
+`personal-subscription.ts` implements a bounded structured-response tool loop
+through [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)
+and [Claude Code print mode](https://code.claude.com/docs/en/cli-reference).
+`personal-cli.ts` handles native/WSL discovery, stdin prompts, environment
+isolation, output/time limits and process termination. Subscription runs use
+temporary working folders, fresh ephemeral CLI sessions, disabled customizations,
+and disabled built-in execution, browser and MCP tools. Codex additionally uses
+a read-only sandbox and never grants approvals. The CLI returns structured Deck
+tool requests; only the main-process allowlisted executor performs them. Temporary
+schemas and WSL process-control files are removed afterward; private prompts
+travel on stdin instead of command arguments. CLI diagnostic output never
+crosses IPC. Runs are limited to six CLI invocations and eight tool requests per
+invocation; each inference invocation times out after two minutes. No automatic
+provider retry is performed. CLI output parsing tolerates shell startup noise
+around the JSON (WSL uses `bash -lic`). A signed-in CLI resolution is cached
+for five minutes; a failed or unparseable run clears it, and **Check sign-in**
+always bypasses it.
 `personal-agent.ts` owns planning, proposals and scheduling. The renderer page
 uses only the typed preload bridge. Email, calendar and imported card content
 are treated as untrusted context. This agent has no shell, arbitrary HTTP,

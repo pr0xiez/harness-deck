@@ -9,6 +9,7 @@ let snapshot: PersonalSnapshot
 beforeEach(() => {
   snapshot = { data: emptyPersonalData('America/New_York'), busy: false, google: { configured: false, connected: false, connecting: false, mail: [], events: [] } }
   snapshot.data.settings.provider = 'openrouter'; snapshot.data.settings.model = 'provider/model'; snapshot.data.revision = 1
+  snapshot.data.settings.onboarded = true
   snapshot.data.tasks.push({ id: 'one', title: 'Finish release', notes: 'One next step', due: '', done: false, createdAt: new Date().toISOString() })
   harness.personal.snapshot.mockResolvedValue(snapshot)
   harness.personal.mutate.mockResolvedValue(snapshot)
@@ -112,4 +113,41 @@ it('labels thread replies and the email an action applies to', async () => {
   expect(await screen.findByText(/Reply in thread/)).toBeTruthy()
   expect(screen.getAllByText(/Reply in thread/)).toHaveLength(1)
   expect(screen.getByText('Newsletter').previousSibling?.textContent).toBe('Email')
+})
+it('offers open suggestions as buttons, shows accepted ones muted and hides dismissed ones', async () => {
+  const user = userEvent.setup()
+  snapshot.data.messages.push({ id: 'm', role: 'assistant', text: 'Here is a start.', at: new Date().toISOString(), suggestions: [
+    { id: 's1', label: 'Start a 25 min focus', state: 'open', type: 'start_focus', priority: { source: 'personal', id: 'one' }, minutes: 25 },
+    { id: 's2', label: 'Add “Call the bank”', state: 'open', type: 'add_task', title: 'Call the bank' },
+    { id: 's3', label: 'Save today’s plan', state: 'accepted', type: 'set_plan', intention: 'Ship', priorities: [] },
+    { id: 's4', label: 'Old idea', state: 'dismissed', type: 'add_task', title: 'Old idea' }
+  ] })
+  render(<PersonalAgentPage />)
+  const log = within(await screen.findByRole('log'))
+  const primary = await log.findByRole('button', { name: 'Start a 25 min focus' })
+  expect(primary.className).toContain('primary')
+  expect(log.getByRole('button', { name: 'Add “Call the bank”' }).className).toContain('subtle')
+  expect(log.getByText('✓ Save today’s plan')).toBeTruthy()
+  expect(log.queryByRole('button', { name: 'Save today’s plan' })).toBeNull()
+  expect(log.queryByText(/Old idea/)).toBeNull()
+  await user.click(primary)
+  expect(harness.personal.mutate).toHaveBeenLastCalledWith({ operation: 'suggestion_accept', messageId: 'm', suggestionId: 's1' }, 1)
+  await user.click(log.getByRole('button', { name: 'Dismiss Add “Call the bank”' }))
+  expect(harness.personal.mutate).toHaveBeenLastCalledWith({ operation: 'suggestion_dismiss', messageId: 'm', suggestionId: 's2' }, 1)
+})
+it('disables suggestions while the agent is busy and labels nudges', async () => {
+  snapshot.busy = true
+  snapshot.data.messages.push({ id: 'n', role: 'assistant', kind: 'nudge', text: 'Your 2pm starts in 10 minutes.', at: new Date().toISOString(),
+    suggestions: [{ id: 's', label: 'Add prep task', state: 'open', type: 'add_task', title: 'Prep' }] })
+  render(<PersonalAgentPage />)
+  const log = within(await screen.findByRole('log'))
+  expect((await log.findByRole('button', { name: 'Add prep task' }) as HTMLButtonElement).disabled).toBe(true)
+  expect((log.getByRole('button', { name: 'Dismiss Add prep task' }) as HTMLButtonElement).disabled).toBe(true)
+  expect(log.getByText('Deck · Nudge')).toBeTruthy()
+})
+it('reopens the first-run setup from the getting-started banner', async () => {
+  const user = userEvent.setup()
+  render(<PersonalAgentPage />)
+  await user.click(await screen.findByRole('button', { name: 'Set up your agent' }))
+  expect(harness.personal.mutate).toHaveBeenLastCalledWith({ operation: 'settings', patch: { onboarded: false } }, 1)
 })

@@ -35,6 +35,7 @@ export const IPC = {
   personalGoogleCancelConnect: 'personal:googleCancelConnect',
   personalGoogleDisconnect: 'personal:googleDisconnect',
   personalGoogleSync: 'personal:googleSync',
+  personalSignals: 'personal:signals',
 
   // persisted state
   stateLoad: 'state:load',

@@ -35,7 +35,7 @@ import type { GitHubSnapshot } from '@shared/github'
 import type { OpenRouterModels } from '@shared/openrouter'
 import type { McpInventory, McpMutation, McpMutationResult, McpTarget } from '@shared/mcp'
 import type { WorkAccess, WorkBoard, WorkMutation, WorkResult } from '@shared/work-board'
-import type { PersonalCliEnvironment, PersonalCommand, PersonalSnapshot, PersonalSubscriptionStatus, GoogleSnapshot } from '@shared/personal-agent'
+import type { DeckSignals, PersonalCliEnvironment, PersonalCommand, PersonalSnapshot, PersonalSubscriptionStatus, GoogleSnapshot } from '@shared/personal-agent'
 import { IPC, type IpcChannel } from '@shared/ipc'
 
 function subscribe<T>(channel: IpcChannel, handler: (payload: T) => void): () => void {
@@ -56,6 +56,8 @@ const api = {
     subscriptionStatus: (provider: 'chatgpt' | 'claude', environment: PersonalCliEnvironment): Promise<PersonalSubscriptionStatus> => ipcRenderer.invoke(IPC.personalSubscriptionStatus, provider, environment),
     onChanged: (handler: (snapshot: PersonalSnapshot) => void) => subscribe(IPC.personalChanged, handler),
     onOpen: (handler: () => void) => subscribe(IPC.personalOpen, handler),
+    /** Status-only Deck signals (waiting agents, GitHub attention); never terminal content. */
+    reportSignals: (signals: DeckSignals): Promise<void> => ipcRenderer.invoke(IPC.personalSignals, signals),
     google: {
       configure: (client: { clientId: string; clientSecret: string }): Promise<GoogleSnapshot> => ipcRenderer.invoke(IPC.personalGoogleConfigure, client),
       connect: (): Promise<GoogleSnapshot> => ipcRenderer.invoke(IPC.personalGoogleConnect),

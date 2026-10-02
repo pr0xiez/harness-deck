@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { isActionable, isLive, useDeck } from '../store'
 import { githubCount, useGitHub } from '../github'
 import { Icon } from './Icon'
+import { PersonalStatusChip } from './PersonalStatusChip'
 
 const api = window.harness
 
@@ -56,6 +57,7 @@ export function TitleBar(): React.JSX.Element {
       <div className="titlebar-drag" />
 
       <div className="titlebar-right">
+        <PersonalStatusChip />
         {/* Always accessible for GitHub setup and acknowledged items. */}
         <button
           className={`ghost-btn ${waitingCount + githubWaiting ? 'waiting' : ''}`}

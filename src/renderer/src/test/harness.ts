@@ -42,7 +42,7 @@ export const harness: DeepMock<HarnessApi> = {
   info: vi.fn(),
 
   personal: {
-    snapshot: vi.fn(), mutate: vi.fn(), chat: vi.fn(), stop: vi.fn(), approve: vi.fn(),
+    snapshot: vi.fn(), mutate: vi.fn(), chat: vi.fn(), stop: vi.fn(), approve: vi.fn(), reportSignals: vi.fn(async () => {}),
     subscriptionStatus: vi.fn(async () => ({ available: true, signedIn: true, environment: 'wsl' as const, message: 'Subscription sign-in found (WSL).' })),
     onChanged: subscribe(), onOpen: subscribe(),
     google: { configure: vi.fn(), connect: vi.fn(), cancelConnect: vi.fn(), disconnect: vi.fn(), sync: vi.fn() }

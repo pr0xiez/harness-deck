@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { emptyPersonalData, localClock, personalModelConfigured, type PersonalCliEnvironment, type PersonalProvider, type PersonalSubscriptionStatus, type PersonalCommand, type PersonalSettings, type PersonalSnapshot, type Priority, type GoogleAction } from '@shared/personal-agent'
+import { emptyPersonalData, localClock, personalModelConfigured, type PersonalCliEnvironment, type PersonalProvider, type PersonalSubscriptionStatus, type PersonalCommand, type PersonalMessage, type PersonalSettings, type PersonalSnapshot, type Priority, type GoogleAction } from '@shared/personal-agent'
 import type { WorkBoard, WorkItem } from '@shared/work-board'
 import { useDeck } from '../store'
+import { usePersonal, usePersonalFeed } from '../personal'
 import { OpenRouterKey } from './OpenRouterKey'
+import { PersonalSetup } from './PersonalSetup'
 import { Modal } from './ui'
 import { Icon } from './Icon'
 
@@ -13,15 +15,19 @@ const duration = (milliseconds: number): string => {
   const seconds = Math.max(0, Math.ceil(milliseconds / 1000))
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
+const kindLabels: Record<NonNullable<PersonalMessage['kind']>, string> = { morning: 'Morning', checkIn: 'Check-in', evening: 'Wrap-up', focus: 'Focus', nudge: 'Nudge' }
 function eventTime(value: string, timeZone: string): string {
   if (value.length === 10) return value + ' · All day'
   return new Date(value).toLocaleString(undefined, { timeZone, weekday: 'short', hour: 'numeric', minute: '2-digit' })
 }
 
 export function PersonalAgentPage(): React.JSX.Element {
-  const [snapshot, setSnapshot] = useState(empty)
-  const snapshotRef = useRef(empty)
-  const [loaded, setLoaded] = useState(false)
+  // The title-bar chip follows the same snapshot; the page still asks for a fresh copy on open.
+  usePersonalFeed(true)
+  const stored = usePersonal(s => s.snapshot)
+  const loadError = usePersonal(s => s.error)
+  const snapshot = stored ?? empty
+  const loaded = !!stored
   const [board, setBoard] = useState<WorkBoard>({ version: 1, revision: -1, items: [] })
   const [error, setError] = useState('')
   const [acting, setActing] = useState(false)
@@ -34,22 +40,18 @@ export function PersonalAgentPage(): React.JSX.Element {
   const chatEnd = useRef<HTMLDivElement>(null)
   const workspaces = useDeck(s => s.workspaces)
   const setActiveWorkspace = useDeck(s => s.setActiveWorkspace)
-  const receive = (value: PersonalSnapshot): void => {
-    if (value.data.revision < snapshotRef.current.data.revision) return
-    snapshotRef.current = value; setSnapshot(value); setLoaded(true)
-  }
+  const receive = (value: PersonalSnapshot): void => usePersonal.getState().receive(value)
+  const latest = (): PersonalSnapshot => usePersonal.getState().snapshot ?? empty
   useEffect(() => {
     let live = true
-    const off = api.personal.onChanged(value => { if (live) receive(value) })
     const offBoard = api.work.onChanged(value => { if (live) setBoard(old => value.revision >= old.revision ? value : old) })
-    void api.personal.snapshot().then(value => { if (live) receive(value) }).catch(e => { if (live) setError(String(e)) })
     void api.work.snapshot().then(value => {
       if (!live) return
       if (value.ok) setBoard(old => value.board.revision >= old.revision ? value.board : old)
       else setError(value.error)
     }).catch(e => { if (live) setError(String(e)) })
     const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => { live = false; off(); offBoard(); clearInterval(timer) }
+    return () => { live = false; offBoard(); clearInterval(timer) }
   }, [])
   useEffect(() => { chatEnd.current?.scrollIntoView?.({ block: 'nearest' }) }, [snapshot.data.messages.length, snapshot.busy])
   const act = async (action: () => Promise<unknown>): Promise<boolean> => {
@@ -61,9 +63,9 @@ export function PersonalAgentPage(): React.JSX.Element {
       return false
     } finally { setActing(false) }
   }
-  const mutate = (command: PersonalCommand): Promise<boolean> => act(async () => receive(await api.personal.mutate(command, snapshotRef.current.data.revision)))
+  const mutate = (command: PersonalCommand): Promise<boolean> => act(async () => receive(await api.personal.mutate(command, latest().data.revision)))
   const chat = async (text: string): Promise<void> => {
-    if (!text.trim() || snapshotRef.current.busy) return
+    if (!text.trim() || latest().busy) return
     const ok = await act(async () => receive(await api.personal.chat(text)))
     if (ok) setDraft(current => current === text ? '' : current)
   }
@@ -90,12 +92,23 @@ export function PersonalAgentPage(): React.JSX.Element {
       const result = await api.work.mutate({ operation: 'move', id: p.id, expectedRevision: card.revision, status: 'done' })
       if (!result.ok) { const fresh = await api.work.snapshot(); if (fresh.ok) setBoard(fresh.board); throw Error(result.error) }
       setBoard(result.board)
-      if (data.focus && same(data.focus, p)) receive(await api.personal.mutate({ operation: 'focus_stop' }, snapshotRef.current.data.revision))
+      if (data.focus && same(data.focus, p)) receive(await api.personal.mutate({ operation: 'focus_stop' }, latest().data.revision))
     })
   }
   const focus = (p: Priority): void => { void mutate({ operation: 'focus_start', priority: p, minutes }) }
   const pending = data.actions.filter(a => a.status === 'pending' || a.status === 'running' || a.status === 'uncertain')
   const cards = board.items.filter(i => i.status === 'ideas' || i.status === 'in_progress')
+  const onboarding = loaded && !data.settings.onboarded && !snapshot.error
+  const dialogs = <>
+    {settingsOpen && <AgentSettings key="settings" settings={data.settings} google={google} onClose={() => setSettingsOpen(false)} onSave={patch => mutate({ operation: 'settings', patch })} onGoogle={action => act(async () => { await action(); receive(await api.personal.snapshot()) })} />}
+    {taskEditor !== undefined && <TaskEditor key={taskEditor || 'new'} task={data.tasks.find(t => t.id === taskEditor)} onClose={() => setTaskEditor(undefined)} onSave={async fields => { const ok = await mutate(taskEditor ? { operation: 'task_edit', id: taskEditor, ...fields } : { operation: 'task_add', ...fields }); if (ok) setTaskEditor(undefined); return ok }} />}
+  </>
+
+  if (onboarding) return <main className="personal-page">
+    {error && <div role="alert" className="work-error">{error}</div>}
+    <PersonalSetup settings={data.settings} busy={busy} onSave={patch => mutate({ operation: 'settings', patch })} onPlan={() => chat('Help me plan today.')} onOpenSettings={() => setSettingsOpen(true)} />
+    {dialogs}
+  </main>
 
   return <main className="personal-page">
     <header className="personal-head">
@@ -105,9 +118,9 @@ export function PersonalAgentPage(): React.JSX.Element {
         <button className="btn subtle" onClick={() => setSettingsOpen(true)}><Icon name="settings" />Agent settings</button>
       </div>
     </header>
-    {(error || snapshot.error) && <div role="alert" className="work-error">{error || snapshot.error}</div>}
-    {!loaded && !error ? <p>Loading your agent…</p> : null}
-    {loaded && (!modelConfigured || (!data.settings.context && !data.messages.length)) && <div className="personal-setup"><div><strong>Give your agent a place to start.</strong><p>Choose your subscription, add your goals, and connect Google when you’re ready.</p></div><button className="btn primary" onClick={() => setSettingsOpen(true)}>Set up your agent</button></div>}
+    {(error || loadError || snapshot.error) && <div role="alert" className="work-error">{error || loadError || snapshot.error}</div>}
+    {!loaded && !error && !loadError ? <p>Loading your agent…</p> : null}
+    {loaded && (!modelConfigured || (!data.settings.context && !data.messages.length)) && <div className="personal-setup"><div><strong>Give your agent a place to start.</strong><p>Choose your subscription, add your goals, and connect Google when you’re ready.</p></div><button className="btn primary" disabled={busy} onClick={() => void mutate({ operation: 'settings', patch: { onboarded: false } })}>Set up your agent</button></div>}
     <div className="personal-layout">
       <div className="personal-day">
         <section className="personal-card personal-plan">
@@ -143,7 +156,8 @@ export function PersonalAgentPage(): React.JSX.Element {
         <section className="personal-card personal-chat"><header><div><h2>Make progress, together</h2><p className="personal-muted">Your conversation and commitments stay with you.</p></div><Icon name="star" size={22} /></header>
           <div className="personal-chat-log" role="log" aria-label="Personal agent conversation" aria-live="polite">
             {!data.messages.length && <div className="personal-welcome"><span className="personal-orb">✦</span><h3>What would make today a good day?</h3><p>Tell me what’s on your mind. We’ll turn it into a manageable plan and start with one thing.</p></div>}
-            {data.messages.map(m => <article key={m.id} className={`personal-message ${m.role}`}><header><strong>{m.role === 'user' ? 'You' : 'Deck'}{m.kind ? ` · ${m.kind === 'checkIn' ? 'Check-in' : m.kind === 'focus' ? 'Focus' : m.kind === 'morning' ? 'Morning' : 'Wrap-up'}` : ''}</strong><time dateTime={m.at}>{new Date(m.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</time></header><p>{m.text}</p></article>)}
+            {data.messages.map(m => <article key={m.id} className={`personal-message ${m.role}${m.kind === 'nudge' ? ' nudge' : ''}`}><header><strong>{m.role === 'user' ? 'You' : 'Deck'}{m.kind ? ` · ${kindLabels[m.kind] ?? 'Check-in'}` : ''}</strong><time dateTime={m.at}>{new Date(m.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</time></header><p>{m.text}</p>
+              {m.role === 'assistant' && m.suggestions?.length ? <Suggestions message={m} disabled={busy || snapshot.busy} onAccept={id => void mutate({ operation: 'suggestion_accept', messageId: m.id, suggestionId: id })} onDismiss={id => void mutate({ operation: 'suggestion_dismiss', messageId: m.id, suggestionId: id })} /> : null}</article>)}
             {snapshot.busy && <p className="personal-thinking">Thinking through your next step…</p>}<div ref={chatEnd} />
           </div>
           <div className="personal-prompts">{['What should I focus on?', 'I’m stuck. Help me get moving.', 'Help me wrap up today.'].map(text => <button className="btn ghost" key={text} disabled={busy || snapshot.busy || !modelConfigured} onClick={() => void chat(text)}>{text}</button>)}</div>
@@ -160,9 +174,18 @@ export function PersonalAgentPage(): React.JSX.Element {
         {data.actions.some(a => a.status === 'done' || a.status === 'rejected') && <details className="personal-card personal-details"><summary>Recent Google actions</summary>{data.actions.filter(a => a.status === 'done' || a.status === 'rejected').slice(-10).reverse().map(a => <p key={a.id}>{a.title} · {a.status === 'done' ? a.result : 'Dismissed'}</p>)}</details>}
       </div>
     </div>
-    {settingsOpen && <AgentSettings key="settings" settings={data.settings} google={google} onClose={() => setSettingsOpen(false)} onSave={patch => mutate({ operation: 'settings', patch })} onGoogle={action => act(async () => { await action(); receive(await api.personal.snapshot()) })} />}
-    {taskEditor !== undefined && <TaskEditor key={taskEditor || 'new'} task={data.tasks.find(t => t.id === taskEditor)} onClose={() => setTaskEditor(undefined)} onSave={async fields => { const ok = await mutate(taskEditor ? { operation: 'task_edit', id: taskEditor, ...fields } : { operation: 'task_add', ...fields }); if (ok) setTaskEditor(undefined); return ok }} />}
+    {dialogs}
   </main>
+}
+
+/** One-click follow-ups the agent offered. Accepting runs the same command the user could have run by hand. */
+function Suggestions({ message, disabled, onAccept, onDismiss }: { message: PersonalMessage; disabled: boolean; onAccept: (id: string) => void; onDismiss: (id: string) => void }): React.JSX.Element | null {
+  const shown = (message.suggestions || []).filter(s => s.state !== 'dismissed')
+  if (!shown.length) return null
+  const first = shown.find(s => s.state === 'open')
+  return <div className="personal-suggestions" role="group" aria-label="Suggested next steps">{shown.map(s => s.state === 'accepted'
+    ? <span key={s.id} className="personal-suggestion-done">✓ {s.label}</span>
+    : <span key={s.id} className="personal-suggestion"><button className={`btn ${s === first ? 'primary' : 'subtle'}`} disabled={disabled} onClick={() => onAccept(s.id)}>{s.label}</button><button className="icon-btn tiny" aria-label={`Dismiss ${s.label}`} title="Dismiss suggestion" disabled={disabled} onClick={() => onDismiss(s.id)}><Icon name="close" size={11} /></button></span>)}</div>
 }
 
 function BoardChoice({ card, selected, disabled, onToggle }: { card: WorkItem; selected: boolean; disabled: boolean; onToggle: () => void }): React.JSX.Element {
@@ -230,8 +253,8 @@ function AgentSettings({ settings, google, onSave, onGoogle, onClose }: {
         <p className="personal-muted">Messages and relevant task, email, and calendar context go to the selected provider. Sign in through a {draft.provider === 'chatgpt' ? 'Codex' : 'Claude Code'} pane in the same environment. Deck does not switch to API billing if your subscription is unavailable.</p>
       </>}
       <h3>Your daily rhythm</h3><label>Time zone<input value={draft.timeZone} onChange={e => patch({ timeZone: e.target.value })} placeholder="America/New_York" /></label><div className="personal-schedule">{(['morning', 'checkIn', 'evening'] as const).map(key => <label key={key}>{key === 'morning' ? 'Morning plan' : key === 'checkIn' ? 'Refocus' : 'Evening review'}<input type="time" required value={draft[key]} onChange={e => patch({ [key]: e.target.value })} /></label>)}</div>
-      <label className="personal-check"><input type="checkbox" checked={draft.proactive} onChange={e => patch({ proactive: e.target.checked })} />Proactive daily check-ins</label><label className="personal-check"><input type="checkbox" checked={draft.weekdaysOnly} onChange={e => patch({ weekdaysOnly: e.target.checked })} />Check in on weekdays only</label><label className="personal-check"><input type="checkbox" checked={draft.notifications} onChange={e => patch({ notifications: e.target.checked })} />Desktop notifications for check-ins and focus timers</label><p className="personal-muted">Keep Deck running for check-ins. Missed check-ins catch up within 90 minutes; overnight check-ins wait until the next day. Focus timers never mark tasks complete.</p>
-      <button className="btn primary" disabled={busy}>Save agent settings</button>
+      <label className="personal-check"><input type="checkbox" checked={draft.proactive} onChange={e => patch({ proactive: e.target.checked })} />Proactive daily check-ins</label><label className="personal-check"><input type="checkbox" checked={draft.nudges} disabled={!draft.proactive} onChange={e => patch({ nudges: e.target.checked })} />Nudges for meetings, waiting agents and due tasks</label><label className="personal-check"><input type="checkbox" checked={draft.weekdaysOnly} onChange={e => patch({ weekdaysOnly: e.target.checked })} />Check in on weekdays only</label><label className="personal-check"><input type="checkbox" checked={draft.notifications} onChange={e => patch({ notifications: e.target.checked })} />Desktop notifications for check-ins and focus timers</label><p className="personal-muted">Keep Deck running for check-ins. Missed check-ins catch up within 90 minutes; overnight check-ins wait until the next day. Focus timers never mark tasks complete.</p>
+      <div className="personal-inline"><button className="btn primary" disabled={busy}>Save agent settings</button><button type="button" className="btn ghost" disabled={busy} onClick={() => { setBusy(true); setNote(''); void onSave({ onboarded: false }).then(ok => { if (ok) onClose(); else setNote('Could not restart setup. Close this dialog for details.') }).finally(() => setBusy(false)) }}>Run setup again</button></div>
     </form>
     <div className="personal-form">{draft.provider === 'openrouter' && <><h3>Agent key</h3><OpenRouterKey /></>}<h3>Gmail & Google Calendar</h3>{google.connected ? <><p>Connected as <strong>{google.account}</strong>.</p><div className="personal-inline"><button className="btn subtle" disabled={busy} onClick={() => void googleAction(() => api.personal.google.connect())}>Reconnect</button><button className="btn ghost" disabled={busy} onClick={() => void googleAction(() => api.personal.google.disconnect())}>Disconnect Google</button></div></> : <><p className="personal-muted">Create a <strong>Desktop app</strong> OAuth client in Google Cloud, enable Gmail and Google Calendar APIs, and add your account as a test user while the consent screen is in testing.</p><button className="btn ghost" onClick={() => api.openExternal('https://console.cloud.google.com/auth/clients')}>Open Google Cloud setup</button><details className="personal-details" open={!google.configured}><summary>Desktop OAuth client</summary><label>Client ID<input value={clientId} autoComplete="off" onChange={e => setClientId(e.target.value)} placeholder="…apps.googleusercontent.com" /></label><label>Client secret<input type="password" autoComplete="off" value={clientSecret} onChange={e => setClientSecret(e.target.value)} /></label><button className="btn subtle" disabled={busy || !clientId.trim()} onClick={() => void googleAction(() => api.personal.google.configure({ clientId, clientSecret }))}>Save Google client</button></details><button className="btn primary" disabled={busy || !google.configured || google.connecting} onClick={() => void googleAction(() => api.personal.google.connect())}>{google.connecting ? 'Complete sign-in in your browser…' : 'Connect Gmail & Calendar'}</button></>}
       <p className="personal-muted">Google tokens stay encrypted on this machine. All email and calendar changes require your review. Calendar management covers the primary calendar and individual events; guests are notified of approved updates.</p>{google.error && <p role="alert" className="oc-note bad">{google.error}</p>}

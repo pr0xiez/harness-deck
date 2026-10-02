@@ -26,6 +26,7 @@ vi.mock('./github', () => ({
   useGitHub: () => 0,
   githubCount: () => 0
 }))
+vi.mock('./personalSignals', () => ({ useDeckSignalsReporter: () => undefined }))
 
 beforeEach(() => {
   useDeck.setState({

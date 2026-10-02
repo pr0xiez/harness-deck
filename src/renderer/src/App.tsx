@@ -23,6 +23,7 @@ import { NoticeToast } from './components/NoticeToast'
 import { VoiceHud } from './components/VoiceHud'
 import { Icon } from './components/Icon'
 import { githubCount, useGitHub, useGitHubPolling } from './github'
+import { useDeckSignalsReporter } from './personalSignals'
 import { useVoice } from './voice'
 
 const api = window.harness
@@ -46,6 +47,8 @@ export function App(): React.JSX.Element {
 
   useGitHubPolling(workspaces.map(w => w.cwd), hydrated)
   const githubWaiting = useGitHub(githubCount)
+  // Status only (who is waiting, which PRs need you) so the personal agent can nudge; never terminal content.
+  useDeckSignalsReporter()
 
   const active = workspaces.find((w) => w.id === activeWorkspaceId)
 

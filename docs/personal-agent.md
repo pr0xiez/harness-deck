@@ -1,5 +1,23 @@
 # Personal agent
 
+## First run
+
+A new agent opens a three-step setup instead of the page: choose a ChatGPT or
+Claude subscription (Deck checks the CLI sign-in and shows the login command
+when needed; OpenRouter is under **Advanced**), set your rhythm (time zone,
+check-in times, weekdays only, **Daily check-ins** and **Nudges**), then
+optionally describe your goals. **Finish & plan my day** starts the first
+conversation. **Skip setup** is available on every step. Re-run it from
+**Agent settings → Run setup again** or the page's **Set up your agent**
+banner. Existing agents migrate as already set up, with nudges enabled (they
+still require check-ins to be on).
+
+Once set up, a title-bar chip shows the running focus countdown, otherwise
+today's next unfinished priority or **Plan your day**, plus a count of Google
+proposals awaiting review. Clicking it opens the personal-agent page.
+
+## Subscriptions and providers
+
 Open **Personal agent → Agent settings → Use for replies** and choose
 **ChatGPT subscription (Codex)** or **Claude subscription (Claude Code)**.
 Install the corresponding CLI and sign in in a Deck terminal pane:
@@ -29,7 +47,10 @@ from any subscription. Saved credentials never return to the renderer or enter
 workspace snapshots. Save your goals and preferences in either mode.
 
 Use **Plan my day** to consider commitments, work-board cards and connected
-Google data. Plans have at most three priorities. A personal task checkbox adds
+Google data. Replies can carry up to three one-click suggestions (add a task,
+start a focus block, use a plan). Nothing is saved until you click one;
+accepting runs the same validated command as doing it by hand, atomically, and
+a suggestion that no longer applies stays open with an error. Dismiss hides it. Plans have at most three priorities. A personal task checkbox adds
 it to the plan; the check button reports completion. Work-board completion
 updates the real card with its current revision. A focus timer survives a
 restart and asks what happened afterward; it never assumes completion.
@@ -109,10 +130,34 @@ check-ins and focus notifications for one hour. Focus reminders wait until the
 configured active day (morning until 90 minutes after the evening slot) and
 fire once per block. Disable desktop notifications without disabling the
 in-app conversation. Background briefings can read Google data and set the
-daily plan only when none exists for today; they never overwrite a plan, and
-cannot complete tasks, save memories or prepare remote writes. A failed
+daily plan only when none exists for today; they never overwrite a plan (they
+offer a plan suggestion instead), and cannot complete tasks, save memories or
+prepare remote writes. A failed
 scheduled check-in still consumes its slot, adds a short conversation message
 and sends one notification (when enabled and not snoozed).
+
+**Nudges** are short local messages with no model call, sent only while
+check-ins and nudges are on, not snoozed, on configured days and inside the
+active day: a meeting starting within 10 minutes (Google connected; timed
+events only), Deck agents waiting for your input for 15+ minutes, and, from two
+hours after the check-in slot until the evening slot, personal tasks due today
+or overdue (with a **Start 25-min focus** suggestion). At most one nudge per
+30-second tick, 10 minutes apart and 8 per local day, each deduplicated per
+event, waiting episode or day. Only meeting nudges interrupt a focus block or a
+conversation from the last 10 minutes.
+
+Deck signals come from the renderer: waiting agent panes (label, workspace,
+waiting-since) and GitHub pull requests needing attention, reported debounced
+with a 60-second heartbeat. They are status only, never terminal output or
+transcripts, kept in main-process memory (never persisted), validated and
+bounded, ignored for waiting agents when older than three minutes, and treated
+as untrusted context. Chat context also lists in-progress board cards untouched
+for three days. Morning briefings lead with what is blocked on you.
+
+Desktop notifications carry buttons on Windows and macOS: check-ins and nudges
+offer their first open suggestion and **Snooze 1h**; a finished focus block on
+a personal task offers **Mark done** (your explicit click) and **Snooze 1h**.
+Buttons run the same commands as the page at the current revision.
 
 The scheduler runs in Electron's main process, survives renderer reloads, and
 works with a minimized window. It stops when Deck quits. On macOS, the app
@@ -161,9 +206,13 @@ provider retry is performed. CLI output parsing tolerates shell startup noise
 around the JSON (WSL uses `bash -lic`). A signed-in CLI resolution is cached
 for five minutes; a failed or unparseable run clears it, and **Check sign-in**
 always bypasses it.
-`personal-agent.ts` owns planning, proposals and scheduling. The renderer page
-uses only the typed preload bridge. Email, calendar and imported card content
-are treated as untrusted context. This agent has no shell, arbitrary HTTP,
+`personal-agent.ts` owns planning, proposals, suggestions, Deck signals,
+nudges and scheduling. The renderer page uses only the typed preload bridge.
+`src/renderer/src/personal.ts` shares one snapshot subscription between the
+page and the title-bar chip; `personalSignals.ts` computes and reports Deck
+signals; `PersonalSetup.tsx` and `PersonalStatusChip.tsx` hold the first-run
+setup and chip. Email, calendar, imported card content and
+Deck signals are treated as untrusted context. This agent has no shell, arbitrary HTTP,
 terminal transcript or credential-reading tool.
 
 Validation: `npm run typecheck`, `npm test`, `npm run build`, and the native

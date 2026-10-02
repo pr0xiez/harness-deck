@@ -549,23 +549,48 @@ export async function runSmoke(win: BrowserWindow, rendererErrors: string[]): Pr
     }
   })
 
-  await record('personal agent persists tasks and focus through IPC and preserves terminals', async () => {
+  await record('personal agent setup, tasks, focus chip and signals through IPC; preserves terminals', async () => {
     const failure = await win.webContents.executeJavaScript(`(async () => {
       const api = window.harness.personal;
       let state = await api.snapshot();
       if (state.data.settings.proactive || state.google.connected) return 'smoke profile unexpectedly connected or proactive';
+      if (state.data.settings.onboarded) return 'fresh smoke profile skipped first-run setup';
+      window.__personalTerminals = [...document.querySelectorAll('.xterm')];
+      document.querySelector('button[title="Personal agent"]').click();
+      return null;
+    })()`, true) as string | null
+    if (failure) return failure
+    const setupShown = await until(async () => Boolean(await win.webContents.executeJavaScript(
+      `Boolean(document.querySelector('.personal-onboarding')) && !document.querySelector('.personal-chip')`, true
+    )), 5000)
+    if (!setupShown) return 'first-run setup did not render for a fresh profile'
+    mkdirSync(join(process.cwd(), '.tmp'), { recursive: true })
+    writeFileSync(join(process.cwd(), '.tmp', 'personal-setup.png'), (await win.webContents.capturePage()).toPNG())
+    await win.webContents.executeJavaScript(`[...document.querySelectorAll('.personal-onboarding button')].find(b => b.textContent.includes('Skip setup')).click()`, true)
+    const skipped = await until(async () => Boolean(await win.webContents.executeJavaScript(
+      `window.harness.personal.snapshot().then(s => s.data.settings.onboarded && !document.querySelector('.personal-onboarding'))`, true
+    )), 5000)
+    if (!skipped) return 'skipping first-run setup did not reach the agent page'
+    const flow = await win.webContents.executeJavaScript(`(async () => {
+      const api = window.harness.personal;
+      let state = await api.snapshot();
       state = await api.mutate({ operation: 'task_add', title: 'Smoke personal task', notes: 'A concrete next step' }, state.data.revision);
       const task = state.data.tasks.find(t => t.title === 'Smoke personal task');
       if (!task) return 'task did not cross IPC';
       state = await api.mutate({ operation: 'plan', intention: 'Move one thing forward', priorities: [{ source: 'personal', id: task.id }] }, state.data.revision);
       state = await api.mutate({ operation: 'focus_start', priority: { source: 'personal', id: task.id }, minutes: 25 }, state.data.revision);
       if (state.data.focus?.title !== task.title) return 'focus session was not saved';
+      const deadline = Date.now() + 5000;
+      while (!document.querySelector('.personal-chip.focusing')?.textContent.includes(task.title)) {
+        if (Date.now() > deadline) return 'title-bar chip did not show the running focus block';
+        await new Promise(r => setTimeout(r, 100));
+      }
       await api.mutate({ operation: 'focus_stop' }, state.data.revision);
-      window.__personalTerminals = [...document.querySelectorAll('.xterm')];
-      document.querySelector('button[title="Personal agent"]').click();
+      await api.reportSignals({ waitingAgents: [{ paneId: 'smoke-pane', label: 'Smoke agent', workspace: 'Smoke', waitingSince: Date.now() }], github: [], reportedAt: Date.now() });
+      try { await api.reportSignals({ waitingAgents: 'nope', github: [], reportedAt: Date.now() }); return 'signals IPC accepted an invalid report'; } catch {}
       return null;
     })()`, true) as string | null
-    if (failure) return failure
+    if (flow) return flow
     const shown = await until(async () => Boolean(await win.webContents.executeJavaScript(
       `document.querySelector('.personal-page')?.textContent.includes('Smoke personal task')`, true
     )), 5000)

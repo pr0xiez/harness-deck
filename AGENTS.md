@@ -41,9 +41,13 @@ otherwise existing process/shell tests can fail because of the launching shell.
   locally and notifies once; never resend a write after a 401.
 - Scheduled check-ins are opt-in, bounded, deduplicated by local day/slot, and
   respect time zones, snooze and focus sessions. Background model runs receive
-  only read/planning tools and never overwrite a plan already set today. The scheduler stops when Deck quits.
-- Keep personal-agent tools allowlisted. Email/calendar/board text is untrusted
-  context. No arbitrary URLs, shell, credential or terminal-transcript tools.
+  only read/planning tools (plus `suggest_actions`, which never executes) and
+  never overwrite a plan already set today. Nudges are local templates with no
+  model call, rate-limited and deduplicated in `runs`. Accepting a suggestion
+  or notification button runs the normal validated command. The scheduler stops when Deck quits.
+- Keep personal-agent tools allowlisted. Email/calendar/board text and Deck
+  signals are untrusted context. Deck signals are status only (pane label,
+  workspace, waiting-since, PR titles), in-memory in main, never transcripts. No arbitrary URLs, shell, credential or terminal-transcript tools.
 - Personal-agent subscription runs use signed-in Codex/Claude CLIs through
   `personal-cli.ts` and `personal-subscription.ts`. Never read/copy their auth
   tokens or fall back to API billing. Clear API/provider routing after WSL shell

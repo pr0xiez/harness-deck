@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { emptyPersonalData } from '@shared/personal-agent'
+import { emptyPersonalData, type PersonalSuggestion } from '@shared/personal-agent'
 import { PersonalStore } from './personal-store'
 import { PersonalSecrets } from './personal-secrets'
 let dir: string
@@ -103,4 +103,48 @@ it('backs up only a primary it knows is valid', () => {
   expect(JSON.parse(readFileSync(store.file + '.bak', 'utf8')).settings.context).toBe('First')
   recovered.commit(d => { d.settings.context = 'Fourth' })
   expect(JSON.parse(readFileSync(store.file + '.bak', 'utf8')).settings.context).toBe('Third')
+})
+it('migrates existing settings to onboarded with nudges on, while new data starts un-onboarded', () => {
+  const value = JSON.parse(JSON.stringify(emptyPersonalData('America/New_York')))
+  delete value.settings.onboarded; delete value.settings.nudges
+  writeFileSync(join(dir, 'personal-agent.json'), JSON.stringify(value))
+  const store = new PersonalStore(dir)
+  expect(store.error).toBeUndefined()
+  expect(store.snapshot().settings).toMatchObject({ onboarded: true, nudges: true })
+  expect(emptyPersonalData().settings).toMatchObject({ onboarded: false, nudges: true })
+  expect(() => store.commit(d => { (d.settings as unknown as Record<string, unknown>).nudges = 'yes' })).toThrow('Invalid')
+})
+it('validates nudge messages and suggestions, refusing malformed ones without losing saved data', () => {
+  const store = new PersonalStore(dir)
+  const at = new Date().toISOString()
+  const priority = { source: 'personal' as const, id: 't1' }
+  const valid: PersonalSuggestion[] = [
+    { id: 'a', label: 'Add task: Call dentist', state: 'open', type: 'add_task', title: 'Call dentist', notes: 'Ask about Friday', due: '2026-10-01' },
+    { id: 'b', label: 'Start 25-min focus', state: 'accepted', type: 'start_focus', priority, minutes: 25 },
+    { id: 'c', label: 'Use this plan', state: 'dismissed', type: 'set_plan', intention: '', priorities: [priority, { source: 'board', id: 'card' }] }]
+  store.commit(d => { d.messages.push({ id: 'm', role: 'assistant', kind: 'nudge', text: 'Due today', at, suggestions: valid }) })
+  expect(new PersonalStore(dir).snapshot().messages[0]).toMatchObject({ kind: 'nudge', suggestions: valid })
+  const invalid: [string, unknown][] = [
+    ['too many', [...valid, { ...valid[0], id: 'd' }]],
+    ['duplicate ids', [valid[0], { ...valid[1], id: 'a' }]],
+    ['missing label', [{ ...valid[0], label: ' ' }]],
+    ['long label', [{ ...valid[0], label: 'x'.repeat(81) }]],
+    ['unknown state', [{ ...valid[0], state: 'done' }]],
+    ['unknown type', [{ ...valid[0], type: 'delete_task' }]],
+    ['extra field', [{ ...valid[0], command: 'rm' }]],
+    ['missing title', [{ ...valid[0], title: '' }]],
+    ['long notes', [{ ...valid[0], notes: 'x'.repeat(8001) }]],
+    ['bad due', [{ ...valid[0], due: '2026-02-30' }]],
+    ['short focus', [{ ...valid[1], minutes: 4 }]],
+    ['fractional focus', [{ ...valid[1], minutes: 25.5 }]],
+    ['bad priority', [{ ...valid[1], priority: { source: 'shell', id: 'x' } }]],
+    ['four priorities', [{ ...valid[2], priorities: [1, 2, 3, 4].map(i => ({ source: 'board', id: `c${i}` })) }]],
+    ['repeated priority', [{ ...valid[2], priorities: [priority, priority] }]],
+    ['long intention', [{ ...valid[2], intention: 'x'.repeat(2001) }]],
+    ['not an array', valid[0]]
+  ]
+  for (const [, suggestions] of invalid) expect(() => store.commit(d => { (d.messages[0] as unknown as Record<string, unknown>).suggestions = suggestions })).toThrow('Invalid')
+  expect(() => store.commit(d => { d.messages.push({ id: 'u', role: 'user', text: 'Hi', at, suggestions: [valid[0]] }) })).toThrow('Invalid')
+  expect(() => store.commit(d => { (d.messages[0] as unknown as Record<string, unknown>).kind = 'alarm' })).toThrow('Invalid')
+  expect(store.snapshot().messages[0].suggestions).toEqual(valid)
 })

@@ -1,13 +1,13 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { boundedText, emptyPersonalData, isObject, validDue, validPriority, validSettings, type PersonalData } from '@shared/personal-agent'
+import { boundedText, emptyPersonalData, isObject, MAX_SUGGESTIONS, validDue, validPriority, validSettings, type PersonalData, type Priority } from '@shared/personal-agent'
 
 const timestamp = (v: unknown): boolean => typeof v === 'string' && Number.isFinite(Date.parse(v))
 const id = (v: unknown): boolean => boundedText(v, 200, true)
 /** Existing OpenRouter agents keep their provider and model after upgrading. */
 function migratePersonalData(value: unknown): unknown {
   if (isObject(value) && value.version === 1 && isObject(value.settings)) {
-    value.settings = { provider: 'openrouter', cliEnvironment: 'auto', subscriptionModel: '', ...value.settings }
+    value.settings = { provider: 'openrouter', cliEnvironment: 'auto', subscriptionModel: '', onboarded: true, nudges: true, ...value.settings }
   }
   return value
 }
@@ -16,12 +16,25 @@ const rows = (v: unknown, max: number, validate: (v: Record<string, unknown>) =>
   const ids = new Set<unknown>()
   return v.every(row => isObject(row) && id(row.id) && !ids.has(row.id) && (ids.add(row.id), validate(row)))
 }
+/** Field shapes shared by user commands, model suggestions and persisted suggestions. */
+export const validTaskInput = (title: unknown, notes: unknown = '', due: unknown = ''): boolean => boundedText(title, 200, true) && boundedText(notes, 8000) && validDue(due)
+export const validFocusInput = (priority: unknown, minutes: unknown): boolean => validPriority(priority) && Number.isInteger(minutes) && Number(minutes) >= 5 && Number(minutes) <= 180
+export const validPlanInput = (intention: unknown, priorities: unknown): priorities is Priority[] => boundedText(intention, 2000) && Array.isArray(priorities) &&
+  priorities.length <= 3 && priorities.every(validPriority) && new Set(priorities.map(p => p.source + ':' + p.id)).size === priorities.length
+const SUGGESTION_FIELDS: Record<string, string[]> = { add_task: ['title', 'notes', 'due'], start_focus: ['priority', 'minutes'], set_plan: ['intention', 'priorities'] }
+export function validSuggestion(s: Record<string, unknown>): boolean {
+  const fields = SUGGESTION_FIELDS[String(s.type)]
+  if (!fields || !boundedText(s.label, 80, true) || !['open', 'accepted', 'dismissed'].includes(String(s.state)) || Object.keys(s).some(k => !['id', 'type', 'label', 'state', ...fields].includes(k))) return false
+  return s.type === 'add_task' ? validTaskInput(s.title, s.notes, s.due) :
+    s.type === 'start_focus' ? validFocusInput(s.priority, s.minutes) : validPlanInput(s.intention, s.priorities)
+}
 export function validPersonalData(v: unknown): v is PersonalData {
   if (!isObject(v) || v.version !== 1 || !Number.isSafeInteger(v.revision) || Number(v.revision) < 0 || !validSettings(v.settings)) return false
   return rows(v.tasks, 1000, t => boundedText(t.title, 200, true) && boundedText(t.notes, 8000) && validDue(t.due) && typeof t.done === 'boolean' && timestamp(t.createdAt) && (t.completedAt === undefined || timestamp(t.completedAt))) &&
     rows(v.memories, 100, m => boundedText(m.text, 2000, true) && timestamp(m.createdAt)) &&
     rows(v.messages, 300, m => ['user', 'assistant'].includes(String(m.role)) && boundedText(m.text, 24000, true) && timestamp(m.at) &&
-      (m.kind === undefined || ['morning', 'checkIn', 'evening', 'focus'].includes(String(m.kind)))) &&
+      (m.kind === undefined || ['morning', 'checkIn', 'evening', 'focus', 'nudge'].includes(String(m.kind))) &&
+      (m.suggestions === undefined || (m.role === 'assistant' && rows(m.suggestions, MAX_SUGGESTIONS, validSuggestion)))) &&
     rows(v.actions, 200, a => ['gmail_draft', 'gmail_send', 'gmail_archive', 'gmail_mark_read', 'calendar_create', 'calendar_update', 'calendar_delete'].includes(String(a.operation)) &&
       boundedText(a.title, 300, true) && boundedText(a.account, 320, true) && timestamp(a.createdAt) &&
       ['pending', 'running', 'done', 'rejected', 'uncertain'].includes(String(a.status)) && isObject(a.args) &&

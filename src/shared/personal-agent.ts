@@ -18,6 +18,10 @@ export interface PersonalSettings {
   checkIn: string
   evening: string
   snoozedUntil: number
+  /** First-run setup finished or skipped. Existing data migrates to true. */
+  onboarded: boolean
+  /** Event-driven nudges (meetings, long-waiting agents, due tasks); also requires proactive. */
+  nudges: boolean
 }
 export interface PersonalTask {
   id: string; title: string; notes: string; due: string; done: boolean; createdAt: string
@@ -28,9 +32,17 @@ export interface PersonalMemory { id: string; text: string; createdAt: string }
 export interface Priority { source: 'personal' | 'board'; id: string }
 export interface DailyPlan { day: string; intention: string; priorities: Priority[] }
 export interface FocusSession extends Priority { title: string; startedAt: number; endsAt: number; reminded: boolean }
+/** A one-click action the agent offers in a reply; accepting runs the equivalent user command. */
+export type PersonalSuggestionBody =
+  | { type: 'add_task'; title: string; notes?: string; due?: string }
+  | { type: 'start_focus'; priority: Priority; minutes: number }
+  | { type: 'set_plan'; intention: string; priorities: Priority[] }
+export type PersonalSuggestion = PersonalSuggestionBody & { id: string; label: string; state: 'open' | 'accepted' | 'dismissed' }
+export const MAX_SUGGESTIONS = 3
 export interface PersonalMessage {
   id: string; role: 'user' | 'assistant'; text: string; at: string
-  kind?: 'morning' | 'checkIn' | 'evening' | 'focus'
+  kind?: 'morning' | 'checkIn' | 'evening' | 'focus' | 'nudge'
+  suggestions?: PersonalSuggestion[]
 }
 export type GoogleOperation = 'gmail_draft' | 'gmail_send' | 'gmail_archive' | 'gmail_mark_read' |
   'calendar_create' | 'calendar_update' | 'calendar_delete'
@@ -67,12 +79,24 @@ export type PersonalCommand =
   | { operation: 'focus_stop' }
   | { operation: 'action_reject'; id: string }
   | { operation: 'action_resolve'; id: string; applied: boolean }
+  | { operation: 'suggestion_accept'; messageId: string; suggestionId: string }
+  | { operation: 'suggestion_dismiss'; messageId: string; suggestionId: string }
+
+/**
+ * Deck-only signals the renderer reports to main: status, never transcripts or
+ * terminal output. Main keeps only the latest report in memory.
+ */
+export interface DeckWaitingAgent { paneId: string; label: string; workspace: string; waitingSince: number }
+export interface DeckGitHubAttention { id: string; repository: string; number: number; title: string; signals: string[] }
+export interface DeckSignals { waitingAgents: DeckWaitingAgent[]; github: DeckGitHubAttention[]; reportedAt: number }
+export const MAX_DECK_SIGNAL_ITEMS = 20
 
 export function emptyPersonalData(timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone): PersonalData {
   return { version: 1, revision: 0, settings: {
     provider: 'chatgpt', cliEnvironment: 'auto', subscriptionModel: '',
     model: '', timeZone, context: '', proactive: false, notifications: true, weekdaysOnly: true,
-    morning: '08:30', checkIn: '13:00', evening: '17:30', snoozedUntil: 0
+    morning: '08:30', checkIn: '13:00', evening: '17:30', snoozedUntil: 0,
+    onboarded: false, nudges: true
   }, tasks: [], memories: [], plans: [], messages: [], actions: [], focus: null, runs: [] }
 }
 export const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -87,7 +111,7 @@ export function validSettings(v: unknown): v is PersonalSettings {
     !boundedText(v.subscriptionModel, 200) || (v.subscriptionModel !== '' && !/^[a-zA-Z0-9][\w.:-]*$/.test(v.subscriptionModel)) ||
     !boundedText(v.model, 200) || (v.model !== '' && !/^[\w.-]+\/[\w./:@+-]+$/.test(v.model)) ||
     !boundedText(v.context, 12000) || !boundedText(v.timeZone, 100, true) ||
-    !['proactive', 'notifications', 'weekdaysOnly'].every(k => typeof v[k] === 'boolean') ||
+    !['proactive', 'notifications', 'weekdaysOnly', 'onboarded', 'nudges'].every(k => typeof v[k] === 'boolean') ||
     !validTime(v.morning) || !validTime(v.checkIn) || !validTime(v.evening) ||
     !(v.morning < v.checkIn && v.checkIn < v.evening) ||
     typeof v.snoozedUntil !== 'number' || !Number.isFinite(v.snoozedUntil) || v.snoozedUntil < 0) return false
@@ -115,4 +139,13 @@ export function dueCheckIn(data: PersonalData, now: Date): PersonalMessage['kind
     const delta = clock.minutes - timeMinutes(s[kind])
     if (delta >= 0) return delta < 90 && !data.runs.includes(`${clock.day}:${kind}`) ? kind : undefined
   }
+}
+const finiteTime = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
+export function validDeckSignals(v: unknown): v is DeckSignals {
+  return isObject(v) && finiteTime(v.reportedAt) &&
+    Array.isArray(v.waitingAgents) && v.waitingAgents.length <= MAX_DECK_SIGNAL_ITEMS && v.waitingAgents.every(a => isObject(a) &&
+      boundedText(a.paneId, 200, true) && boundedText(a.label, 200, true) && boundedText(a.workspace, 200) && finiteTime(a.waitingSince)) &&
+    Array.isArray(v.github) && v.github.length <= MAX_DECK_SIGNAL_ITEMS && v.github.every(g => isObject(g) &&
+      boundedText(g.id, 300, true) && boundedText(g.repository, 200, true) && Number.isSafeInteger(g.number) && Number(g.number) > 0 &&
+      boundedText(g.title, 300) && Array.isArray(g.signals) && g.signals.length <= 5 && g.signals.every(x => boundedText(x, 100, true)))
 }

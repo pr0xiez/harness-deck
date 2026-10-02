@@ -64,8 +64,9 @@ is refreshed when access starts; agents should use the CLI rather than editing
 board files directly. There is no cloud sync or permanent card deletion in this
 version; use Won’t do for discarded work.
 
-**Personal agent** — Open **Personal agent** in the sidebar or command palette
-for a persistent conversation, personal tasks, remembered goals and preferences,
+**Personal agent** — Open **Personal agent** in the sidebar or command palette.
+A short first-run setup picks your subscription, check-in rhythm and goals (skip
+it any time). It offers a persistent conversation, personal tasks, remembered goals and preferences,
 and a daily plan with up to three priorities. Choose work-board cards alongside
 personal commitments, start a focus timer, and explicitly mark work complete.
 The agent helps choose realistic next steps, work through blockers, and reflect
@@ -90,7 +91,11 @@ events on your primary calendar. Every Google write appears as an exact proposal
 for your approval. Interrupted writes require checking Google before retrying.
 
 Turn on **Proactive daily check-ins** for a morning plan, midday refocus and
-evening review, with your time zone, weekdays and times. Desktop notifications
+evening review, with your time zone, weekdays and times. **Nudges** add short
+model-free reminders for meetings about to start, Deck agents waiting on you for
+15+ minutes and tasks due today. Replies and notifications carry one-click
+suggestions (add task, start focus, use plan) and **Snooze 1h**; a title-bar
+chip shows your focus countdown or next priority. Desktop notifications
 open the personal-agent page. Snooze for an hour or turn check-ins off; active
 focus blocks defer them. Deck must remain running (minimized is fine); quitting
 stops the scheduler. Missed check-ins only catch up within 90 minutes, without

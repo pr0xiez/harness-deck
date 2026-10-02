@@ -42,7 +42,7 @@ import { McpManager } from './mcp'
 import type { McpMutation, McpTarget } from '@shared/mcp'
 import { queryOpencode } from './opencode'
 import { openRouterKeyState, setOpenRouterKey, openRouterModels, prepareOpenRouter, personalOpenRouterKey } from './openrouter'
-import { PersonalAgent } from './personal-agent'
+import { PersonalAgent, type PersonalNotifyAction } from './personal-agent'
 import { personalSubscriptionStatus } from './personal-subscription'
 import { PersonalStore } from './personal-store'
 import { PersonalSecrets } from './personal-secrets'
@@ -517,13 +517,27 @@ async function registerIpc(): Promise<void> {
     return workAccess!.setEnabled(enabled)
   })
   const personalStore = new PersonalStore(app.getPath('userData'), () => personalAgent?.publish())
-  const personalNotify = (title: string, body: string): void => {
+  // Live notifications stay referenced so their click/action handlers aren't garbage-collected; bounded because 'close' isn't guaranteed.
+  const personalNotifications = new Set<Notification>()
+  const personalNotify = (title: string, body: string, actions: PersonalNotifyAction[] = []): void => {
     if (!Notification.isSupported()) return
-    const notification = new Notification({ title, body })
+    const buttons = actions.slice(0, 2)
+    // Notification buttons exist on Windows and macOS only.
+    const notification = new Notification({ title, body, ...(buttons.length && process.platform !== 'linux' ? { actions: buttons.map(a => ({ type: 'button' as const, text: a.label })) } : {}) })
+    const release = (): void => { personalNotifications.delete(notification) }
+    personalNotifications.add(notification)
+    for (const stale of personalNotifications) { if (personalNotifications.size <= 20) break; personalNotifications.delete(stale) }
     notification.on('click', () => {
+      release()
       if (!mainWindow) { mainWindow = createWindow(); mainWindow.webContents.once('did-finish-load', () => send(IPC.personalOpen, null)) }
       else { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); send(IPC.personalOpen, null) }
     })
+    notification.on('action', details => {
+      release()
+      try { buttons[details.actionIndex]?.run() } catch { /* The agent reports action failures on its page. */ }
+    })
+    notification.on('close', release)
+    notification.on('failed', release)
     notification.show()
   }
   const google = new PersonalGoogle(new PersonalSecrets(app.getPath('userData'), {
@@ -545,6 +559,7 @@ async function registerIpc(): Promise<void> {
   personalHandle(IPC.personalChat, text => personalAgent!.chat(text))
   personalHandle(IPC.personalStop, () => personalAgent!.stop())
   personalHandle(IPC.personalApprove, id => personalAgent!.approve(id))
+  personalHandle(IPC.personalSignals, signals => personalAgent!.reportSignals(signals))
   personalHandle(IPC.personalSubscriptionStatus, (provider, environment) => personalSubscriptionStatus(provider, environment))
   personalHandle(IPC.personalGoogleConfigure, client => google.configure(client))
   personalHandle(IPC.personalGoogleConnect, () => google.connect())

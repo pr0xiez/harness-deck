@@ -1,6 +1,6 @@
 # Harness Deck
 
-Read `README.md` before changing the application. This is an Electron desktop
+Read `docs/manual.md` before changing the application. This is an Electron desktop
 app with a React renderer, a typed preload bridge, and main-process PTYs. It is
 an independent repository, not part of a workspace or monorepo.
 

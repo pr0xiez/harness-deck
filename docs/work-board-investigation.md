@@ -5,7 +5,7 @@ service, atomic board storage, revision conflicts, IPC updates, opt-in local
 HTTP access and bundled `hd-work` client are now implemented. The proposal
 below is retained as design context. The CLI uses Deck's Electron runtime;
 native wrappers and a Windows-interoperability WSL wrapper are generated per
-app profile. See README for usage and supported-path limitations.
+app profile. See the [manual](manual.md) for usage and supported-path limitations.
 
 Validation: production build and main typecheck pass; nine focused board/UI
 checks pass. Windows development and unpacked-package smoke runs each pass

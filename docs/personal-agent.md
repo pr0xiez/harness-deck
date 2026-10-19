@@ -188,8 +188,13 @@ not encrypted. Do not put credentials into goals or conversation text.
 `src/shared/personal-agent.ts` owns IPC data and the time-zone-aware schedule.
 `personal-store.ts` owns persistence; `personal-secrets.ts` owns encrypted Google
 credentials; `personal-google.ts` owns OAuth and the allowlisted Google APIs;
-`personal-ai.ts` implements [OpenRouter tool calling](https://openrouter.ai/docs/guides/features/tool-calling);
-`personal-subscription.ts` implements a bounded structured-response tool loop
+`agent-loop.ts` owns the bounded tool loop both providers share — history
+bounds, the tool allowlist and object-args checks, the per-step call cap,
+error folding, output truncation and the final tool-less step — so the
+agent's safety envelope is defined once;
+`personal-ai.ts` implements [OpenRouter tool calling](https://openrouter.ai/docs/guides/features/tool-calling)
+as a transport for that loop;
+`personal-subscription.ts` implements a structured-response transport
 through [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)
 and [Claude Code print mode](https://code.claude.com/docs/en/cli-reference).
 `personal-cli.ts` handles native/WSL discovery, stdin prompts, environment
